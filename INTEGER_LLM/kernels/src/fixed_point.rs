@@ -190,10 +190,14 @@ pub fn isqrt_round(n: u64) -> u64 {
     while (r + 1) <= n / (r + 1) {
         r += 1;
     }
-    // Runden: liegt n naeher an (r+1)^2 als an r^2?
-    let unten = n - r * r;
-    let oben = (r + 1) * (r + 1) - n;
-    if oben < unten {
+    // Runden: liegt n naeher an (r+1)^2 als an r^2? Das heisst
+    // (r+1)^2 - n < n - r^2, also 2n > 2r^2 + 2r + 1, fuer ganze Zahlen
+    // n - r^2 > r. 📌 Bis zum 2026-11-15 stand hier (r+1)*(r+1): fuer n nahe
+    // u64::MAX (r = 2^32 - 1) ein Ueberlauf, im Debug-Bau ein Abbruch, im
+    // Release ein falsches Ergebnis; gefunden von
+    // `isqrt_round_rundet_jedes_n_zur_naechsten_wurzel`. r*r <= n passt
+    // immer, und fuer jedes n ohne Ueberlauf ist das Ergebnis dasselbe.
+    if n - r * r > r {
         r + 1
     } else {
         r
@@ -534,6 +538,44 @@ mod tests {
                 let ueber_mult = rshift_round_i64(x * (1i64 << m), n + m);
                 assert_eq!(ueber_shift, ueber_mult, "x={} n={}", x, n);
             }
+        }
+    }
+
+    /// ⚑ **Erschöpfend statt vier Beispiele** (2026-11-15): Alle geraden
+    /// Zweierpotenzen, für die `2^30 / head_dim` noch mindestens eins ist.
+    #[test]
+    fn inv_sqrt_q15_ist_fuer_jede_gerade_zweierpotenz_exakt() {
+        for j in 0..=15u32 {
+            assert_eq!(inv_sqrt_q15(1usize << (2 * j)), 1i64 << (15 - j), "head_dim 2^{}", 2 * j);
+        }
+    }
+
+    /// ⚑ **Die Rundung von `isqrt_round` für jedes n** (2026-11-15):
+    /// `r = isqrt_round(n)` heisst `(2r - 1)^2 < 4n < (2r + 1)^2` (Gleichheit
+    /// gibt es nicht, ungerade Quadrate sind keine Vielfachen von vier).
+    /// Erschöpfend bis 2^20, dazu eine Million aus einem festen Generator
+    /// über den ganzen Bereich von u64 samt seinen Rändern.
+    #[test]
+    fn isqrt_round_rundet_jedes_n_zur_naechsten_wurzel() {
+        let gilt = |n: u64| {
+            let r = u128::from(isqrt_round(n));
+            let v = 4 * u128::from(n);
+            n == 0 && r == 0 || (r >= 1 && (2 * r - 1) * (2 * r - 1) < v && v < (2 * r + 1) * (2 * r + 1))
+        };
+        for n in 0..=(1u64 << 20) {
+            assert!(gilt(n), "n = {n}: isqrt_round = {}", isqrt_round(n));
+        }
+        let mut s: u64 = 0xD1B5_4A32_D192_ED03;
+        for i in 0..1_000_000u32 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            // Jede Groessenordnung gleich oft: ein zufaelliger Shift.
+            let n = s >> (i % 64);
+            assert!(gilt(n), "n = {n}: isqrt_round = {}", isqrt_round(n));
+        }
+        for n in [u64::MAX, u64::MAX - 1, (u64::from(u32::MAX)) * u64::from(u32::MAX), 1u64 << 63] {
+            assert!(gilt(n), "n = {n}: isqrt_round = {}", isqrt_round(n));
         }
     }
 

@@ -323,6 +323,12 @@ pub enum Nachforderung {
     /// ist [`Nachlieferung::Abgelegt`], nach dem letzten Stück mit dem
     /// Ergebnis des Ablegens. Angehängt.
     SpurenAblegenTeil { kennung: u64, gesamt: u32, abdruck: myl_types::Hash, ab: u32, daten: Vec<u8> },
+    /// ⚑ **Wechselbelege ab einer Epoche, gefaltet** (Sicherheitsaudit A44,
+    /// 2026-11-15): wie [`Self::Wechselbelege`], die Antwort ist
+    /// [`Nachlieferung::WechselbelegeKompakt`] ([`crate::belegfolge`]). Ein
+    /// aelterer Knoten kennt die Marke nicht und antwortet mit `Nichts`; dann
+    /// fragt der Einsteiger die alte. Angehängt.
+    WechselbelegeKompakt { ab: u64 },
 }
 
 /// So gross ist ein Stück des Schiedsbelegs höchstens, unter der Grenze einer
@@ -563,6 +569,10 @@ pub enum Nachlieferung {
     /// Die Antwort auf [`Nachforderung::VerlaufTeil`], wie beim Schiedsbeleg
     /// (Borsh der Antworten). Angehängt.
     VerlaufTeil { anfrage: myl_types::Spuranfrage, gesamt: u32, abdruck: myl_types::Hash, ab: u32, daten: Vec<u8> },
+    /// Die Antwort auf [`Nachforderung::WechselbelegeKompakt`]: aufsteigend,
+    /// so viele, wie gefaltet in eine Antwort passen und der Empfaenger
+    /// entfalten darf; leer, wenn keine. Angehängt.
+    WechselbelegeKompakt(crate::belegfolge::Belegfolge),
 }
 
 /// ⚑ **Der nächste Bereich beim Nachholen von mehreren Quellen** (2026-10-22).
@@ -762,6 +772,32 @@ mod tests {
             11,
             "angehängt: die Marke hinter dem Bündel"
         );
+    }
+
+    /// ⚑ Die gefalteten Wechselbelege (A44) haben die naechsten freien
+    /// Marken, und eine Antwort kommt so an, wie sie hinausging.
+    #[test]
+    fn die_gefalteten_wechselbelege_stehen_hinten() {
+        let n = Nachforderung::WechselbelegeKompakt { ab: 7 };
+        let b = n.als_bytes().unwrap();
+        assert_eq!(Nachforderung::aus_bytes(&b), Some(n));
+        let marke_alt = Nachforderung::SpurenAblegenTeil { kennung: 1, gesamt: 0, abdruck: myl_types::Hash::sha256(b""), ab: 0, daten: vec![] }
+            .als_bytes()
+            .unwrap()[0];
+        assert_eq!(b[0], marke_alt + 1, "hinter der bisher letzten Marke");
+        let l = Nachlieferung::WechselbelegeKompakt(crate::belegfolge::Belegfolge::default());
+        let lb = l.als_bytes().unwrap();
+        assert_eq!(Nachlieferung::aus_bytes(&lb), Some(l));
+        let marke_alt = Nachlieferung::VerlaufTeil {
+            anfrage: myl_types::Spuranfrage { epoche: myl_types::ids::EpochId(0), pod: myl_types::ids::PodId::new([0; 32]), segment: 0 },
+            gesamt: 0,
+            abdruck: myl_types::Hash::sha256(b""),
+            ab: 0,
+            daten: vec![],
+        }
+        .als_bytes()
+        .unwrap()[0];
+        assert_eq!(lb[0], marke_alt + 1);
     }
 
     #[test]

@@ -234,7 +234,7 @@ fn main() {
 
     let pod_id = PodId::new([0xAA; 32]);
     let epoch = EpochId(0);
-    let mut coordinator = Coordinator::new(pod_id, epoch, shards, myl_pod::coordinator::DEFAULT_WINDOW_MS);
+    let coordinator = Coordinator::new(pod_id, epoch, shards);
 
     // Prompt kodieren.
     let prompt_ids = tokenizer.encode(&prompt);
@@ -249,7 +249,7 @@ fn main() {
     match coordinator.build_poi_bundle() {
         Ok(bundle) => {
             println!("[myl-pod] PoI-Bündel: vTFE={}, Segmente={}",
-                bundle.vtfe_claimed, coordinator.completed_segments().len());
+                bundle.vtfe_claimed, coordinator.segmentzahl());
         }
         Err(e) => eprintln!("[myl-pod] PoI-Bündel-Fehler: {}", e),
     }

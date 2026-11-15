@@ -594,6 +594,10 @@ pub struct Knoten {
     /// ⚑ Ein Anker, dessen Epoche die eigene Folge noch nicht kennt (7.4):
     /// Er wartet auf die Wechselbelege der Gegenstelle, die ihn nannte.
     anker_wartend: Option<(libp2p::PeerId, myl_consensus::pruefpunkt::Pruefpunktzertifikat)>,
+    /// ⚑ Wer gefaltete Wechselbelege gefragt wurde, und ab welcher Epoche
+    /// (A44): Antwortet er mit `Nichts`, kennt er die Marke nicht, und die
+    /// alte Anfrage geht an ihn.
+    belege_kompakt_bei: Option<(libp2p::PeerId, u64)>,
     /// Zustandslos: die Höhe und seit wann sie steht (für die Selbstheilung).
     stillstand: (u64, std::time::Instant),
     /// Zustandslos: der höchste Block mit belegtem Erzeuger, der ankam.
@@ -1364,7 +1368,7 @@ impl Knoten {
         //   Knoten erzeugt nicht, sein Slot bleibt leer.
         if !konfig.erzeugt_bloecke && !konfig.zustandslos {
             if let Some(k) = netzschluessel.clone() {
-                kette.erzeugerschluessel_setzen(k);
+                kette.miner_erzeugerschluessel_setzen(k);
             }
         }
         let abruf = archiv_abruf(&kette);
@@ -1569,6 +1573,7 @@ impl Knoten {
             anker_kandidat: None,
             anker_verworfen: Default::default(),
             anker_wartend: None,
+            belege_kompakt_bei: None,
             stillstand: (0, std::time::Instant::now()),
             hoechster_belegter: 0,
             stillstand_hoechstens: STILLSTAND_HOECHSTENS,
@@ -3751,15 +3756,33 @@ impl Knoten {
                 if self.kette.ist_zustandslos() {
                     return self.zustandslos_block(block, m.von);
                 }
+                // ⚑ **Woher und von wem** (2026-11-15, Beobachtung zu den
+                //   abgelehnten Blöcken beim Einsteiger): der Hash, der letzte
+                //   Weiterleiter und der Erzeuger, den die Unterschrift
+                //   **behauptet** (aus ihrem Schlüssel, ohne sie zu prüfen:
+                //   eine Flut abgelehnter Blöcke soll keine Rechnung kosten).
+                let woher = |e: Eintrag| {
+                    let von = m.von.to_string();
+                    e.text("block", kurz(&block.hash()))
+                        .text("von", &von[von.len().saturating_sub(8)..])
+                        .text(
+                            "erzeuger",
+                            block
+                                .unterschrift
+                                .as_ref()
+                                .map(|u| kurz_id(&myl_types::ids::MinerId::aus_schluessel(&u.schluessel)))
+                                .unwrap_or_else(|| "keiner".to_string()),
+                        )
+                        .zahl("slot", block.header.slot as i64)
+                };
                 // ⚑ Erst wenn sein Slot begonnen hat (2026-11-04).
                 if self.aus_der_zukunft(&block) {
-                    self.protokoll.schreibe(
+                    self.protokoll.schreibe(woher(
                         Eintrag::neu("block_abgelehnt")
                             .zahl("eigene_hoehe", self.kette.hoehe() as i64)
                             .zahl("fremde_hoehe", block.header.height as i64)
-                            .text("ablehnungsart", "aus-der-zukunft")
-                            .zahl("slot", block.header.slot as i64),
-                    );
+                            .text("ablehnungsart", "aus-der-zukunft"),
+                    ));
                     return;
                 }
                 match self.kette.uebernimm(&block) {
@@ -3819,13 +3842,13 @@ impl Knoten {
                                 "anfechtung-unsinnig"
                             }
                         };
-                        self.protokoll.schreibe(
+                        self.protokoll.schreibe(woher(
                             Eintrag::neu("block_abgelehnt")
                                 .zahl("eigene_hoehe", self.kette.hoehe() as i64)
                                 .zahl("fremde_hoehe", block.header.height as i64)
                                 .text("ablehnungsart", ablehnungsart)
                                 .text("grund", grund.to_string()),
-                        );
+                        ));
                         // Ein zweiter Block an einer Höhe, die wir schon
                         // haben: vielleicht eine Doppelunterschrift (7.6).
                         if block.header.height <= self.kette.hoehe() {
@@ -4107,6 +4130,7 @@ impl Knoten {
                     //   eigenen Deckel hat (Inferenz, Zeitprobe, Shard).
                     Some(
                         Nachforderung::Wechselbelege { .. }
+                        | Nachforderung::WechselbelegeKompakt { .. }
                         | Nachforderung::Datei { .. }
                         | Nachforderung::Spur(_)
                         | Nachforderung::Verlauf(_)
@@ -4410,6 +4434,12 @@ impl Knoten {
                         Nachlieferung::Wechselbelege(self.kette.wechselbelege_ab(ab, myl_types::protocol::MAX_ANFRAGE_BYTES / 2)),
                         0,
                     )),
+                    // ⚑ Gefaltet (A44): dieselbe Grenze fuer die Bytes; was der
+                    //   Empfaenger entfalten darf, haelt `falten_bis` ein.
+                    Some(Nachforderung::WechselbelegeKompakt { ab }) => Some((
+                        Nachlieferung::WechselbelegeKompakt(self.kette.wechselbelege_kompakt_ab(ab, myl_types::protocol::MAX_ANFRAGE_BYTES / 2)),
+                        0,
+                    )),
                     Some(Nachforderung::Kontobeweise(adressen)) => {
                         let adressen: Vec<_> = adressen.into_iter().take(crate::nachschub::KONTOBEWEISE_JE_ANFRAGE).collect();
                         // Ohne Beweise eine leere Lieferung, nie `Nichts`.
@@ -4533,6 +4563,14 @@ impl Knoten {
                     Some(Nachlieferung::Abzug { block, ab, daten, groesse }) => {
                         return self.abzug_stueck_erhalten(von, *block, ab, &daten, groesse)
                     }
+                    Some(Nachlieferung::Nichts) if self.belege_kompakt_bei.is_some_and(|(p, _)| p == von) => {
+                        // Ein aelterer Knoten: die alte Anfrage.
+                        let ab = self.belege_kompakt_bei.take().map_or(0, |(_, ab)| ab);
+                        if let Some(daten) = (Nachforderung::Wechselbelege { ab }).als_bytes() {
+                            let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten });
+                        }
+                        return;
+                    }
                     Some(Nachlieferung::Nichts) if self.abzug_bei(&von) => return self.abzug_nichts(von),
                     Some(Nachlieferung::Nichts) if self.hintergrund_bei(&von) => return self.hintergrund_nichts(von),
                     Some(Nachlieferung::Nichts) if self.abruf_bei(&von) => return self.abruf_nichts(von),
@@ -4576,6 +4614,23 @@ impl Knoten {
                     }
                     Some(Nachlieferung::Kontobeweise { hoehe, beweise }) => return self.kontobeweise_erhalten(hoehe, beweise),
                     Some(Nachlieferung::Wechselbelege(belege)) => return self.wechselbelege_erhalten(von, belege),
+                    Some(Nachlieferung::WechselbelegeKompakt(folge)) => {
+                        if self.belege_kompakt_bei.is_some_and(|(p, _)| p == von) {
+                            self.belege_kompakt_bei = None;
+                        }
+                        match crate::belegfolge::entfalten(&folge) {
+                            Ok(belege) => return self.wechselbelege_erhalten(von, belege),
+                            Err(f) => {
+                                self.protokoll.schreibe(
+                                    Eintrag::neu("wechselbelege_abgelehnt")
+                                        .text("von", von.to_string())
+                                        .zahl("geliefert", folge.0.len() as i64)
+                                        .text("grund", f.to_string()),
+                                );
+                                return;
+                            }
+                        }
+                    }
                     Some(Nachlieferung::Zeugenstuecke(stuecke)) => {
                         if stuecke.is_empty() {
                             return;
@@ -5336,10 +5391,17 @@ impl Knoten {
             //   dieser Gegenstelle, dann noch einmal.
             Err(crate::wechsel::Folgefehler::Unbekannt(_)) if self.anker_wartend.is_none() => {
                 let ab = self.kette.wechselbelege_bis();
-                if let Some(daten) = (Nachforderung::Wechselbelege { ab }).als_bytes() {
+                // ⚑ Gefaltet zuerst (A44); ein aelterer Knoten antwortet mit
+                //   `Nichts`, dann die alte Anfrage.
+                if let Some(daten) = (Nachforderung::WechselbelegeKompakt { ab }).als_bytes() {
                     let _ = self.kommandos.send(NodeCommand::Anfrage { an: von, daten });
+                    self.belege_kompakt_bei = Some((von, ab));
                     self.protokoll.schreibe(
-                        Eintrag::neu("wechselbelege_angefragt").text("an", von.to_string()).zahl("ab", ab as i64).zahl("hoehe", z.hoehe as i64),
+                        Eintrag::neu("wechselbelege_angefragt")
+                            .text("an", von.to_string())
+                            .zahl("ab", ab as i64)
+                            .zahl("hoehe", z.hoehe as i64)
+                            .text("form", "gefaltet"),
                     );
                 }
                 self.anker_wartend = Some((von, z));

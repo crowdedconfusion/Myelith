@@ -62,7 +62,7 @@ fn shards(dir: &std::path::Path) -> Vec<Arc<ShardNode>> {
 
 fn koordinator(dir: &std::path::Path, ab: usize, dauerhaft: bool) -> Coordinator {
     let weg = Arc::new(Stolperweg { innen: ImProzess::neu(shards(dir)), shard: 1, ab, dauerhaft, gezaehlt: AtomicUsize::new(0) });
-    Coordinator::ueber_weg(PodId::new([0xAA; 32]), EpochId(0), weg, myl_pod::coordinator::DEFAULT_WINDOW_MS).expect("Koordinator")
+    Coordinator::ueber_weg(PodId::new([0xAA; 32]), EpochId(0), weg).expect("Koordinator")
 }
 
 #[test]
@@ -75,13 +75,13 @@ fn eine_verlorene_runde_kostet_nicht_den_auftrag() {
     let ids: Vec<u32> = tok.encode("Die Hauptstadt von Frankreich ist").iter().map(|t| *t as u32).collect();
 
     // Die Referenz: kein Verlust.
-    let mut glatt = koordinator(&dir, usize::MAX, false);
+    let glatt = koordinator(&dir, usize::MAX, false);
     let soll = glatt.run_prompt(7, &ids, 4);
     assert_eq!(soll.len(), 4, "die Referenz liefert nicht vier Token");
     let segmente = glatt.completed_segments().len();
 
     // Die zweite Rechenrunde zu Shard 1 geht verloren: Position 1 fehlt ihm.
-    let mut gestolpert = koordinator(&dir, 2, false);
+    let gestolpert = koordinator(&dir, 2, false);
     let ist = gestolpert.run_prompt(7, &ids, 4);
     assert_eq!(ist, soll, "nach einer verlorenen Runde kam eine andere Antwort");
     assert_eq!(
@@ -96,7 +96,7 @@ fn eine_verlorene_runde_kostet_nicht_den_auftrag() {
 
     // ⛔️ Gegenprobe: Shard 1 bleibt ab der zweiten Runde weg. Dann kommt
     // nichts, und es bleibt kein halbes Segment stehen.
-    let mut weg = koordinator(&dir, 2, true);
+    let weg = koordinator(&dir, 2, true);
     assert!(weg.run_prompt(7, &ids, 4).is_empty(), "ohne Shard 1 kamen Token");
     assert_eq!(weg.completed_segments().len(), 0, "ein gescheiterter Auftrag hinterliess Segmente");
 }

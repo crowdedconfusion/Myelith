@@ -69,6 +69,20 @@ pub struct LatencyAttest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize)]
 pub struct PeerIdBytes(pub [u8; 32]);
 
+impl PeerIdBytes {
+    /// Sind die 32 Bytes ein Punkt der Kurve Ed25519, also ueberhaupt ein
+    /// oeffentlicher Schluessel?
+    ///
+    /// ⚑ **Dieselbe Regel wie im Knoten**, der daraus eine `PeerId` macht
+    /// (`ed25519::PublicKey::try_from_bytes` in libp2p, das genau dieses
+    /// Entpacken fragt); eine Probe in NETWORKING haelt beide fuer viele
+    /// Folgen gleich. Rund die Haelfte aller Folgen ist kein Punkt. Punkte
+    /// kleiner Ordnung (etwa `[0; 32]`) gelten als Punkt, wie dort.
+    pub fn ist_ed25519_punkt(&self) -> bool {
+        curve25519_dalek::edwards::CompressedEdwardsY(self.0).decompress().is_some()
+    }
+}
+
 /// BLS-Signatur als 96-Byte-Array (für Borsh-Serialisierung).
 ///
 /// blst::Signature ist nicht direkt Borsh-serialisierbar, daher speichern
@@ -383,5 +397,36 @@ mod a10_tests {
         let mut a = attest(8);
         a.signature = BlsSignatureBytes([0xFF; 96]);
         assert!(!a.verify(&pk));
+    }
+}
+
+#[cfg(test)]
+mod punkttests {
+    use super::PeerIdBytes;
+
+    /// ⚑ **Etwa die Haelfte aller Folgen ist kein Punkt**, und jeder echte
+    /// Schluessel ist einer. Die Gleichheit mit der Regel des Knotens haelt
+    /// die Probe in NETWORKING (`netz_und_kette_haben_dieselbe_punktregel`).
+    #[test]
+    fn nur_etwa_die_haelfte_aller_folgen_ist_ein_punkt() {
+        let mut s: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut punkte = 0;
+        for _ in 0..10_000 {
+            let mut b = [0u8; 32];
+            for x in b.iter_mut() {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                *x = (s >> 24) as u8;
+            }
+            if PeerIdBytes(b).ist_ed25519_punkt() {
+                punkte += 1;
+            }
+        }
+        assert!((4_000..6_000).contains(&punkte), "{punkte} von 10000 Folgen sind Punkte, erwartet rund die Haelfte");
+        // Der Basispunkt ist ein Schluessel; [0; 32] ein Punkt kleiner Ordnung.
+        let basis = curve25519_dalek::constants::ED25519_BASEPOINT_COMPRESSED.to_bytes();
+        assert!(PeerIdBytes(basis).ist_ed25519_punkt());
+        assert!(PeerIdBytes([0; 32]).ist_ed25519_punkt());
     }
 }

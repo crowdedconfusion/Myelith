@@ -486,24 +486,18 @@ pub fn bedienen(shard: &ShardNode, anfrage: &Shardanfrage) -> Shardantwort {
         // schweigen.** Ein Koordinator, der keine Antwort bekommt, kann
         // „kann nicht" nicht von „ist ausgefallen" unterscheiden und
         // zöge die Reserve.
-        // ⚑ **Ein Stapel ist eine Folge einzelner Rechnungen**, über
-        // dieselbe Prüfung und dieselbe Funktion wie `Rechne`; die erste,
-        // die scheitert, beendet ihn, und der Rest wird nicht gerechnet.
+        // ⚑ **Ein Stapel rechnet jede Ebene für alle Nachrichten zugleich**
+        // (`ShardNode::process_stapel`, 2026-11-15), auch über Sitzungen;
+        // geprüft wird vorher alles, und scheitert eine Prüfung, wird
+        // nichts gerechnet. 📌 Bis dahin eine Folge einzelner Rechnungen.
         Shardanfrage::RechneStapel(ms) => {
             if ms.len() > MAX_STAPEL {
                 return Shardantwort::Fehler(format!("ein Stapel von {} Nachrichten, höchstens {MAX_STAPEL}", ms.len()));
             }
-            let mut aus = Vec::with_capacity(ms.len());
-            for (i, m) in ms.iter().enumerate() {
-                if !m.is_valid_frame() {
-                    return Shardantwort::Fehler(format!("Stapel, Nachricht {i}: keine Magic-Bytes"));
-                }
-                match shard.process(m) {
-                    Ok(a) => aus.push(a),
-                    Err(e) => return Shardantwort::Fehler(format!("Stapel, Nachricht {i}: {e}")),
-                }
+            match shard.process_stapel(ms) {
+                Ok(aus) => Shardantwort::StapelGerechnet(aus),
+                Err(e) => Shardantwort::Fehler(e),
             }
-            Shardantwort::StapelGerechnet(aus)
         }
         Shardanfrage::TrainVorwaerts { .. }
         | Shardanfrage::TrainRueckwaerts { .. }

@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 
 use integer_llm_runtime::generate::DekodierDigest;
 use integer_llm_runtime::kv_cache::KVCache;
-use integer_llm_runtime::model::IntegerModel;
+use integer_llm_runtime::model::{Belegung, IntegerModel};
 use myl_tokenomics::{ModellProfil, ShardZuschnitt};
 use myl_types::bls::{BlsPublicKey, BlsSecretKey, BlsSignature};
 
@@ -616,7 +616,7 @@ impl ShardNode {
             let prev = ZERO_HASH;
             let sig = self.sign_transition(&msg.segment_id, pos as u64, &prev, &out_hash)?;
 
-            return self.finish(msg, session_id, pos as u64, out, trace, sig);
+            return self.finish(msg, session_id, pos as u64, out, trace, sig, None);
         }
 
         // Zwischen-/End-Shard: Aktivierungen.
@@ -663,7 +663,155 @@ impl ShardNode {
         let out_hash = *trace.last().unwrap_or(&ZERO_HASH);
         let sig = self.sign_transition(&msg.segment_id, pos as u64, &prev_hash, &out_hash)?;
 
-        self.finish(msg, session_id, pos as u64, out, trace, sig)
+        self.finish(msg, session_id, pos as u64, out, trace, sig, None)
+    }
+
+    /// ⚑ **Ein Stapel, auch über mehrere Sitzungen** (Continuous Batching,
+    /// 2026-11-15, nach Orca, Yu et al., OSDI 2022): dieselben Prüfungen und
+    /// dieselbe Rechnung wie [`Self::process`] je Nachricht, nur rechnen
+    /// alle Nachrichten jede Ebene zugleich
+    /// ([`IntegerModel::ebenen_stapel`]): Die Gewichte einer Ebene werden
+    /// einmal je Stapel gelesen statt einmal je Nachricht. Gemessen am
+    /// 2026-11-15 (sparrow, Decode): vier Token kosten 2,81 Schritte.
+    ///
+    /// ⚑ **Erst alles prüfen, dann rechnen.** Ein Fehler in irgendeiner
+    /// Nachricht lehnt den Stapel ab, bevor ein Speicher berührt ist; der
+    /// Koordinator kann ihn dann Nachricht für Nachricht wiederholen, und
+    /// eine fremde Sitzung bezahlt nicht für eine kaputte.
+    ///
+    /// Token für Token wie bisher, wenn der Stapel nur eine Nachricht hat,
+    /// das Modell vier Ströme führt oder die Positionen einer Sitzung im
+    /// Stapel nicht aufsteigen; das Ergebnis ist dasselbe, nur ohne Bündel.
+    pub fn process_stapel(&self, msgs: &[PodMessage]) -> Result<Vec<ShardOut>, String> {
+        let einzeln = |msgs: &[PodMessage]| msgs.iter().enumerate().map(|(i, m)| self.process(m).map_err(|e| format!("Stapel, Nachricht {i}: {e}"))).collect();
+        if msgs.len() <= 1 || self.model.vierstrom.is_some() {
+            return einzeln(msgs);
+        }
+        // 1) Prüfen und die Eingänge bilden, ohne einen Speicher anzufassen.
+        let grenze = self.model.kontextgrenze();
+        let mut eingaenge: Vec<Vec<i16>> = Vec::with_capacity(msgs.len());
+        let mut sitzungen: Vec<u64> = Vec::new();
+        let mut laenge: HashMap<u64, usize> = HashMap::new();
+        let mut zuletzt: HashMap<u64, usize> = HashMap::new();
+        {
+            let caches = sperre(&self.caches, "KV-Cache")?;
+            for (i, m) in msgs.iter().enumerate() {
+                let fehler = |e: String| format!("Stapel, Nachricht {i}: {e}");
+                if !m.is_valid_frame() {
+                    return Err(fehler("ungültiger Rahmen (Magic)".to_string()));
+                }
+                if m.flags & crate::wire::FLAG_ABORT != 0 {
+                    return Err(fehler("Request abgebrochen".to_string()));
+                }
+                let pos = m.position as usize;
+                if pos >= grenze {
+                    return Err(fehler(format!("Position {pos} liegt hinter der Kontextgrenze {grenze} des Modells (Shard {})", self.shard_index)));
+                }
+                // Die Länge des Speichers, fortgeschrieben über die
+                // Nachrichten derselben Sitzung davor im Stapel.
+                let n = *laenge.entry(m.session_id).or_insert_with(|| caches.get(&m.session_id).map_or(0, KVCache::laenge));
+                if pos > n {
+                    return Err(fehler(format!("Position {pos} liegt hinter dem Ende des KV-Speichers ({n} Positionen, Shard {})", self.shard_index)));
+                }
+                laenge.insert(m.session_id, n.max(pos + 1));
+                // ⚠️ Je Sitzung aufsteigend, sonst Token für Token.
+                if zuletzt.insert(m.session_id, pos).is_some_and(|vorher| vorher >= pos) {
+                    drop(caches);
+                    return einzeln(msgs);
+                }
+                if !sitzungen.contains(&m.session_id) {
+                    sitzungen.push(m.session_id);
+                }
+                if m.carries_tokens() {
+                    if !self.has_embedding {
+                        return Err(fehler("Token-Eingang an einem Shard ohne Embedding".to_string()));
+                    }
+                    let tokens = unpack_tokens(&m.payload).map_err(fehler)?;
+                    if tokens.len() != 1 {
+                        return Err(fehler("erwarte genau ein Token je Nachricht".to_string()));
+                    }
+                    let token = tokens[0] as usize;
+                    if token >= self.model.vocab_size {
+                        return Err(fehler(format!(
+                            "Token {token} liegt ausserhalb des Vokabulars ({} Einträge, Shard {}, Position {pos})",
+                            self.model.vocab_size, self.shard_index
+                        )));
+                    }
+                    let mut hidden = self.model.embed_token(token);
+                    faelschen(&mut hidden, true);
+                    eingaenge.push(hidden);
+                } else {
+                    if m.payload.len() != self.model.hidden_size {
+                        return Err(fehler(format!(
+                            "Aktivierungen haben Länge {}, das Modell erwartet {} (Shard {}, Position {pos})",
+                            m.payload.len(),
+                            self.model.hidden_size,
+                            self.shard_index
+                        )));
+                    }
+                    if !verify_input_hash(&m.payload, &m.trace) {
+                        return Err(fehler(format!(
+                            "Eingangs-Hash stimmt nicht mit der Spur überein (Shard {}, Position {pos})",
+                            self.shard_index
+                        )));
+                    }
+                    let mut hidden = m.payload.clone();
+                    faelschen(&mut hidden, false);
+                    eingaenge.push(hidden);
+                }
+            }
+        }
+        // 2) Die Speicher der Sitzungen, je einer.
+        let mut speicher: Vec<KVCache> = Vec::with_capacity(sitzungen.len());
+        for s in &sitzungen {
+            speicher.push(self.take_cache(*s)?);
+        }
+        let belegung: Vec<Belegung> = msgs
+            .iter()
+            .map(|m| Belegung {
+                speicher: sitzungen.iter().position(|s| *s == m.session_id).unwrap_or(0),
+                position: m.position as usize,
+            })
+            .collect();
+        // 3) Ebene für Ebene, mit dem Hash jedes Tokens in seiner Spur.
+        let mut spuren: Vec<Vec<[u8; 32]>> = msgs.iter().map(|m| m.trace.clone()).collect();
+        let mut zustaende = eingaenge;
+        for i in self.layer_start..self.layer_end {
+            zustaende = match self.model.ebenen_stapel(zustaende, &belegung, &mut speicher, i, i + 1) {
+                Some(z) => z,
+                None => {
+                    for (s, c) in sitzungen.iter().zip(speicher) {
+                        self.put_cache(*s, c)?;
+                    }
+                    return Err("der Stapel passt nicht zum Modell".to_string());
+                }
+            };
+            for (spur, z) in spuren.iter_mut().zip(&zustaende) {
+                spur.push(activation_hash(z));
+            }
+        }
+        for (s, c) in sitzungen.iter().zip(speicher) {
+            self.put_cache(*s, c)?;
+        }
+        // 4) ⚑ Der Kopf für alle gesampelten Nachrichten in einem Zug
+        //    (`head_logits_stapel`): am Kopf-Shard die halbe Arbeit.
+        let mut koepfe: Vec<Option<Vec<i32>>> = vec![None; msgs.len()];
+        if self.has_lm_head {
+            let welche: Vec<usize> = (0..msgs.len()).filter(|&b| msgs[b].flags & FLAG_SAMPLE != 0).collect();
+            let eingaenge: Vec<&[i16]> = welche.iter().map(|&b| zustaende[b].as_slice()).collect();
+            for (b, l) in welche.into_iter().zip(self.model.head_logits_stapel(&eingaenge)) {
+                koepfe[b] = Some(l);
+            }
+        }
+        // 5) Je Nachricht unterschreiben und abschliessen, in Stapelfolge.
+        let mut aus = Vec::with_capacity(msgs.len());
+        for (((m, out), trace), kopf) in msgs.iter().zip(zustaende).zip(spuren).zip(koepfe) {
+            let prev = if m.carries_tokens() { ZERO_HASH } else { m.trace.last().copied().unwrap_or(ZERO_HASH) };
+            let out_hash = *trace.last().unwrap_or(&ZERO_HASH);
+            let sig = self.sign_transition(&m.segment_id, m.position, &prev, &out_hash)?;
+            aus.push(self.finish(m, m.session_id, m.position, out, trace, sig, kopf)?);
+        }
+        Ok(aus)
     }
 
     /// Signiert den Übergang `(segment_id, prev_hash, next_hash)`.
@@ -750,7 +898,9 @@ impl ShardNode {
     }
 
     /// Gemeinsamer Abschluss: weiterreichen (Zwischen-Shard) oder sampeln
-    /// (End-Shard).
+    /// (End-Shard). `logits`: schon gestapelt gerechnet
+    /// ([`Self::process_stapel`]), sonst rechnet der Kopf hier.
+    #[allow(clippy::too_many_arguments)]
     fn finish(
         &self,
         msg: &PodMessage,
@@ -759,6 +909,7 @@ impl ShardNode {
         out: Vec<i16>,
         trace: Vec<[u8; 32]>,
         sig: myl_types::bls::BlsSignature,
+        logits: Option<Vec<i32>>,
     ) -> Result<ShardOut, String> {
         if self.has_lm_head {
             // Letzter Shard: Nur Positionen mit FLAG_SAMPLE sampeln ein
@@ -770,7 +921,7 @@ impl ShardNode {
             }
 
             // Norm + LM-Head + Sampling.
-            let logits = self.model.head_logits(&out);
+            let logits = logits.unwrap_or_else(|| self.model.head_logits(&out));
             let token = self.model.greedy_next(&logits) as u32;
 
             // Fund 36, letzter Teil: **die Zahlen** festhalten, aus denen

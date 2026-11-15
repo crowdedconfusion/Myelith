@@ -1,19 +1,35 @@
-//! Pod-Koordinator: Micro-Batching + Pipeline-Dispatch + PoI-Aggregation
-//! (Anhang A.3, `coordinator_loop`).
+//! Pod-Koordinator: Pipeline-Dispatch und PoI-Aggregation (Anhang A.3,
+//! `coordinator_loop`).
 //!
-//! Der Koordinator sammelt eingehende Anfragen innerhalb des
-//! Micro-Batching-Fensters `WINDOW_MS` (Design-Entscheidung 2026-08-13:
-//! Default 250 ms, kalibriert wird in Phase 2.1), weist Session- und
-//! Segment-Ids zu, schickt die Token-Nachrichten in die Shard-Pipeline
-//! und sammelt die generierten Tokens. Abgeschlossene Segmente werden zu
-//! PoI-Bündeln aggregiert.
+//! Der Koordinator schickt die Token-Nachrichten einer Sitzung durch die
+//! Shard-Pipeline, sammelt die generierten Tokens und hält die
+//! abgeschlossenen Segmente, aus denen das PoI-Bündel entsteht.
 //!
-//! Für Phase 1 läuft die Pipeline in-Prozess (die Shards werden direkt
-//! aufgerufen); die Netzwerk-Variante (echte Nodes) folgt in den
-//! Härtungs-Phasen. Die Determinismus-Garantie gilt in beiden Fällen:
-//! derselbe Prompt ⇒ bitgleiche Token-Sequenz.
+//! ⚑ **Sitzungen laufen nebeneinander** (2026-11-15, Whitepaper 4.2:
+//! „Während Shard 3 Token t berechnet, verarbeitet Shard 1 bereits Token
+//! t+2“). [`Coordinator::rechne`] nimmt `&self`; was einer Sitzung gehört
+//! (Rückkopplung, erzeugte Token, ihre Segmente bis zum Ende), lebt im
+//! Lauf, geteilt sind nur der Weg zu den Shards und eine kurze Sperre zum
+//! Anhängen. Ein Shardprozess bedient eine Frage nach der anderen; rechnen
+//! zwei Sitzungen, steht die eine auf Shard 2, während die andere auf
+//! Shard 0 rechnet, und so entsteht die Überlappung von selbst.
+//!
+//! ⚑ **Und wer am selben Shard wartet, fährt im selben Stapel**
+//! (Continuous Batching, 2026-11-15, nach Orca): je Shard eine
+//! [`Sammelstelle`] ohne Zeitfenster; der Shard rechnet den Stapel Ebene
+//! für Ebene und den Kopf in einem Zug, die Gewichte also einmal je Stapel.
+//! Höchstens [`LAEUFE_JE_SHARD`] Läufe je Shard zugleich ([`Lauftor`]).
+//!
+//! 📌 Bis dahin stand hier ein Sammelfenster `WINDOW_MS` von 250 ms, das
+//! nie gelesen wurde, und der Pod rechnete strikt eine Anfrage nach der
+//! anderen: Je Augenblick arbeitete ein Shard von vier.
+//!
+//! Die Determinismus-Garantie gilt unverändert: derselbe Prompt ergibt
+//! bitgleich dieselbe Token-Sequenz, gleich was nebenher läuft, denn jede
+//! Sitzung hat ihren eigenen KV-Cache auf jedem Shard.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use myl_types::bls::{aggregate_signatures, BlsSignature};
 use myl_types::core_types::{segments_root, PoIBundle};
@@ -22,7 +38,6 @@ use myl_types::ids::{EpochId, MinerId, PodId, SegmentId};
 use crate::shard::{ShardNode, ShardOut};
 use crate::wire::{self, PodMessage, FLAG_SAMPLE};
 
-/// Default für das Micro-Batching-Fenster (Design-Entscheidung 2026-08-13).
 /// Wie viele abgeschlossene Segmente höchstens ungezogen liegen.
 ///
 /// ⚑ **Eine Notbremse und keine Politik** (Fund 164). Der vorgesehene
@@ -31,8 +46,6 @@ use crate::wire::{self, PodMessage, FLAG_SAMPLE};
 /// bei rund vierzehn je Anfrage über siebentausend Anfragen, also weit
 /// jenseits einer Epoche, und trotzdem endlich.
 pub const MAX_ABGESCHLOSSENE: usize = 100_000;
-
-pub const DEFAULT_WINDOW_MS: u64 = 250;
 
 /// Ein abgeschlossenes Segment mit den gesammelten Übergangs-Signaturen.
 #[derive(Debug, Clone)]
@@ -182,11 +195,139 @@ fn segment_id_from(session_id: u64, position: u64, prompt_laenge: u64) -> Segmen
     SegmentId::new(bytes)
 }
 
+/// Was ein Lauf liefert: die erzeugten Token und das letzte Segment dieses
+/// Laufs (für die Abrechnung der Antwort), `None` ohne Segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lauf {
+    pub token: Vec<u32>,
+    pub letztes_segment: Option<SegmentId>,
+}
+
+/// ⚑ **Eine Grenze für gleichzeitige Läufe** (2026-11-15), vor der Arbeit:
+/// Wer nicht hineinkommt, wartet hier und nicht mit seinem KV-Cache vor
+/// einem Shard. Der Koordinator setzt sie auf [`LAEUFE_JE_SHARD`] je Shard:
+/// Ohne Stapel brachten mehr Sitzungen als Shards gemessen nur 5 %, mit
+/// Stapeln wächst der Durchsatz bis 16 Sitzungen bei vier Shards weiter.
+pub struct Lauftor {
+    frei: Mutex<usize>,
+    wach: Condvar,
+}
+
+impl Lauftor {
+    /// Ein Tor mit `plaetze` Plätzen, mindestens einem.
+    pub fn neu(plaetze: usize) -> Self {
+        Self { frei: Mutex::new(plaetze.max(1)), wach: Condvar::new() }
+    }
+
+    /// Wartet auf einen Platz; frei wird er, wenn der Rückgabewert endet.
+    pub fn eintreten(&self) -> Platzkarte<'_> {
+        let mut frei = self.frei.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *frei == 0 {
+            frei = self.wach.wait(frei).unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *frei -= 1;
+        Platzkarte { tor: self }
+    }
+}
+
+/// Ein belegter Platz im [`Lauftor`]; gibt ihn beim Ende frei, auch nach
+/// einer Panik.
+pub struct Platzkarte<'a> {
+    tor: &'a Lauftor,
+}
+
+impl Drop for Platzkarte<'_> {
+    fn drop(&mut self) {
+        let mut frei = self.tor.frei.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *frei += 1;
+        drop(frei);
+        self.tor.wach.notify_one();
+    }
+}
+
+/// ⚑ **Eine Sammelstelle je Shard** (Continuous Batching, 2026-11-15, nach
+/// Orca, Yu et al., OSDI 2022: Planung je Iteration statt je Anfrage). Wer
+/// eine Nachricht an den Shard hat, stellt sie ein; ist gerade kein Stapel
+/// zu ihm unterwegs, nimmt er alles Wartende mit und verteilt danach die
+/// Ergebnisse. Wer kommt, während ein Stapel unterwegs ist, fährt im
+/// nächsten mit. **Kein Zeitfenster**: Allein wartet niemand, und gestapelt
+/// wird nur, was ohnehin warten müsste.
+#[derive(Default)]
+struct Sammelstelle {
+    zustand: Mutex<Sammlung>,
+    wach: Condvar,
+}
+
+#[derive(Default)]
+struct Sammlung {
+    wartend: Vec<(u64, PodMessage)>,
+    fertig: std::collections::HashMap<u64, Result<ShardOut, String>>,
+    unterwegs: bool,
+    naechste: u64,
+}
+
+impl Sammelstelle {
+    fn sperren(&self) -> MutexGuard<'_, Sammlung> {
+        self.zustand.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Gibt die Sammelstelle frei, auch wenn der Fahrer eines Stapels in Panik
+/// geht; sonst warteten die übrigen ewig auf einen Stapel, der nie ankommt.
+struct Fahrt<'a> {
+    stelle: &'a Sammelstelle,
+    marken: Vec<u64>,
+    ergebnisse: Option<Vec<Result<ShardOut, String>>>,
+}
+
+impl Drop for Fahrt<'_> {
+    fn drop(&mut self) {
+        let ergebnisse = self.ergebnisse.take().unwrap_or_default();
+        let mut z = self.stelle.sperren();
+        let mut erg = ergebnisse.into_iter();
+        for m in self.marken.drain(..) {
+            let r = erg.next().unwrap_or_else(|| Err("der Stapel kam nicht an".to_string()));
+            z.fertig.insert(m, r);
+        }
+        z.unterwegs = false;
+        drop(z);
+        self.stelle.wach.notify_all();
+    }
+}
+
+/// Wie viele Läufe je Shard höchstens nebeneinander: mehr als einer, damit
+/// sich vor jedem Shard ein Stapel bilden kann, aber nicht ohne Grenze.
+pub const LAEUFE_JE_SHARD: usize = 4;
+
+/// Die Segmente in kanonischer Folge; siehe [`Coordinator::kanonisch`].
+fn kanonisch_ordnen(liste: &[CompletedSegment]) -> Vec<&CompletedSegment> {
+    let mut folge: Vec<&CompletedSegment> = liste.iter().collect();
+    folge.sort_by_key(|c| {
+        let (sitzung, position) = myl_types::sitzung_und_position(&c.id);
+        (sitzung, position, myl_types::prompt_laenge(&c.id), *c.id.as_bytes())
+    });
+    folge
+}
+
+/// Die Blätter des Bündels; siehe [`Coordinator::blaetter`].
+fn blaetter_aus(liste: &[CompletedSegment]) -> (Vec<myl_types::Ausgabenzeugnis>, Vec<myl_types::Segmentzeugnis>) {
+    let folge = kanonisch_ordnen(liste);
+    let ausgaben = folge
+        .iter()
+        .map(|c| myl_types::Ausgabenzeugnis {
+            id: c.id,
+            eingang: c.eingangs_commitment,
+            ausgang: c.trace.last().copied().unwrap_or([0u8; 32]),
+        })
+        .collect();
+    let zeugnisse = folge.iter().map(|c| myl_types::Segmentzeugnis { id: c.id, spurwurzel: c.spurwurzel }).collect();
+    (ausgaben, zeugnisse)
+}
+
 /// Pod-Koordinator.
 pub struct Coordinator {
     pub pod_id: PodId,
     pub epoch: EpochId,
-    pub window_ms: u64,
     /// Die Shard-Pipeline in Reihenfolge (Shard 0 zuerst).
     /// Wie die Shards erreicht werden.
     ///
@@ -198,10 +339,15 @@ pub struct Coordinator {
     weg: std::sync::Arc<dyn crate::shardweg::Shardweg>,
     /// Die festen Angaben des Pods, einmal erhoben.
     besetzung: crate::shardweg::Podbesetzung,
-    /// Abgeschlossene Segmente dieser Epoche.
-    completed: Vec<CompletedSegment>,
+    /// Abgeschlossene Segmente dieser Epoche, in der Folge des Anhängens;
+    /// das Bündel liest sie in [`Self::kanonisch`]er Folge.
+    completed: Mutex<Vec<CompletedSegment>>,
     /// Wie viele Segmente wegen des Deckels verworfen wurden.
-    verworfen: u64,
+    verworfen: AtomicU64,
+    /// Wie viele Läufe zugleich rechnen dürfen.
+    tor: Lauftor,
+    /// Je Shard eine Sammelstelle für Stapel über Sitzungen.
+    sammelstellen: Vec<Sammelstelle>,
     /// Wer eine ausgefallene Position vertritt (Whitepaper 6.8); geht ins
     /// Bündel und wird mitunterschrieben.
     vertreter: Vec<(u32, MinerId)>,
@@ -212,9 +358,9 @@ impl Coordinator {
     ///
     /// ⚑ **Für Prüfläufe und den Einzelbetrieb.** Wer so fährt, hält
     /// alle Schlüssel des Pods; siehe [`crate::shardweg::ImProzess`].
-    pub fn new(pod_id: PodId, epoch: EpochId, shards: Vec<Arc<ShardNode>>, window_ms: u64) -> Self {
+    pub fn new(pod_id: PodId, epoch: EpochId, shards: Vec<Arc<ShardNode>>) -> Self {
         let weg = std::sync::Arc::new(crate::shardweg::ImProzess::neu(shards));
-        Self::ueber_weg(pod_id, epoch, weg, window_ms)
+        Self::ueber_weg(pod_id, epoch, weg)
             .expect("Shards im Prozess antworten immer")
     }
 
@@ -226,17 +372,19 @@ impl Coordinator {
         pod_id: PodId,
         epoch: EpochId,
         weg: std::sync::Arc<dyn crate::shardweg::Shardweg>,
-        window_ms: u64,
     ) -> Result<Self, String> {
         let besetzung = crate::shardweg::Podbesetzung::erheben(weg.as_ref())?;
+        let tor = Lauftor::neu(weg.shardzahl() * LAEUFE_JE_SHARD);
+        let sammelstellen = (0..weg.shardzahl()).map(|_| Sammelstelle::default()).collect();
         Ok(Self {
             pod_id,
             epoch,
-            window_ms,
             weg,
             besetzung,
-            completed: Vec::new(),
-            verworfen: 0,
+            completed: Mutex::new(Vec::new()),
+            verworfen: AtomicU64::new(0),
+            tor,
+            sammelstellen,
             vertreter: Vec::new(),
         })
     }
@@ -262,28 +410,76 @@ impl Coordinator {
     /// dieselbe Position zweimal im Bündel), die Shards vergessen die
     /// Sitzung, und der Auftrag wird **einmal** neu gerechnet. Scheitert
     /// auch das, kommt nichts zurück und kein halbes Segment bleibt stehen.
-    pub fn run_prompt(&mut self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64) -> Vec<u32> {
-        let vorher = self.completed.len();
-        if let Some(t) = self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, true) {
-            return t;
-        }
-        self.completed.truncate(vorher);
-        self.sitzung_abschliessen(session_id);
-        eprintln!("[coordinator] Sitzung {session_id}: eine Runde ging verloren, der Auftrag wird neu gerechnet");
-        // Die Wiederholung Token für Token: Sie trägt auch über einen Shard,
-        // der den Stapel nicht kennt (Fund 650).
-        match self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, false) {
+    pub fn run_prompt(&self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64) -> Vec<u32> {
+        self.rechne(session_id, prompt_tokens, max_new_tokens).token
+    }
+
+    /// Wie [`Self::run_prompt`], dazu das letzte Segment **dieses** Laufs.
+    ///
+    /// ⚑ **Nebenläufig aufrufbar** (2026-11-15). Die Segmente eines Laufs
+    /// sammeln sich in ihm und kommen erst am Ende unter einer kurzen Sperre
+    /// zu den übrigen; ein gescheiterter Durchlauf hinterlässt also nichts,
+    /// ohne dass etwas zurückgeschnitten werden müsste (Fund 654). Nebenher
+    /// wäre `completed_segments().last()` das Segment irgendeiner Sitzung,
+    /// deshalb kommt es von hier. Zwei Läufe derselben Sitzung zugleich
+    /// gehören nicht hierher: Sie teilten sich auf jedem Shard einen
+    /// KV-Cache; die Tür vergibt je Anfrage eine neue Sitzung.
+    pub fn rechne(&self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64) -> Lauf {
+        let _platz = self.tor.eintreten();
+        let mut ablage = Vec::new();
+        let token = match self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, true, &mut ablage) {
             Some(t) => t,
             None => {
-                self.completed.truncate(vorher);
-                Vec::new()
+                ablage.clear();
+                self.sitzung_abschliessen(session_id);
+                eprintln!("[coordinator] Sitzung {session_id}: eine Runde ging verloren, der Auftrag wird neu gerechnet");
+                // Die Wiederholung Token für Token: Sie trägt auch über einen
+                // Shard, der den Stapel nicht kennt (Fund 650).
+                match self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, false, &mut ablage) {
+                    Some(t) => t,
+                    None => return Lauf { token: Vec::new(), letztes_segment: None },
+                }
             }
+        };
+        let letztes_segment = ablage.last().map(|c| c.id);
+        self.anhaengen(ablage);
+        Lauf { token, letztes_segment }
+    }
+
+    /// Die Segmente eines Laufs zu den übrigen, bis zum Deckel.
+    ///
+    /// ⚑ **Die Notbremse** (Fund 164). Solange niemand ein Bündel zieht,
+    /// wüchse die Liste sonst ohne Grenze. Der Deckel ist grosszügig und
+    /// der Zähler daneben sagt, dass er greift; ein stiller Verlust wäre
+    /// schlimmer als ein sichtbarer.
+    fn anhaengen(&self, ablage: Vec<CompletedSegment>) {
+        let mut liste = self.liste();
+        let frei = MAX_ABGESCHLOSSENE.saturating_sub(liste.len());
+        let zuviel = ablage.len().saturating_sub(frei);
+        liste.extend(ablage.into_iter().take(frei));
+        drop(liste);
+        if zuviel > 0 {
+            self.verworfen.fetch_add(zuviel as u64, Ordering::Relaxed);
         }
     }
 
+    /// Die Liste der Segmente, auch nach einer Panik in einem anderen Lauf:
+    /// Angehängt wird in einem Zug, eine halbe Änderung gibt es nicht.
+    fn liste(&self) -> MutexGuard<'_, Vec<CompletedSegment>> {
+        self.completed.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Ein Durchlauf; `None`, sobald eine Runde zu einem Shard scheitert.
-    /// `stapel`: der Prefill als Stapel je Shard (Fund 650).
-    fn ein_durchlauf(&mut self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64, stapel: bool) -> Option<Vec<u32>> {
+    /// `stapel`: der Prefill als Stapel je Shard (Fund 650). Die Segmente
+    /// gehen nach `ablage`.
+    fn ein_durchlauf(
+        &self,
+        session_id: u64,
+        prompt_tokens: &[u32],
+        max_new_tokens: u64,
+        stapel: bool,
+        ablage: &mut Vec<CompletedSegment>,
+    ) -> Option<Vec<u32>> {
         let mut generated = Vec::new();
 
         // 1) Prefill: Prompt-Tokens durch die Pipeline schicken (je Token
@@ -311,7 +507,7 @@ impl Coordinator {
                 let ergebnisse = self.pump_stapel(&msgs)?;
                 for (k, (out_trace, out_sigs, token_opt, feedback_opt)) in ergebnisse.into_iter().enumerate() {
                     let i = i0 + k;
-                    self.segment_abschliessen(segment_id_from(session_id, i as u64, prompt_tokens.len() as u64), i as u64, out_trace, out_sigs, eingaenge[k], msgs[k].payload.clone());
+                    self.segment_abschliessen(ablage, segment_id_from(session_id, i as u64, prompt_tokens.len() as u64), i as u64, out_trace, out_sigs, eingaenge[k], msgs[k].payload.clone());
                     if let Some(t) = token_opt {
                         generated.push(t);
                     }
@@ -333,7 +529,7 @@ impl Coordinator {
             let eingang = crate::trace::activation_hash(&packed);
             let msg = PodMessage::token_input(segment_id, session_id, i as u64, packed, flags);
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg)?;
-            self.segment_abschliessen(segment_id, i as u64, out_trace, out_sigs, eingang, msg.payload.clone());
+            self.segment_abschliessen(ablage, segment_id, i as u64, out_trace, out_sigs, eingang, msg.payload.clone());
             if let Some(t) = token_opt {
                 generated.push(t);
             }
@@ -357,7 +553,7 @@ impl Coordinator {
             let position = msg.position;
             let eingang = crate::trace::activation_hash(&msg.payload);
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg)?;
-            self.segment_abschliessen(segment_id, position, out_trace, out_sigs, eingang, msg.payload.clone());
+            self.segment_abschliessen(ablage, segment_id, position, out_trace, out_sigs, eingang, msg.payload.clone());
             match token_opt {
                 Some(t) => generated.push(t),
                 None => break,
@@ -373,8 +569,10 @@ impl Coordinator {
     /// Eine leere Spur wird **nicht** aufgenommen: Sie entstünde, wenn
     /// kein Shard gerechnet hat, und ein Segment ohne Arbeit gehört nicht
     /// in ein PoI-Bündel.
+    #[allow(clippy::too_many_arguments)]
     fn segment_abschliessen(
-        &mut self,
+        &self,
+        ablage: &mut Vec<CompletedSegment>,
         id: SegmentId,
         position: u64,
         trace: Vec<[u8; 32]>,
@@ -393,14 +591,7 @@ impl Coordinator {
         // `kette[j]` ist die Eingabe der Layer `j`, `kette[j+1]` ihre
         // Ausgabe. Ohne den ersten Eintrag hinge die erste Layer an
         // nichts.
-        // ⚑ **Die Notbremse** (Fund 164). Solange niemand ein Bündel
-        // zieht, wächst die Liste sonst ohne Grenze. Der Deckel ist
-        // grosszügig und der Zähler daneben sagt, dass er greift; ein
-        // stiller Verlust wäre schlimmer als ein sichtbarer.
-        if self.completed.len() >= MAX_ABGESCHLOSSENE {
-            self.verworfen += 1;
-            return;
-        }
+        // Der Deckel greift beim Anhängen ([`Self::anhaengen`]).
         let mut kette = Vec::with_capacity(trace.len() + 1);
         kette.push(eingangs_commitment);
         kette.extend_from_slice(&trace);
@@ -412,7 +603,7 @@ impl Coordinator {
             Ok(w) => w,
             Err(_) => return,
         };
-        self.completed.push(CompletedSegment {
+        ablage.push(CompletedSegment {
             id,
             position,
             trace,
@@ -443,21 +634,18 @@ impl Coordinator {
                 break;
             }
             let stapel: Vec<PodMessage> = unterwegs.iter().map(|(_, m)| m.clone()).collect();
-            let outs = match self.weg.frage(shard_idx, &crate::shardweg::Shardanfrage::RechneStapel(stapel)) {
-                Ok(crate::shardweg::Shardantwort::StapelGerechnet(o)) if o.len() == unterwegs.len() => o,
-                Ok(crate::shardweg::Shardantwort::Fehler(e)) => {
-                    eprintln!("[coordinator] Shard {shard_idx} lehnte den Stapel ab: {e}");
-                    return None;
+            // ⚑ **Über die Sammelstelle** (2026-11-15): Der Prefill einer
+            //   Sitzung fährt mit den Decode-Token anderer im selben Stapel.
+            let mut outs = Vec::with_capacity(stapel.len());
+            for r in self.sammeln_viele(shard_idx, &stapel) {
+                match r {
+                    Ok(o) => outs.push(o),
+                    Err(e) => {
+                        eprintln!("[coordinator] Shard {shard_idx} lehnte den Stapel ab: {e}");
+                        return None;
+                    }
                 }
-                Ok(andere) => {
-                    eprintln!("[coordinator] Shard {shard_idx} antwortete auf den Stapel mit {andere:?}");
-                    return None;
-                }
-                Err(e) => {
-                    eprintln!("[coordinator] Shard {shard_idx} lehnte ab: {e}");
-                    return None;
-                }
-            };
+            }
             let mut weiter = Vec::new();
             for ((i, _), out) in unterwegs.into_iter().zip(outs) {
                 let e = &mut aus[i];
@@ -484,6 +672,74 @@ impl Coordinator {
         Some(aus)
     }
 
+    /// Rechnet eine Nachricht auf Shard `j` über dessen Sammelstelle; siehe
+    /// [`Sammelstelle`].
+    fn sammeln(&self, j: usize, msg: &PodMessage) -> Result<ShardOut, String> {
+        self.sammeln_viele(j, std::slice::from_ref(msg))
+            .pop()
+            .unwrap_or_else(|| Err("die Sammelstelle lieferte nichts".to_string()))
+    }
+
+    /// Rechnet mehrere Nachrichten eines Aufrufers auf Shard `j` über dessen
+    /// Sammelstelle, Ergebnis je Nachricht in ihrer Folge. ⚑ **In
+    /// Eingangsfolge abgeholt**: Nachrichten einer Sitzung bleiben geordnet,
+    /// auch wenn sie auf zwei Stapel verteilt werden, und ihre Positionen
+    /// steigen damit, wie der Shard es verlangt.
+    fn sammeln_viele(&self, j: usize, msgs: &[PodMessage]) -> Vec<Result<ShardOut, String>> {
+        let Some(stelle) = self.sammelstellen.get(j) else {
+            return self.stapel_rechnen(j, msgs);
+        };
+        let n = msgs.len();
+        let mut z = stelle.sperren();
+        let erste = z.naechste;
+        z.naechste += n as u64;
+        let marken: Vec<u64> = (erste..erste + n as u64).collect();
+        z.wartend.extend(marken.iter().copied().zip(msgs.iter().cloned()));
+        let mut ergebnisse: Vec<Option<Result<ShardOut, String>>> = (0..n).map(|_| None).collect();
+        let mut offen = n;
+        loop {
+            for (k, m) in marken.iter().enumerate() {
+                if ergebnisse[k].is_none() {
+                    if let Some(r) = z.fertig.remove(m) {
+                        ergebnisse[k] = Some(r);
+                        offen -= 1;
+                    }
+                }
+            }
+            if offen == 0 {
+                return ergebnisse.into_iter().flatten().collect();
+            }
+            if !z.unterwegs && !z.wartend.is_empty() {
+                z.unterwegs = true;
+                let k = z.wartend.len().min(crate::shardweg::MAX_STAPEL);
+                let stapel: Vec<(u64, PodMessage)> = z.wartend.drain(..k).collect();
+                drop(z);
+                let mut fahrt = Fahrt { stelle, marken: stapel.iter().map(|(m, _)| *m).collect(), ergebnisse: None };
+                let nachrichten: Vec<PodMessage> = stapel.into_iter().map(|(_, m)| m).collect();
+                fahrt.ergebnisse = Some(self.stapel_rechnen(j, &nachrichten));
+                drop(fahrt);
+                z = stelle.sperren();
+                continue;
+            }
+            z = stelle.wach.wait(z).unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    /// Ein Stapel an Shard `j`, Ergebnis je Nachricht. Eine allein geht wie
+    /// bisher als `Rechne`. ⚑ **Lehnt der Shard den Stapel ab, rechnet jede
+    /// Nachricht für sich**: Er prüft alles vor dem ersten Rechnen
+    /// ([`ShardNode::process_stapel`]), also hat er nichts verändert, und
+    /// eine kaputte Nachricht nimmt keine fremde Sitzung mit.
+    fn stapel_rechnen(&self, j: usize, msgs: &[PodMessage]) -> Vec<Result<ShardOut, String>> {
+        if msgs.len() == 1 {
+            return vec![self.weg.rechne(j, &msgs[0])];
+        }
+        match self.weg.frage(j, &crate::shardweg::Shardanfrage::RechneStapel(msgs.to_vec())) {
+            Ok(crate::shardweg::Shardantwort::StapelGerechnet(o)) if o.len() == msgs.len() => o.into_iter().map(Ok).collect(),
+            _ => msgs.iter().map(|m| self.weg.rechne(j, m)).collect(),
+        }
+    }
+
     /// Schickt eine Nachricht durch die Shard-Pipeline und sammelt Spur,
     /// Signaturen, ein evtl. gesampeltes Token und die Feedback-Nachricht.
     /// `None`, wenn ein Shard ablehnt oder nicht erreicht wird (Fund 654).
@@ -506,7 +762,7 @@ impl Coordinator {
             if shard_idx >= self.weg.shardzahl() {
                 break;
             }
-            match self.weg.rechne(shard_idx, &current) {
+            match self.sammeln(shard_idx, &current) {
                 Ok(ShardOut::Forward(next)) => {
                     trace = next.trace.clone();
                     signatures.push(next.signature);
@@ -547,6 +803,29 @@ impl Coordinator {
             }
         }
         Some((trace, signatures, token_out, feedback_out))
+    }
+
+    /// ⚑ **Die kanonische Folge der Segmente** (2026-11-15):
+    /// nach Sitzung, Position und Promptlänge als Zahlen, die Kennung zuletzt.
+    /// Bündelwurzel, Ausgabenwurzel und die Stellen der Spurablage folgen ihr.
+    /// 📌 Bis dahin galt die Reihenfolge des Fertigwerdens: unschädlich,
+    /// solange ein Pod eine Anfrage nach der anderen rechnet; rechnen
+    /// Sitzungen nebeneinander, wären sich zwei Zwillinge mit derselben
+    /// Arbeit je nach Takt uneinig. `completed` selbst bleibt in der Folge
+    /// des Anhängens; sortiert wird beim Lesen. Eine Abschrift, denn die
+    /// Liste steht unter einer Sperre.
+    pub fn kanonisch(&self) -> Vec<CompletedSegment> {
+        kanonisch_ordnen(&self.liste()).into_iter().cloned().collect()
+    }
+
+    /// **Die Blätter des Bündels**: je Segment das Ausgabenzeugnis (Stufe 1:
+    /// Eingang und letzte Ausgabe; die Ausgabenwurzel ordnet nach Kennung,
+    /// der Zwilling kommt also auf dieselbe Wurzel, auch wenn er die Segmente
+    /// in anderer Folge abschloss) und das Segmentzeugnis (in der Folge von
+    /// [`Self::kanonisch`], für `segments_root`). Daraus baut der Ortsdienst auch einen
+    /// Differenzbeweis.
+    pub fn blaetter(&self) -> (Vec<myl_types::Ausgabenzeugnis>, Vec<myl_types::Segmentzeugnis>) {
+        blaetter_aus(&self.liste())
     }
 
     /// Baut ein PoI-Bündel aus den abgeschlossenen Segmenten dieser
@@ -590,40 +869,24 @@ impl Coordinator {
     /// sind für sich getestet; die Naht dazwischen hat nie jemand
     /// zusammengesteckt. Festgehalten in
     /// `tests/koordinator_byzantinisch.rs`.
-    /// **Die Blätter des Bündels**: je Segment das Ausgabenzeugnis (Stufe 1:
-    /// Eingang und letzte Ausgabe; die Ausgabenwurzel ordnet nach Kennung,
-    /// der Zwilling kommt also auf dieselbe Wurzel, auch wenn er die Segmente
-    /// in anderer Folge abschloss) und das Segmentzeugnis (in Bündelfolge,
-    /// für `segments_root`). Daraus baut der Ortsdienst auch einen
-    /// Differenzbeweis.
-    pub fn blaetter(&self) -> (Vec<myl_types::Ausgabenzeugnis>, Vec<myl_types::Segmentzeugnis>) {
-        let ausgaben = self
-            .completed
-            .iter()
-            .map(|c| myl_types::Ausgabenzeugnis {
-                id: c.id,
-                eingang: c.eingangs_commitment,
-                ausgang: c.trace.last().copied().unwrap_or([0u8; 32]),
-            })
-            .collect();
-        let zeugnisse = self.completed.iter().map(|c| myl_types::Segmentzeugnis { id: c.id, spurwurzel: c.spurwurzel }).collect();
-        (ausgaben, zeugnisse)
-    }
-
     pub fn build_poi_bundle(&self) -> Result<PoIBundle, String> {
-        if self.completed.is_empty() {
+        // ⚑ **Ein Schnappschuss** (2026-11-15): Blätter, Zahl, Arbeit und
+        //   Aggregat aus derselben Liste. Läuft nebenher eine Sitzung,
+        //   kommen ihre Segmente ganz oder gar nicht hinein, nie zur Hälfte
+        //   ([`Self::rechne`] hängt in einem Zug an).
+        let liste = self.liste();
+        if liste.is_empty() {
             return Err("keine abgeschlossenen Segmente".to_string());
         }
-        let (ausgaben, zeugnisse) = self.blaetter();
+        let (ausgaben, zeugnisse) = blaetter_aus(&liste);
         let root = segments_root(&zeugnisse).map_err(|e| e.to_string())?;
         let wurzel_der_ausgaben = myl_types::ausgabenwurzel(&ausgaben).map_err(|e| e.to_string())?;
-        let vtfe = self.beanspruchte_vtfe()?;
-        // Aggregat über die Übergangs-Signaturen (alle dieselbe Arbeit).
-        let all_sigs: Vec<BlsSignature> = self
-            .completed
-            .iter()
-            .flat_map(|c| c.signatures.clone())
-            .collect();
+        let vtfe = self.vtfe_fuer(liste.len() as u64)?;
+        // Aggregat über die Übergangs-Signaturen (alle dieselbe Arbeit); eine
+        // Summe, also gleich in jeder Folge.
+        let all_sigs: Vec<BlsSignature> = liste.iter().flat_map(|c| c.signatures.clone()).collect();
+        let segmente = liste.len() as u32;
+        drop(liste);
         let agg = if all_sigs.is_empty() {
             BlsSignature([0u8; 96])
         } else {
@@ -647,7 +910,7 @@ impl Coordinator {
             // Shards prüften dagegen schon richtig: `signiere_buendel`
             // rechnet die vTFE gegen `completed.len()` nach, während
             // die unterschriebene Botschaft eine Eins trug.
-            segmente: self.completed.len() as u32,
+            segmente,
             ausgabenwurzel: wurzel_der_ausgaben,
             vertreter: self.vertreter.clone(),
         })
@@ -694,12 +957,9 @@ impl Coordinator {
         // die Shards rechneten gegen die wirkliche Zahl. Ein Bündel,
         // dessen Signatur für eine andere Segmentzahl gegeben wurde als
         // die, die darin steht, ist nicht prüfbar.
-        let segmente = self.completed.len() as u64;
-        debug_assert_eq!(
-            u64::from(bundle.segmente),
-            segmente,
-            "die Segmentzahl im Buendel und die der Unterschrift laufen auseinander"
-        );
+        // 📌 Seit Sitzungen nebeneinander laufen (2026-11-15), aus dem Bündel
+        //   und nicht neu aus der Liste: Dazwischen kann ein Lauf anhängen.
+        let segmente = u64::from(bundle.segmente);
         let zuschnitte = self.besetzung.zuschnitte.clone();
 
         // ⚑ **Jeder Shard unterschreibt selbst.** Der Koordinator kann
@@ -732,8 +992,18 @@ impl Coordinator {
     }
 
     /// Die abgeschlossenen Segmente (für Tests/Inspektion).
-    pub fn completed_segments(&self) -> &[CompletedSegment] {
-        &self.completed
+    ///
+    /// ⚑ **Eine Abschrift** (2026-11-15): Die Liste steht unter einer
+    /// Sperre, und ein Wächter in der Hand eines Aufrufers, der danach ein
+    /// Bündel baut, verklemmte sich. Für die blosse Zahl
+    /// [`Self::segmentzahl`].
+    pub fn completed_segments(&self) -> Vec<CompletedSegment> {
+        self.liste().clone()
+    }
+
+    /// Wie viele Segmente abgeschlossen sind.
+    pub fn segmentzahl(&self) -> usize {
+        self.liste().len()
     }
 
     /// Beendet eine Sitzung: Alle Shards vergessen ihren Zustand dazu.
@@ -773,7 +1043,7 @@ impl Coordinator {
     }
 
     pub fn verworfene_segmente(&self) -> u64 {
-        self.verworfen
+        self.verworfen.load(Ordering::Relaxed)
     }
 
     /// Zieht das Bündel und **leert** die Segmentliste.
@@ -790,7 +1060,7 @@ impl Coordinator {
     /// hinsehen will, sieht hin; wer abgibt, gibt ab.
     pub fn buendel_ziehen(&mut self) -> Result<PoIBundle, String> {
         let buendel = self.build_signed_poi_bundle()?;
-        self.completed.clear();
+        self.completed.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
         Ok(buendel)
     }
 
@@ -815,6 +1085,11 @@ impl Coordinator {
     /// die Stelle, die über die Pods hinwegsieht, nicht in den einzelnen
     /// Pod.
     pub fn beanspruchte_vtfe(&self) -> Result<u64, String> {
+        self.vtfe_fuer(self.segmentzahl() as u64)
+    }
+
+    /// Die Arbeit für `tokens` Segmente; siehe [`Self::beanspruchte_vtfe`].
+    fn vtfe_fuer(&self, tokens: u64) -> Result<u64, String> {
         if self.besetzung.zuschnitte.is_empty() {
             return Err("Pod ohne Shards beansprucht keine Arbeit".to_string());
         }
@@ -822,7 +1097,6 @@ impl Coordinator {
         // Ein Segment ist ein Vorwärtspass, also ein
         // Token-Forward-Äquivalent. Prefill-Positionen zählen mit: Sie
         // emittieren kein Token, rechnen aber denselben Pass.
-        let tokens: u64 = self.completed.len() as u64;
 
         let mut summe = 0u64;
         for (j, z) in self.besetzung.zuschnitte.iter().enumerate() {
@@ -872,8 +1146,42 @@ impl Coordinator {
 mod tests {
     use super::*;
 
+    /// Das Tor lässt höchstens so viele hinein, wie es Plätze hat, und gibt
+    /// beim Verlassen einen frei. ⚑ Gegenprobe: Mit einem Tor ohne Grenze
+    /// stiege die Spitze auf vier.
     #[test]
-    fn window_default() {
-        assert_eq!(DEFAULT_WINDOW_MS, 250);
+    fn das_lauftor_laesst_hoechstens_seine_plaetze_hinein() {
+        use std::sync::atomic::AtomicUsize;
+        let tor = Arc::new(Lauftor::neu(2));
+        let drin = Arc::new(AtomicUsize::new(0));
+        let spitze = Arc::new(AtomicUsize::new(0));
+        let faeden: Vec<_> = (0..4)
+            .map(|_| {
+                let (tor, drin, spitze) = (Arc::clone(&tor), Arc::clone(&drin), Arc::clone(&spitze));
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        let _platz = tor.eintreten();
+                        let jetzt = drin.fetch_add(1, Ordering::SeqCst) + 1;
+                        spitze.fetch_max(jetzt, Ordering::SeqCst);
+                        std::thread::yield_now();
+                        drin.fetch_sub(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for f in faeden {
+            f.join().expect("Faden");
+        }
+        assert!(spitze.load(Ordering::SeqCst) <= 2, "mehr Laeufe zugleich als Plaetze");
+        assert_eq!(*tor.frei.lock().expect("Tor"), 2, "ein Platz blieb belegt");
+    }
+
+    /// Ein Tor für null Shards hat trotzdem einen Platz; sonst wartete der
+    /// erste Lauf ewig, statt am fehlenden Shard zu scheitern.
+    #[test]
+    fn ein_tor_ohne_shards_hat_einen_platz() {
+        let tor = Lauftor::neu(0);
+        drop(tor.eintreten());
+        assert_eq!(*tor.frei.lock().expect("Tor"), 1);
     }
 }

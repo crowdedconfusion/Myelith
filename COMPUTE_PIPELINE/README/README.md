@@ -1,10 +1,10 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.61.1 (`myl-pod` 0.52.1, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-11-14
+> **Version:** 0.65.0 (`myl-pod` 0.56.0, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-11-15
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
-> Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
+> Manipulationserkennung, `coordinator_loop` mit Pipelining über Sitzungen,
 > KV-Cache-Session-Affinität, erasure-codierte DA-Archivierung,
 > Ausfallsicherung mit Standby-Übernahme, Epochenübergang, seit dem
 > 26. August die **Verdrahtung mit dem Epochen-Scheduler** und seit dem
@@ -22,14 +22,15 @@
 > gebaut.
 
 Pod-Orchestrierung über ein echtes Netzwerk: Pipeline-Routing,
-Micro-Batching, KV-Cache-Verwaltung, spekulatives Decoding.
+Pipelining über Sitzungen, KV-Cache-Verwaltung, spekulatives Decoding.
 Referenzimplementierung von Whitepaper Kap. 4 und Anhang A.3.
 
 ## Aufgabe
 
 Schicht L2 (Compute Layer / Inference Fabric): der „Mining-Loop" — ein Pod
 aus k Shard-Minern führt gemeinsam Forward-Pässe aus, koordiniert von einem
-Pod-Koordinator, der Micro-Batches bildet und PoI-Bündel einreicht
+Pod-Koordinator, der Sitzungen nebeneinander durch die Pipeline schickt
+und PoI-Bündel einreicht
 (Anhang A.3). Diese Komponente ist die **Netzwerk-Orchestrierung** um
 INTEGER_LLM herum — sie ersetzt nicht dessen Rechenkerne (`kernels`/
 `runtime`), sondern verteilt sie über echte Nodes, mit Session-Affinität,
@@ -88,13 +89,12 @@ COMPUTE_PIPELINE/
     │   ├── shard.rs           shard_loop: Eingangsprüfung, Forward,
     │   │                      Signieren, Session-Affinität, DA-Archiv
     │   ├── da.rs              DA-Archivierung (ErasureCoder, XOR-Parität)
-    │   ├── micro_batch.rs     Micro-Batching-Fenster und Pipeline-Tracker
     │   ├── standby.rs         Besetzung eines Pods: k Positionen, zwei in
     │   │                      Reserve, Übernahme und Epochenwechsel
     │   ├── zuteilung.rs       vom geprüften Epochenseed zur Besetzung:
     │   │                      die Verbindung zum Epochen-Scheduler
-    │   ├── coordinator.rs     coordinator_loop: Micro-Batching, Dispatch,
-    │   │                      PoI-Bündel-Aggregation
+    │   ├── coordinator.rs     coordinator_loop: Sitzungen nebeneinander,
+    │   │                      Dispatch, PoI-Bündel-Aggregation
     │   └── main.rs            myl-pod-node-CLI
     └── tests/
         ├── pod_e2e.rs         Akzeptanztest: Determinismus, Bitgleichheit,
@@ -106,6 +106,175 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.65.0 (2026-11-15): Prefill und Decode im selben Stapel (`myl-pod` 0.56.0)
+
+- ⚑ **Der Prefill geht über die Sammelstelle** (`sammeln_viele`): Der
+  Prompt einer neuen Sitzung fährt mit den Decode-Token anderer im selben
+  Stapel, wie bei Orca. Bis dahin ging er an der Sammelstelle vorbei als
+  eigener Stapel zum Shard. Abgeholt wird in Eingangsfolge, die Positionen
+  einer Sitzung steigen also auch über zwei Stapel hinweg. Nebenbei: Ein
+  Shard, der keine Stapel kennt, wird jetzt Nachricht für Nachricht bedient,
+  statt dass der ganze Lauf wiederholt wird.
+- **Probe:** `nebenlaeufig::stapel_ueber_sitzungen_rechnen_bitgleich` zählt
+  zusätzlich gemischte Stapel mit Prefill-Positionen (dreimal je vier) und
+  verlangt mindestens einen; bitgleich wie zuvor. Proben 159 grün, Clippy
+  mit und ohne Merkmale sauber.
+- 📌 **Gemessen** (vier Freigabe-Shards, dazu der schnellere Kopf aus
+  INTEGER_LLM 0.152.0), 16 Sitzungen, ohne und mit Bündeln über Sitzungen:
+  ohne Kerngrenze 1,75 und **2,38** (+36 %), mit drei Kernen je Shard 1,80
+  und 2,10. ⚠️ Die Grundlinie ist berichtigt: „ohne Stapel“ zerlegt einen
+  gemischten Stapel jetzt in einen Stapel je Sitzung, sonst fiele auch der
+  Prefill einer Sitzung in Einzelaufrufe, der vorher gestapelt fuhr.
+- `myl-pod` 0.56.0.
+
+### v0.64.0 (2026-11-15): Continuous Batching (`myl-pod` 0.55.0)
+
+- ⚑ **Wer am selben Shard wartet, fährt im selben Stapel** (nach Orca, Yu
+  et al., OSDI 2022: Planung je Iteration statt je Anfrage). Je Shard eine
+  `Sammelstelle` im Koordinator, **ohne Zeitfenster**: Wer eine Nachricht
+  hat, stellt sie ein; ist kein Stapel zu diesem Shard unterwegs, nimmt er
+  alles Wartende mit (bis `MAX_STAPEL`), sonst fährt er im nächsten. Eine
+  allein geht wie bisher als `Rechne`. Lehnt der Shard einen Stapel ab,
+  rechnet jede Nachricht für sich, damit eine kaputte keine fremde Sitzung
+  mitnimmt; ein Wächter gibt die Stelle auch nach einer Panik frei.
+- ⚑ **`ShardNode::process_stapel`**: Der Shard prüft erst alles (Rahmen,
+  Abbruch, Token gegen Vokabular, Länge, Eingangs-Hash, Positionen je
+  Sitzung fortgeschrieben) und rechnet dann jede Ebene für den ganzen
+  Stapel (`IntegerModel::ebenen_stapel`, INTEGER_LLM 0.151.0) und den Kopf
+  aller gesampelten Nachrichten in einem Zug (`head_logits_stapel`); Spur
+  und Unterschrift je Nachricht wie bisher. `RechneStapel` geht diesen Weg,
+  also auch der Prefill eines Prompts. Token für Token weiter bei einem
+  Modell mit vier Strömen oder wenn die Positionen einer Sitzung im Stapel
+  nicht aufsteigen.
+- `LAEUFE_JE_SHARD` = 4: Das `Lauftor` lässt vier Läufe je Shard zu, damit
+  sich vor einem Shard ein Stapel bilden kann.
+- **Proben:** `nebenlaeufig::stapel_ueber_sitzungen_rechnen_bitgleich`
+  (sechs Sitzungen über einen Weg, der jeden Einzelaufruf zögert:
+  bitgleiche Token und Wurzeln, mindestens ein gemischter Stapel, gezählt
+  12; Gegenprobe von Hand mit der Aufmerksamkeit aus dem ersten Speicher:
+  rot); `stapel_prefill` grün über den neuen Weg.
+- 📌 **Gemessen** (vier Shardprozesse im Freigabebau, sparrow, 6 + 16
+  Positionen je Sitzung), Durchsatz gegen eine Sitzung, ohne und mit
+  Stapeln, derselbe Koordinator: 8 Sitzungen 1,87 und 1,96, 16 Sitzungen
+  1,81 und **2,25** (+24 %); mit drei Kernen je Shard 1,81 und 2,14. 📌 Im
+  Testbau zeigte das Bündeln nichts: Er rechnet mit Überlaufprüfungen und ist
+  durch das Rechenwerk begrenzt. Die Messung nimmt deshalb einen Freigabebau
+  über `MYL_SHARD_PROGRAMM`; „ohne Stapel“ zerlegt der Messweg jeden
+  gemischten Stapel.
+- ✅ **Im Netz** (Podlauf `--nur tor --zwillinge --paare`, 28 Miner, vier
+  Pods): Zwillinge 3 Gruppen einig, keine uneinig; Spuren 323 von 323
+  tragen; Nachrechnen 6 von 6 gleich, obwohl die Prüfer Token für Token und
+  die Pods gestapelt rechnen (jeder Prefill eines Prompts läuft jetzt über
+  `process_stapel`); Zeugnisse gegen Ehrliche 0. Schneller wurde dieser Lauf
+  nicht (sechs Sitzungen in 9,6 s, vorher 8,7 s, im Rauschen): Bei sechs
+  Sitzungen über vier Pods treffen sich selten mehrere am selben Shard, und
+  im Netz überwiegt die Leitungszeit. Ob sich dort gemischte Stapel
+  bildeten, zeigt das Protokoll nicht.
+- Proben 159 grün, Clippy sauber.
+- ⚑ **Abgleich mit dem Whitepaper:** Kap. 4.2 nennt Micro-Batching und
+  Pipelining; Continuous Batching geht darüber hinaus und ändert keine
+  Zahl, also keine Abweichung. Die Grenze bleibt die langsamste Stufe.
+- `myl-pod` 0.55.0.
+
+### v0.63.0 (2026-11-15): Sitzungen rechnen nebeneinander (`myl-pod` 0.54.0)
+
+- ⚑ **Pipelining über Sitzungen** (Whitepaper 4.2: „Während Shard 3 Token
+  t berechnet, verarbeitet Shard 1 bereits Token t+2“). Bis dahin sperrten
+  `Pipelinewerk` und `Podwerk` den Koordinator für die ganze Anfrage; ein
+  Pod rechnete eine nach der anderen, je Augenblick arbeitete ein Shard von
+  vier. **Abweichung vom Whitepaper, jetzt geschlossen.**
+  - `Coordinator::rechne(&self)` liefert einen `Lauf` (Token und das letzte
+    Segment **dieses** Laufs); `run_prompt` nimmt `&self` und bleibt. Die
+    Segmente eines Laufs sammeln sich in ihm und kommen am Ende in einem
+    Zug zu den übrigen; ein gescheiterter Durchlauf hinterlässt nichts,
+    ohne Zurückschneiden (Fund 654 unverändert erfüllt).
+  - `Lauftor`: höchstens so viele Läufe zugleich wie Shards, gewartet wird
+    vor der Arbeit.
+  - Das Bündel entsteht aus einem Schnappschuss (Blätter, Zahl, Arbeit,
+    Aggregat aus derselben Liste); `build_signed_poi_bundle` nimmt die
+    Segmentzahl aus dem Bündel statt sie neu zu lesen.
+  - `completed_segments` gibt eine Abschrift (ein Sperrwächter in der Hand
+    eines Aufrufers, der danach bündelt, verklemmte sich); neu
+    `segmentzahl`.
+  - `Pipelinewerk` ohne Sperre; `Podwerk` mit `RwLock` je Platz: rechnen
+    lesend, besetzen und einreichen schreibend, also sehen Bündel und
+    Spurablage denselben Stand. Die Fälligkeit des Einreichens wird erst
+    lesend geprüft, sonst hielte die Schleife alle drei Sekunden die
+    laufenden Sitzungen an.
+  - Geprüft, dass der Weg trägt: Die Relaisleitung des Knotens bedient
+    jede Frage in einem eigenen Faden, die Tür mit `laufen_parallel`, der
+    Shardprozess bewusst eine nach der anderen; daraus entsteht die
+    Überlappung. Ein Shard zählt beim Unterschreiben nicht selbst mit, ein
+    Schnappschuss ist unterschreibbar.
+- **Entfernt:** das Feld `Coordinator::window_ms` (gesetzt, nie gelesen),
+  der Parameter in `new` und `ueber_weg` (18 Aufrufer, auch TESTCLIENT),
+  `DEFAULT_WINDOW_MS` und `micro_batch.rs` (`MicroBatchCollector` ohne
+  Aufrufer, mit der falschen Aussage, das Fenster sei Teil des
+  Konsensvertrags; ganzzahlig ändert die Zusammensetzung eines Stapels kein
+  Ergebnis). Das Whitepaper nennt `WINDOW_MS` nur in der Skizze A.3; gemeint
+  ist dort dasselbe Überlappen, das jetzt gebaut ist. Glossar nachgezogen.
+- **`myl-shard --kerne <n>`:** höchstens so viele Kerne, für einen Shard
+  neben anderer Arbeit und für Messungen mehrerer Shards auf einer
+  Maschine.
+- **Proben:** `nebenlaeufig` (vier Fäden gegen nacheinander: bitgleiche
+  Token, Segmente, Bündelwurzel, Ausgabenwurzel, Arbeit; das letzte Segment
+  gehört zur eigenen Sitzung; Gegenprobe von Hand: unter derselben
+  Sitzungsnummer rot, dreimal von dreien), zwei Proben zum `Lauftor` (mit
+  Gegenprobe im Kommentar), dazu die Messung
+  `durchsatz_mit_sitzungen_nebeneinander` (`--ignored`). Proben 158 grün
+  (zehn Proben von `micro_batch.rs` und `window_default` entfallen),
+  Clippy sauber.
+- 📌 **Gemessen** (vier Shardprozesse, `sparrow-0.6b-int8`, je Sitzung 6 +
+  16 Positionen): 4 Sitzungen 2,37-fach, mit drei Kernen je Shard 2,16-fach.
+  Die Decke ist die langsamste Stufe, und bei gleich vielen Ebenen je Shard
+  ist das der mit dem LM-Kopf (rund sechs Ebenen schwer). Gegenproben: ein
+  Kern je Shard ändert nichts, mehr Sitzungen als Shards bringen 5 %,
+  Bereiche nach Last (9, 9, 8, 2 Ebenen) heben auf 2,76-fach. Im Netz
+  schneidet der Scheduler schon so (`myl_scheduler::ebenenverteilung`,
+  der Kopf zählt mit `kopf_zeit`, für sparrow am 2026-10-21 mit 5 gemessen,
+  hier rund 6); gleich geschnitten wird nur in der Messung und im
+  `Pipelinewerk` eines Prozesses.
+- ✅ **Im Netz belegt** (Podlauf in Docker mit `tc netem`, `--nur tor
+  --zwillinge --paare`, 28 Miner, vier Pods): sechs Sitzungen zugleich in
+  8,7 s beantwortet, einzeln im Median 8,6 s (mit seriellen Pods am
+  2026-10-28: 26 bis 38 s, Median 19 bis 26 s); ein Pod rechnete vier
+  Sitzungen nebeneinander in je rund 1,7 s. Zwillinge 3 Gruppen einig,
+  keine uneinig; Spuren 324 von 324 tragen; Nachrechnen 6 von 6 gleich;
+  Zeugnisse gegen Ehrliche 0. Davor die kanonische Folge allein (`--nur tor
+  --zwillinge --faelscher`): einig, wo kein Fälscher saß.
+- ⚑ **Abgleich mit dem Whitepaper** (Kap. 4.2): umgesetzt, wie es dort
+  steht, einschließlich der Grenze (der Durchsatz nähert sich dem eines
+  einzelnen, nämlich des langsamsten Shards). Continuous Batching (mehrere
+  Sitzungen in einem Rechenschritt eines Shards) bleibt offen.
+- `myl-pod` 0.54.0.
+
+### v0.62.0 (2026-11-15): Die Bündelwurzel hängt nicht am Takt (`myl-pod` 0.53.0)
+
+- ⚑ **Die Blätter des Bündels stehen in kanonischer Folge**
+  (`Coordinator::kanonisch`): nach Sitzung, Position und Promptlänge als
+  Zahlen, die Kennung zuletzt. Bündelwurzel, Ausgabenwurzel, die Blätter
+  für den Differenzbeweis und die Stellen der Spurablage folgen ihr. Bis
+  dahin galt die Reihenfolge des Fertigwerdens; unschädlich, solange ein
+  Pod eine Anfrage nach der anderen rechnet, aber Vorbedingung dafür, dass
+  er Sitzungen nebeneinander rechnet: Sonst wären sich zwei Zwillinge mit
+  derselben Arbeit je nach Takt uneinig. `completed` selbst bleibt in der
+  Folge des Anhängens (Rückschnitt bei einem Fehler, `last()` ist das
+  Segment der eben gerechneten Anfrage); das BLS-Aggregat ist eine Summe
+  und hängt an keiner Folge.
+- ⚠️ **Die Wurzel eines Bündels mit mehreren Sitzungen ändert sich**
+  gegenüber 0.52.1; ein Pod dieser Fassung und einer der alten sind sich
+  als Zwillinge nicht einig. Prüfer und Schiedsrunde lesen die Stellen aus
+  derselben Folge.
+- Neue Probe `kanonische_folge`: zwei Koordinatoren, dieselben zwei
+  Sitzungen in umgekehrter Reihenfolge, dieselben Wurzeln. Die Gegenprobe
+  steht darin (über die rohe Folge gerechnet verschieden) und ist von Hand
+  belegt: ohne das Sortieren schlägt sie an.
+- ⚑ **Abgleich mit dem Whitepaper** (Kap. 4.2, Pipelining über Shards):
+  keine neue Abweichung. Die bekannte bleibt vorerst: Der Pod rechnet
+  weiter eine Anfrage nach der anderen, je Augenblick arbeitet ein Shard.
+- Proben: 166 grün, Clippy sauber.
+- `myl-pod` 0.53.0.
 
 ### v0.61.1 (2026-11-14): Ohne fremdes Projekt als Vorbild (`myl-pod` 0.52.1)
 

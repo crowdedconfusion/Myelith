@@ -106,6 +106,12 @@ mod gewaehlt {
         unsafe { super::neon::dot_neon(w, x) }
     }
 
+    /// int16 mal int16; siehe [`super::dot_i16_i16`].
+    #[inline]
+    pub fn dot16(a: &[i16], b: &[i16]) -> i64 {
+        unsafe { super::neon::dot16_neon(a, b) }
+    }
+
     /// Die Laengen hat [`super::ternaer_zeile`] geprueft.
     #[inline]
     pub fn ternaer(muster: &[u8], betraege: &[i16], _x: &[i16], hoch: &[i8], tief: &[u8], summen: &[i64]) -> i64 {
@@ -168,6 +174,13 @@ mod gewaehlt {
         std::is_x86_feature_detected!("avx2")
     }
 
+    /// int16 mal int16 bleibt hier skalar: `_mm256_madd_epi16` summiert
+    /// zwei Produkte in i32, und zweimal (-32768)² ist 2^31, ein Überlauf.
+    #[inline]
+    pub fn dot16(a: &[i16], b: &[i16]) -> i64 {
+        super::dot16_skalar(a, b)
+    }
+
     #[inline]
     pub fn dot(w: &[i8], x: &[i16]) -> i64 {
         if laeuft() {
@@ -215,6 +228,11 @@ mod gewaehlt {
     #[inline]
     pub fn dot(w: &[i8], x: &[i16]) -> i64 {
         super::dot_scalar(w, x)
+    }
+
+    #[inline]
+    pub fn dot16(a: &[i16], b: &[i16]) -> i64 {
+        super::dot16_skalar(a, b)
     }
 
     #[inline]
@@ -273,6 +291,35 @@ pub fn dot_i8_i16(w: &[i8], x: &[i16]) -> i64 {
         return dot_scalar(w, x);
     }
     gewaehlt::dot(w, x)
+}
+
+/// **int16 mal int16**, exakt in `i64` (2026-11-15): der LM-Kopf mit
+/// `i16`-Gewichten und das Skalarprodukt der Aufmerksamkeit
+/// ([`crate::attention::dot_int`]). Dieselbe Weiche und derselbe Schalter
+/// wie [`dot_i8_i16`]; verarbeitet werden `min(a.len(), b.len())` Elemente.
+///
+/// ⚑ **Warum eine eigene Fassung:** Der Übersetzer machte aus der Schleife
+/// je 16 Produkte vier `smull` und acht `saddw` (i32 nach i64 einzeln);
+/// mit `sadalp` (paarweise in i64 aufsummieren) sind es vier. Gemessen
+/// lohnt das dort, wo das Rechenwerk begrenzt: im gestapelten Kopf.
+#[inline]
+pub fn dot_i16_i16(a: &[i16], b: &[i16]) -> i64 {
+    if VEKTORISIERT && SKALAR_ERZWUNGEN.load(Ordering::Relaxed) {
+        SKALAR_GERECHNET.fetch_add(1, Ordering::Relaxed);
+        return dot16_skalar(a, b);
+    }
+    gewaehlt::dot16(a, b)
+}
+
+/// Die Skalarfassung von [`dot_i16_i16`], wortgleich dem früheren
+/// `attention::dot_int`.
+#[inline]
+pub fn dot16_skalar(a: &[i16], b: &[i16]) -> i64 {
+    let mut acc: i64 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        acc += (*x as i64) * (*y as i64);
+    }
+    acc
 }
 
 /// **int8 mal int8**, exakt in `i64` (W8A8, [`crate::linear::linear_w8a8_pc_stapel`]).
@@ -534,6 +581,47 @@ mod avx2 {
 #[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
 mod neon {
     use std::arch::aarch64::*;
+
+    /// **int16 mal int16 nach i64**, sechzehn Produkte je Durchlauf auf vier
+    /// unabhängigen i64-Akkumulatoren (2026-11-15).
+    ///
+    /// **Exaktheit:** `vmull_s16` bildet das volle Produkt in i32 (höchstens
+    /// (-32768)² = 2^30, passt), `vpadalq_s32` addiert je zwei davon als i64
+    /// auf den Akkumulator; nichts wird in i32 summiert, also kann nichts
+    /// überlaufen, und die Reihenfolge ändert bei ganzen Zahlen nichts.
+    ///
+    /// **Vier Ketten**, aus derselben Lehre wie [`dot_neon`]: Eine einzige
+    /// `vpadalq`-Kette wartet in jeder Runde auf die vorige.
+    ///
+    /// **Sicherheit:** gelesen wird nur innerhalb von `a[..n]` und `b[..n]`,
+    /// `n = min(len)`; der Rest unter sechzehn läuft skalar.
+    #[inline]
+    pub unsafe fn dot16_neon(a: &[i16], b: &[i16]) -> i64 {
+        let n = a.len().min(b.len());
+        let (pa, pb) = (a.as_ptr(), b.as_ptr());
+        let mut s0 = vdupq_n_s64(0);
+        let mut s1 = vdupq_n_s64(0);
+        let mut s2 = vdupq_n_s64(0);
+        let mut s3 = vdupq_n_s64(0);
+        let mut i = 0usize;
+        while i + 16 <= n {
+            let x0 = vld1q_s16(pa.add(i));
+            let y0 = vld1q_s16(pb.add(i));
+            let x1 = vld1q_s16(pa.add(i + 8));
+            let y1 = vld1q_s16(pb.add(i + 8));
+            s0 = vpadalq_s32(s0, vmull_s16(vget_low_s16(x0), vget_low_s16(y0)));
+            s1 = vpadalq_s32(s1, vmull_high_s16(x0, y0));
+            s2 = vpadalq_s32(s2, vmull_s16(vget_low_s16(x1), vget_low_s16(y1)));
+            s3 = vpadalq_s32(s3, vmull_high_s16(x1, y1));
+            i += 16;
+        }
+        let mut gesamt = vaddvq_s64(vaddq_s64(vaddq_s64(s0, s1), vaddq_s64(s2, s3)));
+        while i < n {
+            gesamt += (*pa.add(i) as i64) * (*pb.add(i) as i64);
+            i += 1;
+        }
+        gesamt
+    }
 
     /// Sechzehn Produkte je Durchlauf auf vier unabhängigen
     /// i32-Akkumulatoren.
@@ -797,6 +885,47 @@ mod tests {
                 assert_eq!(dot_i8_i16(&w, &x), dot_scalar(&w, &x), "n={n} a={a} b={b}");
             }
         }
+    }
+
+    /// ⚑ **int16 mal int16: vektorisiert ist skalar** (2026-11-15), für
+    /// jede Länge von 0 bis 80 (jeder Rest neben den Sechzehnerblöcken) und
+    /// für typische Breiten, mit Zufallswerten über den ganzen i16-Bereich.
+    #[test]
+    fn dot16_ist_bitgleich_zur_skalarfassung() {
+        let lang = [127usize, 128, 129, 896, 1024, 2048, 4096];
+        for n in (0usize..=80).chain(lang) {
+            for seed in [1u64, 0xdead_beef, 42, 7] {
+                let mut r = Xorshift(seed ^ n as u64);
+                let a: Vec<i16> = (0..n).map(|_| (r.next() % 65536) as i16).collect();
+                let b: Vec<i16> = (0..n).map(|_| (r.next() % 65536) as i16).collect();
+                assert_eq!(dot_i16_i16(&a, &b), dot16_skalar(&a, &b), "n={n} seed={seed}");
+            }
+        }
+    }
+
+    /// ⚑ **Die Ränder, länger als jede i32-Summe trüge**: (-32768)² = 2^30,
+    /// zwei davon sind schon 2^31. Gegenprobe im Test: Die Summe liegt weit
+    /// über `i32::MAX`, ein Zwischenergebnis in i32 fiele also auf.
+    #[test]
+    fn dot16_uebersteht_die_raender() {
+        for n in [1usize, 2, 15, 16, 17, 4096, 65536] {
+            for (x, y) in [(i16::MIN, i16::MIN), (i16::MIN, i16::MAX), (i16::MAX, i16::MAX), (i16::MAX, i16::MIN)] {
+                let (a, b) = (vec![x; n], vec![y; n]);
+                let erwartet = n as i64 * i64::from(x) * i64::from(y);
+                assert_eq!(dot_i16_i16(&a, &b), erwartet, "n={n} x={x} y={y}");
+                assert_eq!(dot16_skalar(&a, &b), erwartet);
+            }
+        }
+        assert!(65536 * (1i64 << 30) > i64::from(i32::MAX));
+    }
+
+    /// Wie das `zip` der Skalarfassung: die kürzere Länge zählt.
+    #[test]
+    fn dot16_ungleiche_laengen_wie_zip() {
+        let a: Vec<i16> = (0..40).map(|i| i * 300 - 6000).collect();
+        let b: Vec<i16> = (0..23).map(|i| 1000 - i * 77).collect();
+        assert_eq!(dot_i16_i16(&a, &b), dot16_skalar(&a, &b));
+        assert_eq!(dot_i16_i16(&b, &a), dot16_skalar(&a[..23], &b));
     }
 
     /// Wer meldet, fragt die Maschine; bei NEON und AVX2 stimmt beides.

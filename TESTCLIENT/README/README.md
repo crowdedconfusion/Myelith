@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.69.5
-> **Datum:** 2026-11-12
+> **Version:** 0.69.8
+> **Datum:** 2026-11-15
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,31 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.69.8 (2026-11-15): Der Koordinator ohne Sammelfenster
+
+- Drei Aufrufer (`runs.rs`, `pod_aus_klienten.rs`, `pod_ueber_knoten.rs`)
+  bauen den Koordinator ohne das entfallene Fenster (COMPUTE_PIPELINE
+  0.63.0); `runs.rs` liest die Segmentzahl über `segmentzahl`. Proben 303
+  grün, Clippy sauber.
+
+### v0.69.7 (2026-11-15): Der Schlüssel des Einsteigers liegt in seinem Ordner
+
+- **`podlauf.py`:** Der zustandslose Einsteiger bekommt mit dem Stimmsatz
+  auch `--konsensschluessel` in seinem eigenen Ordner, wie die Miner. 📌
+  Ohne die Angabe legt `myl-node` den Schlüssel als `<name>.konsens.key` im
+  Arbeitsordner an, und der ist im Podlauf die Wurzel des Repositoriums;
+  über `*.key` ignoriert, also nie aufgefallen.
+
+### v0.69.6 (2026-11-15): Belege erst nach dem Vorlauf verlangt
+
+- **`podlauf.py`:** Ein zustandsloser Einsteiger muss Wechselbelege erst
+  vorweisen, wenn sein Anker nach `VORLAUF_EPOCHEN` (2) liegt; bis dahin
+  trägt der Satz von außen, und er fragt zu Recht keinen. 📌 Ein Lauf mit
+  `--einsteiger-ab 3800` (Anker in Epoche 2) meldete sonst einen Befund, wo
+  keiner war; mit einem ausdrücklichen Anker fiel es nie auf, weil der
+  immer einen Beleg mitbringt. Unter der Grenze steht eine Berichtszeile.
+  `VORLAUF_EPOCHEN` steht wie `EPOCHE` als Zahl im Skript.
 
 ### v0.69.5 (2026-11-12): Das Probenetz baut seinen Knoten selbst
 

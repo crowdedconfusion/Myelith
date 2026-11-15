@@ -63,6 +63,7 @@ fn main() {
     let mut ausweisdatei: Option<String> = None;
     let mut probeschluessel = false;
     let mut training = false;
+    let mut kerne: Option<usize> = None;
     let mut von_bis: (Option<usize>, Option<usize>) = (None, None);
 
     let args: Vec<String> = std::env::args().collect();
@@ -120,6 +121,20 @@ fn main() {
             // ⚑ **Mit Trainingshaelfte starten.** Ohne sie lehnt der
             // Shard Trainingsanfragen ab, statt sie zu verschlucken.
             "--training" => training = true,
+            // ⚑ **Höchstens so viele Kerne** (2026-11-15): für einen Shard
+            //   neben anderer Arbeit, und damit vier Shards auf einer
+            //   Maschine nebeneinander rechnen können, ohne sich um dieselben
+            //   Kerne zu streiten. Ohne Angabe nimmt er die Maschine.
+            "--kerne" => {
+                i += 1;
+                match args.get(i).and_then(|s| s.parse::<usize>().ok()).filter(|&n| n > 0) {
+                    Some(n) => kerne = Some(n),
+                    None => {
+                        eprintln!("[myl-shard] --kerne braucht eine Zahl über null");
+                        std::process::exit(2);
+                    }
+                }
+            }
             andere => {
                 eprintln!("[myl-shard] unbekannte Option: {andere}");
                 std::process::exit(2);
@@ -128,6 +143,9 @@ fn main() {
         i += 1;
     }
 
+    if let Some(n) = kerne {
+        integer_llm_runtime::kapazitaet::kerne_setzen(n);
+    }
     if artefakte.is_empty() {
         eprintln!("[myl-shard] --artefakte fehlt");
         std::process::exit(2);

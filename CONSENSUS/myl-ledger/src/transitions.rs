@@ -73,6 +73,9 @@ pub enum TransitionError {
     MinerUnbekannt,
     /// Der Schlüssel gehört nicht zu dieser Kennung.
     SchluesselPasstNicht,
+    /// Die Netzadresse einer Anmeldung ist kein Punkt der Kurve Ed25519,
+    /// also kein öffentlicher Schlüssel, unter dem jemand erreichbar wäre.
+    NetzadresseKeinPunkt,
     /// Das Bündel gehört zu einer anderen Epoche als der laufenden.
     FremdeEpoche {
         /// Die Epoche im Bündel.
@@ -251,6 +254,9 @@ impl std::fmt::Display for TransitionError {
             }
             Self::SchluesselPasstNicht => {
                 f.write_str("der Schluessel gehoert nicht zu dieser Kennung")
+            }
+            Self::NetzadresseKeinPunkt => {
+                f.write_str("die Netzadresse ist kein Ed25519-Schluessel")
             }
             Self::FremdeEpoche { buendel, laufend } => write!(
                 f,
@@ -979,8 +985,29 @@ pub fn miner_anmelden(
     // ⚑ **Der Schlüssel muss zur Kennung passen.** Sonst trüge das
     // Register einen fremden Schlüssel unter dieser Kennung, und die
     // Aggregatprüfung eines Pods liefe gegen den falschen.
+    //
+    // ⚑ **Und damit ist die Anmeldung ihr eigener Besitznachweis**
+    // (geprüft 2026-11-15): Unterzeichner, Kennung und Schlüssel hängen
+    // über SHA-256 am selben Schlüssel, also ist die Transaktion mit genau
+    // ihm unterschrieben. Einen Rogue Key (`g^x · pk_opfer⁻¹`, siehe
+    // `myl_types::bls`) kann niemand anmelden, weil niemand unter ihm
+    // unterschreiben kann. Das trägt nur, solange keine andere
+    // Unterschriftsart dieselben Bytes unterschreibt wie eine Transaktion;
+    // jede hat ihr eigenes Präfix (`DST_TRANSAKTION` gegen
+    // `DST_PRUEFPUNKT` und die übrigen). Ein eigener Besitznachweis im
+    // Register wäre nötig, wenn je Schlüssel ohne diese Transaktion in
+    // einen Satz kämen.
     if MinerId::aus_schluessel(&schluessel) != *miner {
         return Err(TransitionError::SchluesselPasstNicht);
+    }
+    // ⚑ **Die Netzadresse muss ein Schlüssel sein** (Fund 701, 2026-11-11):
+    // Rund die Hälfte aller Folgen von 32 Bytes ist kein Punkt der Kurve.
+    // Die Kette nahm sie an, der Knoten fand daraus keine `PeerId`, und der
+    // Miner stand im Register, in Pods und im Stimmsatz, ohne dass ihn
+    // jemand erreichen konnte. Dieselbe Regel wie im Knoten
+    // (`PeerIdBytes::ist_ed25519_punkt`).
+    if !netzadresse.ist_ed25519_punkt() {
+        return Err(TransitionError::NetzadresseKeinPunkt);
     }
     let seit = state
         .miner
@@ -3849,6 +3876,28 @@ mod tests {
             Err(TransitionError::SchluesselPasstNicht)
         );
         assert!(st.miner.is_empty());
+    }
+
+    /// ⚑ **Eine Netzadresse, die kein Ed25519-Punkt ist, wird abgewiesen**
+    /// (Fund 701), bei der ersten Anmeldung wie bei einer Neuanmeldung; die
+    /// bestehende bleibt dann unverändert.
+    #[test]
+    fn eine_netzadresse_ohne_punkt_wird_abgewiesen() {
+        use myl_types::latency_attest::PeerIdBytes;
+        let kein_punkt = (0u8..=255)
+            .map(|i| PeerIdBytes([i; 32]))
+            .find(|p| !p.ist_ed25519_punkt())
+            .expect("unter 256 gleichen Folgen ist einer kein Punkt");
+        let mut st = LedgerState::genesis(1);
+        let anmelden = |st: &mut LedgerState, adresse| {
+            miner_anmelden(st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe,
+                probeschluessel(1), adresse)
+        };
+        assert_eq!(anmelden(&mut st, kein_punkt), Err(TransitionError::NetzadresseKeinPunkt));
+        assert!(st.miner.is_empty(), "eine abgewiesene Anmeldung hat das Register veraendert");
+        anmelden(&mut st, PeerIdBytes([0; 32])).expect("ein Punkt");
+        assert_eq!(anmelden(&mut st, kein_punkt), Err(TransitionError::NetzadresseKeinPunkt));
+        assert_eq!(st.miner[&kennung(1)].netzadresse, PeerIdBytes([0; 32]));
     }
 
     /// Der eingetragene Schlüssel ist der, mit dem unterschrieben wurde.

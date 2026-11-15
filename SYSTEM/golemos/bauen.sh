@@ -175,7 +175,11 @@ docker run --rm -t --network none --platform "$PLATTFORM" -v "$WURZEL:$WURZEL" -
     # ⚑ `NODE/myl-node` seit GolemOS 0.3.0: der Knoten als Dienst
     #   (`golem-knoten`), derselbe Zuschnitt wie der MYL-SERVER fuer NixOS.
     for kiste in CLIENT/myl-console CLIENT/myl-client SYSTEM/golemos/einrichten NODE/myl-node; do
-      cargo build --release --offline --locked --manifest-path "$kiste/Cargo.toml"
+      # ⚑ `myl` ohne eingebettete Lesemodelle (2026-11-15): Sie liegen im
+      #   Myelith-Ordner auf dem Stick, rund 28 MB weniger je Abbild.
+      merkmale=""
+      [ "$kiste" = CLIENT/myl-client ] && merkmale="--features scan-extern"
+      cargo build --release --offline --locked --manifest-path "$kiste/Cargo.toml" $merkmale
     done
   '
 

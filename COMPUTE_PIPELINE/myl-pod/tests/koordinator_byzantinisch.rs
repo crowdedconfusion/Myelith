@@ -391,7 +391,7 @@ fn fund_52_das_unterschriebene_buendel_verifiziert() {
         })
         .collect();
 
-    let mut koordinator = myl_pod::coordinator::Coordinator::new(pod, epoch, shards, 250);
+    let koordinator = myl_pod::coordinator::Coordinator::new(pod, epoch, shards);
     let _ = koordinator.run_prompt(1, &[9707, 11], 2);
     assert!(
         !koordinator.completed_segments().is_empty(),

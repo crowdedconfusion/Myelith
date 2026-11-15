@@ -29,7 +29,7 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use integer_llm_runtime::tokenizer::Tokenizer;
@@ -115,7 +115,13 @@ pub struct Podwerk {
     staende: Arc<Mutex<std::collections::BTreeMap<u32, Platz>>>,
 }
 
-type Platz = Arc<Mutex<Option<Podstand>>>;
+/// ⚑ **Lesend rechnen, schreibend wechseln** (2026-11-15): Sitzungen
+/// rechnen unter der Lesesperre nebeneinander ([`Coordinator::rechne`]
+/// nimmt `&self`); Neubesetzen und Einreichen nehmen die Schreibsperre und
+/// warten damit, bis die laufenden Sitzungen angehängt haben. So sehen
+/// Bündel und Spurablage denselben Stand. 📌 Bis dahin ein `Mutex` über die
+/// ganze Anfrage: Der Pod rechnete eine nach der anderen.
+type Platz = Arc<RwLock<Option<Podstand>>>;
 
 /// Was ein Pod in einer Epoche eingereicht hat, mit den Blättern seines
 /// Bündels: daraus entsteht nach dem Wechsel ein Differenzbeweis, wenn sein
@@ -220,14 +226,18 @@ fn podbild(relais: SocketAddr, ausweis: &Ausweis) -> Result<Podbild, String> {
 /// wurde abgewiesen, und die Zwillingsgruppe blieb unvollständig (niemand
 /// vergütet). Gezogen wird erst mit dem Zertifikat nach dem Wechsel, die
 /// Spuren liegen also auch danach noch rechtzeitig.
+///
+/// ⚑ Derselbe Stand wie das Bündel: Der Aufrufer hält den Platz exklusiv
+/// ([`einreichen_wenn_faellig`]), kein Lauf hängt dazwischen an.
 fn spuren_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, buendel: &myl_types::PoIBundle) {
+    let folge = s.koordinator.kanonisch();
     let ablage = myl_types::Spurablage {
         epoche: buendel.epoch,
         pod: buendel.pod,
         segments_root: buendel.segments_root,
-        eintraege: s
-            .koordinator
-            .completed_segments()
+        // ⚑ In der kanonischen Folge, derselben wie die Blätter des Bündels:
+        //   Eine Stelle der Ablage ist eine Stelle unter `segments_root`.
+        eintraege: folge
             .iter()
             .map(|c| {
                 let zeugnis = myl_types::Segmentzeugnis { id: c.id, spurwurzel: c.spurwurzel };
@@ -236,7 +246,7 @@ fn spuren_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, buendel: 
             .collect(),
         // Die Tokens dazu, in derselben Folge: Damit rechnet ein Checker ab
         // den Tokens nach (Stufe 2).
-        eingaben: s.koordinator.completed_segments().iter().map(|c| c.eingabe.clone()).collect(),
+        eingaben: folge.iter().map(|c| c.eingabe.clone()).collect(),
         // ⛔️ Das unterschriebene Bündel dazu: Die Mitglieder nehmen eine
         //   Ablage aus dem Netz nur mit ihm (T6, 2026-11-05).
         buendel: Some(Box::new(buendel.clone())),
@@ -308,17 +318,25 @@ fn stueckweise_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, byte
 fn einreichen_wenn_faellig(
     relais: SocketAddr,
     ausweis: &Ausweis,
-    stand: &Mutex<Option<Podstand>>,
+    stand: &RwLock<Option<Podstand>>,
     buch: &Blaetterbuch,
 ) -> Result<(), String> {
     let bild = podbild(relais, ausweis)?;
-    let mut g = stand.lock().map_err(|_| "Stand vergiftet")?;
-    let Some(s) = g.as_mut() else { return Ok(()) };
     let laenge = bild.bloecke_je_epoche.max(1);
-    if s.eingereicht || s.epoche != bild.epoche || bild.hoehe % laenge < laenge * EINREICHEN_AB_SECHSTEL / 6 {
+    let faellig = |s: &Podstand| {
+        !s.eingereicht
+            && s.epoche == bild.epoche
+            && bild.hoehe % laenge >= laenge * EINREICHEN_AB_SECHSTEL / 6
+            && s.koordinator.segmentzahl() > 0
+    };
+    // ⚑ Erst lesend fragen, ob es fällig ist: Die Schreibsperre wartet auf
+    //   jede laufende Sitzung und hält neue auf, also nur, wenn es sein muss.
+    if !stand.read().map_err(|_| "Stand vergiftet")?.as_ref().is_some_and(faellig) {
         return Ok(());
     }
-    if s.koordinator.completed_segments().is_empty() {
+    let mut g = stand.write().map_err(|_| "Stand vergiftet")?;
+    let Some(s) = g.as_mut() else { return Ok(()) };
+    if !faellig(s) {
         return Ok(());
     }
     let buendel = s.koordinator.build_signed_poi_bundle()?;
@@ -466,14 +484,25 @@ struct Arbeit<'a> {
 fn ueber_pod(
     relais: SocketAddr,
     ausweis: &Ausweis,
-    stand: &Mutex<Option<Podstand>>,
+    stand: &RwLock<Option<Podstand>>,
     epoche: u64,
     pod: &myl_types::relais::Podeintrag,
     arbeit: Arbeit<'_>,
 ) -> Result<(Vec<u32>, SegmentId, u64), String> {
     let Arbeit { sitzung, eingabe, deckel } = arbeit;
-    let mut g = stand.lock().map_err(|_| "Stand vergiftet")?;
-    if g.as_ref().map(|s| (s.epoche, s.kennung)) != Some((epoche, pod.kennung)) {
+    let passt = |g: &Option<Podstand>| g.as_ref().map(|s| (s.epoche, s.kennung)) == Some((epoche, pod.kennung));
+    // Lesend, wenn der Pod schon steht; sonst schreibend besetzen und dann
+    // lesend rechnen (eine Schreibsperre lässt sich nicht herabstufen).
+    let g = loop {
+        let g = stand.read().map_err(|_| "Stand vergiftet")?;
+        if passt(&g) {
+            break g;
+        }
+        drop(g);
+        let mut g = stand.write().map_err(|_| "Stand vergiftet")?;
+        if passt(&g) {
+            continue;
+        }
         // Erst wenn der Pod steht (Fund 649, zweiter Teil).
         let bis = std::time::Instant::now() + BEREIT_FRIST;
         while !pod_bereit(relais, ausweis, pod) && std::time::Instant::now() < bis {
@@ -482,13 +511,14 @@ fn ueber_pod(
         // ⚑ Wer dann noch fehlt, wird aus der Reserve ersetzt (6.8).
         let (mitglieder, vertreter) = besetzen(relais, ausweis, epoche, pod);
         let weg = Arc::new(UeberDenKnoten::neu(relais, *ausweis, mitglieder.clone()));
-        let mut k = Coordinator::ueber_weg(pod.kennung, EpochId(epoche), weg, crate::coordinator::DEFAULT_WINDOW_MS)?;
+        let mut k = Coordinator::ueber_weg(pod.kennung, EpochId(epoche), weg)?;
         k.vertreter_setzen(vertreter);
         *g = Some(Podstand { epoche, kennung: pod.kennung, koordinator: k, eingereicht: false, adressen: mitglieder });
-    }
-    let s = g.as_mut().ok_or("kein Koordinator")?;
+    };
+    let s = g.as_ref().ok_or("kein Koordinator")?;
     let beginn = std::time::Instant::now();
-    let token = s.koordinator.run_prompt(sitzung, eingabe, deckel);
+    let lauf = s.koordinator.rechne(sitzung, eingabe, deckel);
+    let token = lauf.token;
     eprintln!(
         "[myl-pod] Epoche {}, Pod {}: {} Prompt-Token, {} neue in {} ms",
         s.epoche,
@@ -497,7 +527,7 @@ fn ueber_pod(
         token.len(),
         beginn.elapsed().as_millis()
     );
-    let segment = s.koordinator.completed_segments().last().map(|c| c.id).unwrap_or(SegmentId::new([0u8; 32]));
+    let segment = lauf.letztes_segment.unwrap_or(SegmentId::new([0u8; 32]));
     s.koordinator.sitzung_abschliessen(sitzung);
     Ok((token, segment, s.epoche))
 }
@@ -530,14 +560,15 @@ impl Podwerk {
         //   hier auf den alten Pod und verlor die Antwort.
         let dieselbe = podbild(self.relais, ausweis).is_ok_and(|neu| neu.epoche == bild.epoche);
         if ergebnis.0.is_empty() && dieselbe {
-            if let Ok(mut g) = platz.lock() {
+            if let Ok(mut g) = platz.write() {
                 *g = None;
             }
             ergebnis = ueber_pod(self.relais, ausweis, &platz, bild.epoche, pod, Arbeit { sitzung, eingabe, deckel })?;
         }
         // ⚑ Stufe 1: derselbe Auftrag über den Zwilling, ohne die Antwort
-        //   aufzuhalten. Ein Faden je Auftrag; sie warten auf denselben
-        //   Koordinator und rechnen damit in der Folge der Aufträge.
+        //   aufzuhalten. Ein Faden je Auftrag; sie rechnen im Koordinator
+        //   des Zwillings nebeneinander, und weil das Bündel die Segmente
+        //   kanonisch ordnet, hängt seine Wurzel nicht an ihrem Takt.
         if let Some(zwilling) = zwilling.cloned() {
             let (relais, ausweis, stand, epoche) = (self.relais, *ausweis, self.platz(zwilling.pod_index)?, bild.epoche);
             let eingabe = eingabe.to_vec();
@@ -614,7 +645,7 @@ impl Klartextwerk for Podwerk {
         let plaetze: Vec<Platz> = self.staende.lock().map(|g| g.values().cloned().collect()).unwrap_or_default();
         plaetze
             .iter()
-            .find_map(|p| p.lock().ok().and_then(|g| g.as_ref().map(|s| s.koordinator.num_shards() as u32)))
+            .find_map(|p| p.read().ok().and_then(|g| g.as_ref().map(|s| s.koordinator.num_shards() as u32)))
             .unwrap_or(4)
     }
 }

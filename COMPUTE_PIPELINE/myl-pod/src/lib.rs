@@ -6,8 +6,9 @@
 //! prüft den Eingangs-Hash gegen die Spur, führt seinen Layer-Abschnitt
 //! aus, schreibt die Spur fort, signiert den Übergang und reicht die
 //! Aktivierungen weiter (Anhang A.3, `shard_loop`). Der Koordinator
-//! sammelt Micro-Batches und aggregiert abgeschlossene Segmente zu
-//! PoI-Bündeln (`coordinator_loop`).
+//! rechnet Sitzungen nebeneinander durch die Pipeline (Whitepaper 4.2,
+//! Micro-Batching als Pipelining) und aggregiert abgeschlossene Segmente
+//! zu PoI-Bündeln (`coordinator_loop`).
 //!
 //! Was `myl-pod` zu den INTEGER_LLM-Bausteinen hinzufügt:
 //! - **Spur-Hashes + Eingangs-Prüfung:** Jeder Shard hasht seine
@@ -51,7 +52,6 @@ pub mod pipelinewerk;
 pub mod podwerk;
 pub mod standby;
 pub mod coordinator;
-pub mod micro_batch;
 pub mod zuteilung;
 
 pub use standby::{
@@ -64,8 +64,4 @@ pub use wire::{PodMessage, MAGIC, FLAG_ABORT, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_T
 pub use zuteilung::{
     besetzungsreihenfolge, ist_besetzbar, 
     pod_aus_zuteilung, ZuteilungFehler,
-};
-pub use micro_batch::{
-    InferenceRequest, MicroBatch, MicroBatchCollector, PipelineStage, PipelineTracker,
-    DEFAULT_WINDOW_MS, MAX_BATCH_SIZE,
 };

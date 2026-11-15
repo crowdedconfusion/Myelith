@@ -59,7 +59,6 @@ fn koordinator(dir: &std::path::Path) -> (Coordinator, Vec<u32>) {
             PodId::new([0xAA; 32]),
             EpochId(0),
             shards,
-            myl_pod::coordinator::DEFAULT_WINDOW_MS,
         ),
         ids,
     )
@@ -79,7 +78,7 @@ fn eine_abgeschlossene_sitzung_hinterlaesst_nichts() {
     }
 
     // --- So war es vor dem Fund: niemand raeumt -----------------------
-    let (mut k, ids) = koordinator(&dir);
+    let (k, ids) = koordinator(&dir);
     for n in 1..=ANFRAGEN {
         let _ = k.run_prompt(1000 + n, &ids, 2);
     }
@@ -90,7 +89,7 @@ fn eine_abgeschlossene_sitzung_hinterlaesst_nichts() {
     );
 
     // --- Und so ist es jetzt ------------------------------------------
-    let (mut k, ids) = koordinator(&dir);
+    let (k, ids) = koordinator(&dir);
     for n in 1..=ANFRAGEN {
         let sitzung = 2000 + n;
         let _ = k.run_prompt(sitzung, &ids, 2);

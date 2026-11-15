@@ -1,7 +1,7 @@
 #!/bin/sh
 # Die Lizenzauskunft und die Quellen zu einem gebauten Abbild.
 #
-#   sh SYSTEM/golemos/auskunft.sh [--arch x86_64|aarch64]
+#   sh SYSTEM/golemos/auskunft.sh [--arch x86_64|aarch64] [--immer]
 #
 # Ergebnis unter SYSTEM/golemos/Quellarchiv/<arch>/ (dem Ort, von dem sie
 # hochgeladen werden; die Abbilder bleiben unter aus/<arch>/):
@@ -11,6 +11,16 @@
 #   quellen-<arch>.tar       die Quellen aller Pakete im Abbild und in der
 #                            Schicht, dazu Buildroot selbst (gross, gehoert
 #                            als Anhang an die Freigabe golemos-quellen)
+#
+# ⚑ **Das Quellarchiv entsteht nur, wenn sich Pakete geaendert haben**
+# (2026-11-15). Gleicht die neue Lizenzauskunft inhaltlich der neben dem
+# abgelegten Abbild (dieselben Pakete in denselben Fassungen, dieselben
+# Lizenztexte, dieselbe Konfiguration samt Fassung von Buildroot; dieselbe
+# Pruefung wie in `freigeben.sh`), gelten die Archive an der Freigabe
+# golemos-quellen weiter, und ein neu gepacktes truege nur neue
+# Zeitstempel. Ein Update, das nur unsere eigenen Programme aendert (deren
+# Quellen im Repositorium liegen), beruehrt das Quellarchiv also nie.
+# `--immer` packt trotzdem, etwa wenn die Kopie hier fehlt.
 #
 # ⚑ **Warum es das gibt:** Das Abbild enthaelt Teile unter der GPL (Kern,
 # BusyBox, Werkzeuge aus Buildroot). Wer es weitergibt, gibt die Quellen
@@ -33,10 +43,12 @@
 set -eu
 
 ARCH=x86_64
+IMMER=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --arch) ARCH="$2"; shift 2 ;;
-    -h|--hilfe) sed -n '2,32p' "$0"; exit 0 ;;
+    --immer) IMMER=1; shift ;;
+    -h|--hilfe) sed -n '2,42p' "$0"; exit 0 ;;
     *) echo "unbekannt: $1" >&2; exit 2 ;;
   esac
 done
@@ -61,8 +73,8 @@ mkdir -p "$ABLAGE"
 
 echo "── Lizenzauskunft fuer $ARCH (Buildroot $FASSUNG, ohne Netz)"
 docker run --rm -i --network none \
-  -v "$VOLUMEN:/bau" -v "$ABLAGE:/ablage" \
-  -e FASSUNG="$FASSUNG" -e ARCH="$ARCH" \
+  -v "$VOLUMEN:/bau" -v "$ABLAGE:/ablage" -v "$HIER/abbild/fertig:/abgelegt:ro" \
+  -e FASSUNG="$FASSUNG" -e ARCH="$ARCH" -e IMMER="$IMMER" \
   golemos-baumeister sh -s <<'IMBEHAELTER'
 set -eu
 BR="/bau/buildroot-$FASSUNG"
@@ -103,27 +115,46 @@ for teil in $teile; do
   echo "   $teil: $(($(wc -l < "$ARBEIT/$teil/manifest.csv") - 1)) Pakete"
 done
 
-# ⚑ Buildroot selbst, ohne Bauordner und ohne das Quellenlager: Es gehoert
-#   zu den Quellen (die Skripte, die das Abbild bauen) und ist GPL-2.0.
-tar -C /bau --exclude="buildroot-$FASSUNG/output" --exclude="buildroot-$FASSUNG/dl" \
-  --exclude="buildroot-$FASSUNG/.config*" --exclude="buildroot-$FASSUNG/.golemos-konf" \
-  -cf "$ARBEIT/buildroot-$FASSUNG.tar" "buildroot-$FASSUNG"
-
 cd "$ARBEIT"
 klein=""
 for teil in $teile; do klein="$klein $teil/manifest.csv $teil/licenses $teil/README"; done
 [ -f basis/buildroot.config ] && klein="$klein basis/buildroot.config"
 # shellcheck disable=SC2086
 tar -cJf "/ablage/lizenzen-$ARCH.tar.xz" $klein
-grosse=""
-for teil in $teile; do grosse="$grosse $teil/quellen"; done
-# shellcheck disable=SC2086
-tar -cf "/ablage/quellen-$ARCH.tar" $grosse "buildroot-$FASSUNG.tar"
+( cd /ablage && sha256sum "lizenzen-$ARCH.tar.xz" > "lizenzen-$ARCH.tar.xz.sha256" )
+
+# ⚑ Dieselbe Pruefung wie in `freigeben.sh`: die Namen sortiert, der Inhalt
+#   in der Reihenfolge des Archivs. Liegen dieselben Dateien nur anders
+#   geordnet im Archiv, haelt sie das fuer neu und packt; das ist die
+#   sichere Seite.
+inhalt() { tar -tJf "$1" | LC_ALL=C sort | sha256sum; tar -xOJf "$1" | sha256sum; }
+ALT="/abgelegt/lizenzen-$ARCH.tar.xz"
+if [ "$IMMER" != 1 ] && [ -f "$ALT" ] \
+   && [ "$(inhalt "$ALT")" = "$(inhalt "/ablage/lizenzen-$ARCH.tar.xz")" ]; then
+  echo "   Dieselben Pakete wie beim abgelegten Abbild: Das Quellarchiv an der"
+  echo "   Freigabe golemos-quellen gilt weiter, hier ist nichts neu gepackt."
+else
+  # ⚑ Buildroot selbst, ohne Bauordner und ohne das Quellenlager: Es
+  #   gehoert zu den Quellen (die Skripte, die das Abbild bauen) und ist
+  #   GPL-2.0.
+  tar -C /bau --exclude="buildroot-$FASSUNG/output" --exclude="buildroot-$FASSUNG/dl" \
+    --exclude="buildroot-$FASSUNG/.config*" --exclude="buildroot-$FASSUNG/.golemos-konf" \
+    -cf "$ARBEIT/buildroot-$FASSUNG.tar" "buildroot-$FASSUNG"
+  grosse=""
+  for teil in $teile; do grosse="$grosse $teil/quellen"; done
+  # shellcheck disable=SC2086
+  tar -cf "/ablage/quellen-$ARCH.tar" $grosse "buildroot-$FASSUNG.tar"
+  ( cd /ablage && sha256sum "quellen-$ARCH.tar" > "quellen-$ARCH.tar.sha256" )
+  echo "   ⚠️ Neues Quellarchiv: Es gehoert mit eigenem Namen an die Freigabe"
+  echo "   golemos-quellen, neben die alten (Quellarchiv/README.md)."
+fi
 cd / && rm -rf "$ARBEIT"
 IMBEHAELTER
 
-( cd "$ABLAGE" && for f in "lizenzen-$ARCH.tar.xz" "quellen-$ARCH.tar"; do
-    if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$f" > "$f.sha256"; else sha256sum "$f" > "$f.sha256"; fi
-  done )
 echo "── Fertig"
-ls -lh "$ABLAGE/lizenzen-$ARCH.tar.xz" "$ABLAGE/quellen-$ARCH.tar" | awk '{print "   "$9"  "$5}'
+ls -lh "$ABLAGE/lizenzen-$ARCH.tar.xz" | awk '{print "   "$9"  "$5}'
+# Das Quellarchiv nur nennen, wenn es in diesem Lauf entstand (es wird nach
+# der Auskunft geschrieben, ist also juenger).
+if [ -f "$ABLAGE/quellen-$ARCH.tar" ] && [ "$ABLAGE/quellen-$ARCH.tar" -nt "$ABLAGE/lizenzen-$ARCH.tar.xz" ]; then
+  ls -lh "$ABLAGE/quellen-$ARCH.tar" | awk '{print "   "$9"  "$5}'
+fi

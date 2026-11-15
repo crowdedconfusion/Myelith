@@ -315,4 +315,34 @@ mod adresstests {
         let irgendwas = peer_id_aus_bytes(&myl_types::latency_attest::PeerIdBytes([1; 32])).expect("ein Punkt");
         assert_ne!(irgendwas, NodeIdentity::generate().peer_id());
     }
+
+    /// ⚑ **Die Kette und der Knoten sagen bei jeder Netzadresse dasselbe**
+    /// (Fund 701): Die Kette weist eine Anmeldung ab, deren Adresse kein
+    /// Ed25519-Punkt ist (`PeerIdBytes::ist_ed25519_punkt`); der Knoten
+    /// macht aus genau den anderen eine `PeerId`. Liefen beide auseinander,
+    /// stuende ein Miner wieder unerreichbar im Register, oder ein
+    /// erreichbarer kaeme nicht hinein.
+    #[test]
+    fn netz_und_kette_haben_dieselbe_punktregel() {
+        use myl_types::latency_attest::PeerIdBytes;
+        let mut folgen: Vec<[u8; 32]> = (0u8..=255).map(|i| [i; 32]).collect();
+        let mut s: u64 = 0xD1B5_4A32_D192_ED03;
+        for _ in 0..10_000 {
+            let mut b = [0u8; 32];
+            for x in b.iter_mut() {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                *x = (s >> 24) as u8;
+            }
+            folgen.push(b);
+        }
+        let mut beide = [0usize; 2];
+        for b in &folgen {
+            let netz = peer_id_aus_bytes(&PeerIdBytes(*b)).is_ok();
+            assert_eq!(netz, PeerIdBytes(*b).ist_ed25519_punkt(), "Netz und Kette uneins bei {b:02x?}");
+            beide[usize::from(netz)] += 1;
+        }
+        assert!(beide[0] > 1_000 && beide[1] > 1_000, "die Probe waehlt nicht aus: {beide:?}");
+    }
 }

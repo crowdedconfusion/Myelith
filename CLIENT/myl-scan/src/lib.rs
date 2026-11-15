@@ -33,6 +33,75 @@ const KLEINSTE_KANTE: u32 = 96;
 
 pub(crate) type Plan = Arc<TypedSimplePlan>;
 
+/// ⚑ **Woher die Bytes eines Modells kommen** (2026-11-15, Festlegung des
+/// Projektinhabers): eingebettet wie bisher, oder mit dem Merkmal
+/// `lesemodelle-extern` (nur der GolemOS-Bau) aus dem Myelith-Ordner,
+/// `<Wurzel>/`[`MODELLORDNER`]. Die Modelle sind 34,7 MB, gepackt 28 MB,
+/// rund 40 % eines GolemOS-Abbilds, und auf dem Stick liegt der Ordner
+/// ohnehin. Die Zeichenlisten bleiben eingebettet; sie sind klein.
+#[derive(Clone, Copy)]
+pub(crate) enum Modell {
+    #[cfg_attr(feature = "lesemodelle-extern", allow(dead_code))]
+    Eingebettet(&'static [u8]),
+    #[cfg_attr(not(feature = "lesemodelle-extern"), allow(dead_code))]
+    Datei(&'static str),
+}
+
+/// Wo die Modelle im Myelith-Ordner liegen.
+pub const MODELLORDNER: &str = "CLIENT/myl-scan/modelle";
+
+impl Modell {
+    /// Die Bytes; aus der Datei beim ersten Gebrauch, danach gehalten.
+    pub(crate) fn bytes(self) -> Result<&'static [u8], String> {
+        match self {
+            Modell::Eingebettet(b) => Ok(b),
+            Modell::Datei(d) => extern_laden(d),
+        }
+    }
+}
+
+#[cfg(feature = "lesemodelle-extern")]
+fn extern_laden(datei: &'static str) -> Result<&'static [u8], String> {
+    static GELADEN: Mutex<Vec<(&'static str, &'static [u8])>> = Mutex::new(Vec::new());
+    let mut g = GELADEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, b)) = g.iter().find(|(n, _)| *n == datei) {
+        return Ok(b);
+    }
+    let wurzel = myl_senses::ort::wurzel().ok_or_else(|| {
+        format!(
+            "die Lesemodelle liegen in diesem Bau nicht im Programm, und kein Myelith-Ordner ist zu finden \
+             (`{}` setzen oder den Ordner auf den Stick bringen)",
+            myl_senses::ort::UMGEBUNG
+        )
+    })?;
+    let pfad = wurzel.join(MODELLORDNER).join(datei);
+    let daten = std::fs::read(&pfad).map_err(|f| format!("Lesemodell {}: {f}", pfad.display()))?;
+    // ⚑ Einmal je Modell und Prozess, und es lebt so lange wie er: wie die
+    //   eingebetteten Bytes, nur später geladen.
+    let b: &'static [u8] = Box::leak(daten.into_boxed_slice());
+    g.push((datei, b));
+    Ok(b)
+}
+
+#[cfg(not(feature = "lesemodelle-extern"))]
+fn extern_laden(datei: &'static str) -> Result<&'static [u8], String> {
+    Err(format!("{datei}: Lesemodelle aus Dateien nur mit dem Merkmal `lesemodelle-extern`"))
+}
+
+#[cfg(not(feature = "lesemodelle-extern"))]
+macro_rules! modell {
+    ($datei:expr) => {
+        Modell::Eingebettet(include_bytes!(concat!("../modelle/", $datei)))
+    };
+}
+
+#[cfg(feature = "lesemodelle-extern")]
+macro_rules! modell {
+    ($datei:expr) => {
+        Modell::Datei($datei)
+    };
+}
+
 pub(crate) struct Plaene {
     daten: &'static [u8],
     fertig: Mutex<HashMap<Vec<usize>, Plan>>,
@@ -135,7 +204,7 @@ pub struct Seite {
 /// Eine Schrift, die gelesen werden kann.
 pub struct Schrift {
     pub name: &'static str,
-    daten: &'static [u8],
+    daten: Modell,
     /// Leer bei den kleinen Zeilennetzen.
     zeichen: &'static str,
     /// Ein Zeilennetz statt eines ONNX-Modells.
@@ -150,7 +219,7 @@ macro_rules! schrift {
     ($name:literal, $von_rechts:literal) => {
         Schrift {
             name: $name,
-            daten: include_bytes!(concat!("../modelle/lesen-", $name, ".onnx")),
+            daten: modell!(concat!("lesen-", $name, ".onnx")),
             zeichen: include_str!(concat!("../modelle/lesen-", $name, ".zeichen")),
             netz: false,
             von_rechts: $von_rechts,
@@ -161,7 +230,7 @@ macro_rules! schrift {
 
 macro_rules! netz {
     ($name:literal, $von_rechts:literal) => {
-        Schrift { name: $name, daten: include_bytes!(concat!("../modelle/netz-", $name, ".bin")), zeichen: "", netz: true, von_rechts: $von_rechts, senkrecht: false }
+        Schrift { name: $name, daten: modell!(concat!("netz-", $name, ".bin")), zeichen: "", netz: true, von_rechts: $von_rechts, senkrecht: false }
     };
 }
 
@@ -218,8 +287,9 @@ impl Leser {
         let mut zeichen: Vec<String> = vec![String::new()];
         zeichen.extend(schrift.zeichen.lines().map(str::to_string));
         zeichen.push(" ".to_string());
-        let netz = if schrift.netz { Some(netz::Netz::neu(schrift.daten).map_err(|f| format!("{}: {f}", schrift.name))?) } else { None };
-        Ok(Self { schrift, plaene: Plaene::neu(schrift.daten), zeichen, netz })
+        let daten = schrift.daten.bytes()?;
+        let netz = if schrift.netz { Some(netz::Netz::neu(daten).map_err(|f| format!("{}: {f}", schrift.name))?) } else { None };
+        Ok(Self { schrift, plaene: Plaene::neu(daten), zeichen, netz })
     }
 }
 
@@ -314,15 +384,17 @@ impl Erkenner {
                 format!("die Schrift {n} gibt es nicht; moeglich: {}", SCHRIFTEN.iter().map(|s| s.name).collect::<Vec<_>>().join(", "))
             })?,
         };
+        let aufbau_bytes = modell!("aufbau.onnx").bytes()?;
+        let finden_bytes = modell!("text-finden.onnx").bytes()?;
         let aufbau = (|| -> TractResult<Plan> {
-            auspacken(include_bytes!("../modelle/aufbau.onnx"))?
+            auspacken(aufbau_bytes)?
                 .with_input_fact(0, f32::fact([1, 3, aufbau::KANTE, aufbau::KANTE]).into())?
                 .with_input_fact(1, f32::fact([1, 2]).into())?
                 .into_optimized()?
                 .into_runnable()
         })()
         .map_err(|f| format!("das Aufbaumodell laedt nicht: {f}"))?;
-        Ok(Self { finden: Plaene::neu(include_bytes!("../modelle/text-finden.onnx")), leser: Leser::neu(gewaehlt)?, aufbau })
+        Ok(Self { finden: Plaene::neu(finden_bytes), leser: Leser::neu(gewaehlt)?, aufbau })
     }
 
     /// Welche Schrift gerade gelesen wird.
@@ -452,16 +524,40 @@ mod tests {
     #[test]
     fn jedes_zeilennetz_laedt() {
         for s in SCHRIFTEN.iter().filter(|s| s.netz) {
-            assert!(netz::Netz::neu(s.daten).is_ok(), "{}", s.name);
+            assert!(netz::Netz::neu(s.daten.bytes().expect("Modell")).is_ok(), "{}", s.name);
         }
     }
 
     #[test]
     fn ein_zerschnittenes_zeilennetz_ist_ein_fehler() {
         let s = SCHRIFTEN.iter().find(|s| s.netz).unwrap();
-        for n in [0, 3, 40, s.daten.len() / 2, s.daten.len() - 1] {
-            assert!(netz::Netz::neu(&s.daten[..n]).is_err(), "bei {n} Bytes");
+        let daten = s.daten.bytes().expect("Modell");
+        for n in [0, 3, 40, daten.len() / 2, daten.len() - 1] {
+            assert!(netz::Netz::neu(&daten[..n]).is_err(), "bei {n} Bytes");
         }
     }
 }
 
+
+/// ⚑ **Der Dateiweg der Lesemodelle** (`lesemodelle-extern`, 2026-11-15).
+#[cfg(all(test, feature = "lesemodelle-extern"))]
+mod lesemodelle_extern {
+    use super::*;
+
+    /// Geladen wird genau die Datei im Modellordner, Byte für Byte.
+    #[test]
+    fn die_modelle_kommen_aus_dem_myelith_ordner() {
+        let geladen = modell!("aufbau.onnx").bytes().expect("aus dem Ordner");
+        let datei = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("modelle/aufbau.onnx")).expect("Datei");
+        assert_eq!(geladen, datei.as_slice());
+        // Ein zweiter Aufruf liest nicht neu: dieselbe Stelle im Speicher.
+        assert!(std::ptr::eq(geladen, modell!("aufbau.onnx").bytes().expect("gehalten")));
+    }
+
+    /// Fehlt eine Datei, sagt der Fehler, wo gesucht wurde.
+    #[test]
+    fn ein_fehlendes_modell_nennt_seinen_pfad() {
+        let f = Modell::Datei("gibt-es-nicht.onnx").bytes().expect_err("fehlt");
+        assert!(f.contains(MODELLORDNER) && f.contains("gibt-es-nicht.onnx"), "{f}");
+    }
+}

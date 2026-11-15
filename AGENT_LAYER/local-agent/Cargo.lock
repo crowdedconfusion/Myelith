@@ -300,7 +300,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.91.0"
+version = "0.92.0"
 dependencies = [
  "itertools",
  "objc2",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.68.5"
+version = "0.69.0"
 dependencies = [
  "blst",
  "borsh",

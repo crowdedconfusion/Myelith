@@ -140,6 +140,8 @@ import netzlauf_prozesse as nl  # noqa: E402
 from netzlauf_prozesse import Befund, Knoten, Stoerer, melde, warte  # noqa: E402
 
 EPOCHE = 1800
+# Bis zu dieser Epoche traegt der Satz von aussen (`myl_ledger::stimmsatz::VORLAUF_EPOCHEN`).
+VORLAUF_EPOCHEN = 2
 
 # Der Torknoten (`--tor`): Tuer, Ortsleitung und Relaisleitung im
 # Namensraum des Erzeugers, nur auf seiner Rueckschleife.
@@ -1291,7 +1293,12 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             for j in alle:
                 j.ziel_eintragen(k)
                 k.ziel_eintragen(j)
-        extra = ["--zustandslos"] + (["--stimmsatz", str(ordner / "stimmsatz.txt")] if args.real else [])
+        # 📌 Mit dem Stimmsatz legt der Knoten einen Konsensschluessel an, ohne
+        #   Angabe als `<name>.konsens.key` im Arbeitsordner, also in der
+        #   Wurzel des Repositoriums (gefunden 2026-11-15). Daher wie bei den
+        #   Minern in seinen eigenen Ordner.
+        extra = ["--zustandslos"] + (["--stimmsatz", str(ordner / "stimmsatz.txt"),
+                                      "--konsensschluessel", str(k.ordner / "konsens.key")] if args.real else [])
         # ⚑ Mit `--einsteiger-mit-anker` (A43): der Weg eines Einsteigers in
         #   ein altes Netz, der Anker aus der Zeile `wechselbeleg` des Erzeugers.
         anker = ""
@@ -1338,9 +1345,14 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             if frueher:
                 befunde.append(f"zustandsloser Einsteiger {k.name}: fragte Belege vor dem Anker ab Epoche {frueher[0].get('ab')}")
             bericht.append(f"Einsteiger {k.name} mit Anker in Epoche {anker_epoche}: Belege vor dem Anker nicht gefragt ({len(frueher)})")
-        if args.einsteiger_ab and leicht and not belege:
-            befunde.append(f"zustandsloser Einsteiger {k.name}: Anker in Epoche {int(leicht[0].get('hoehe', 0)) // EPOCHE} "
-                           "ohne Wechselbelege")
+        # ⚑ Belege braucht nur ein Anker nach `VORLAUF_EPOCHEN`: Bis dahin
+        #   traegt der Satz von aussen, und der Einsteiger fragt zu Recht
+        #   keinen (2026-11-15, `kurz-belege` mit Anker in Epoche 2).
+        anker_e = int(leicht[0].get("hoehe", 0)) // EPOCHE if leicht else 0
+        if args.einsteiger_ab and leicht and not belege and anker_e > VORLAUF_EPOCHEN:
+            befunde.append(f"zustandsloser Einsteiger {k.name}: Anker in Epoche {anker_e} ohne Wechselbelege")
+        elif args.einsteiger_ab and leicht and not belege:
+            bericht.append(f"Einsteiger {k.name}: Anker in Epoche {anker_e}, dort traegt der Satz von aussen, Belege nicht noetig")
 
     def last() -> None:
         """Burns in Stufen ueber die Relaisleitung des Torknotens: Wie viel

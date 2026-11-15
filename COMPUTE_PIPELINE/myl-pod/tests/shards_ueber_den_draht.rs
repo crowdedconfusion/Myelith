@@ -80,7 +80,7 @@ fn vier_tueren_ein_pod_und_dieselben_token() {
     let epoche = EpochId(0);
 
     // --- Im Prozess ------------------------------------------------
-    let mut im_prozess = Coordinator::new(pod, epoche, shards(Arc::clone(&modell)), 5_000);
+    let im_prozess = Coordinator::new(pod, epoche, shards(Arc::clone(&modell)));
     let token_direkt = im_prozess.run_prompt(1, &PROMPT, 8);
     let abdruck_direkt = im_prozess.dekodier_digest(1).expect("Abdruck");
     let buendel_direkt = im_prozess.build_signed_poi_bundle().expect("Buendel");
@@ -101,8 +101,8 @@ fn vier_tueren_ein_pod_und_dieselben_token() {
     }
 
     let weg = Arc::new(UeberDenDraht::neu(adressen).mit_frist(std::time::Duration::from_secs(120)));
-    let mut ueber_draht =
-        Coordinator::ueber_weg(pod, epoche, weg, 5_000).expect("Besetzung erhoben");
+    let ueber_draht =
+        Coordinator::ueber_weg(pod, epoche, weg).expect("Besetzung erhoben");
     let token_draht = ueber_draht.run_prompt(1, &PROMPT, 8);
     let abdruck_draht = ueber_draht.dekodier_digest(1).expect("Abdruck");
     let buendel_draht = ueber_draht.build_signed_poi_bundle().expect("Buendel");
@@ -147,7 +147,7 @@ fn ein_nicht_erreichbarer_shard_wird_gemeldet() {
     let weg = Arc::new(
         UeberDenDraht::neu(vec![(tot, [0; 32]); SHARDS]).mit_frist(std::time::Duration::from_millis(200)),
     );
-    let fehler = match Coordinator::ueber_weg(PodId::new([1; 32]), EpochId(0), weg, 5_000) {
+    let fehler = match Coordinator::ueber_weg(PodId::new([1; 32]), EpochId(0), weg) {
         Err(e) => e,
         Ok(_) => panic!("ein toter Shard muss auffallen"),
     };

@@ -1639,7 +1639,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.91.0"
+version = "0.92.0"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -1649,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.105.1"
+version = "0.106.1"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -2542,7 +2542,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.57.1"
+version = "0.58.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2551,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.25.2"
+version = "0.25.3"
 dependencies = [
  "borsh",
  "chacha20poly1305",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.124.1"
+version = "0.125.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.68.5"
+version = "0.69.0"
 dependencies = [
  "blst",
  "borsh",

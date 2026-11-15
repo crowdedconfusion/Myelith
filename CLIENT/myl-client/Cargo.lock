@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.91.0"
+version = "0.92.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.105.1"
+version = "0.106.1"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -1317,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.133.0"
+version = "0.134.0"
 dependencies = [
  "aes",
  "borsh",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.57.1"
+version = "0.58.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -1398,10 +1398,11 @@ dependencies = [
 
 [[package]]
 name = "myl-scan"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hayro",
  "image",
+ "myl-senses",
  "serde_json",
  "tract-onnx",
 ]
@@ -1430,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.68.5"
+version = "0.69.0"
 dependencies = [
  "blst",
  "borsh",

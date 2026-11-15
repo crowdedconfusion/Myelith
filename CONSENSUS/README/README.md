@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.87.1 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.2,
-> `myl-ledger` 0.57.1)
-> **Datum:** 2026-11-14
+> **Version:** 0.88.0 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.2,
+> `myl-ledger` 0.58.0)
+> **Datum:** 2026-11-15
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,28 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.88.0 (2026-11-15): Die Anmeldung verlangt eine Netzadresse, die ein Schlüssel ist (Fund 701, `myl-ledger` 0.58.0)
+
+- ⚑ **Neue Konsensregel in `miner_anmelden`:** Ist die Netzadresse kein
+  Ed25519-Punkt (`PeerIdBytes::ist_ed25519_punkt`, SHARED_TYPES 0.69.0),
+  wird die Anmeldung mit `TransitionError::NetzadresseKeinPunkt`
+  abgewiesen, bei der ersten wie bei einer Neuanmeldung, und der Zustand
+  bleibt unverändert. Bisher nahm die Kette rund die Hälfte aller Folgen
+  von 32 Bytes an, aus denen der Knoten keine `PeerId` machen konnte: Der
+  Miner stand dann in Register, Pods und Stimmsatz und war für niemanden
+  erreichbar. Geprüft nach den billigeren Schritten (Unterzeichner,
+  Schlüssel zur Kennung).
+- ⚠️ Eine Kette, die eine solche Anmeldung schon enthält, lässt sich mit
+  dieser Fassung nicht weiterrechnen; auf der Probekette baut kein Knoten
+  so eine Adresse (er trägt seine eigene ein).
+- Probe `eine_netzadresse_ohne_punkt_wird_abgewiesen`; Gegenprobe: ohne die
+  Prüfzeile rot. 160 Proben grün.
+- **Die Anmeldung ist ihr eigener Besitznachweis**, jetzt im Kommentar von
+  `miner_anmelden` begründet: Unterzeichner, Kennung und Schlüssel hängen
+  über SHA-256 am selben BLS-Schlüssel, also ist die Transaktion mit ihm
+  unterschrieben, und unter einem Rogue Key kann niemand unterschreiben. Das
+  trägt, solange jede Unterschriftsart ihr eigenes Präfix hat.
 
 ### v0.87.1 (2026-11-14): Ohne fremde Projekte als Vorbild (`myl-ledger` 0.57.1)
 

@@ -1,6 +1,6 @@
 [package]
 name = "myl-scan"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Gescannte Buecher lesen: Seitenaufbau, Text und Abbildungen, ohne Netz und ohne Fremdprogramm"
@@ -20,6 +20,14 @@ tract-onnx = "=0.23.10"
 hayro = "=0.9.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 serde_json = "1"
+# Nur für `lesemodelle-extern`: die Wurzelsuche, eine Stelle für alle Kisten.
+myl-senses = { path = "../myl-senses", optional = true }
+
+[features]
+# ⚑ **Die Lesemodelle aus dem Myelith-Ordner statt aus dem Programm**
+# (2026-11-15, nur der GolemOS-Bau): rund 28 MB weniger je Abbild. Ohne das
+# Merkmal bleibt alles eingebettet wie bisher.
+lesemodelle-extern = ["dep:myl-senses"]
 
 [profile.test]
 opt-level = 2

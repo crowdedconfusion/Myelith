@@ -181,11 +181,10 @@ async fn ein_torknoten_ohne_shard_rechnet_ueber_die_knoten_des_pods() {
         let pod = bild.pods.first().ok_or("kein Pod im Podbild")?.clone();
         let mitglieder = pod.mitglieder.iter().map(|m| m.netzadresse).collect();
         let weg = Arc::new(myl_pod::shardweg::UeberDenKnoten::neu(relais, ausweis, mitglieder));
-        let mut k = myl_pod::coordinator::Coordinator::ueber_weg(
+        let k = myl_pod::coordinator::Coordinator::ueber_weg(
             pod.kennung,
             myl_types::ids::EpochId(bild.epoche),
             weg,
-            myl_pod::coordinator::DEFAULT_WINDOW_MS,
         )?;
         let zuschnitte: Vec<(u32, u32)> = pod.mitglieder.iter().map(|m| (m.von, m.bis)).collect();
         let token = k.run_prompt(1, &p2, NEU);
@@ -210,7 +209,7 @@ async fn ein_torknoten_ohne_shard_rechnet_ueber_die_knoten_des_pods() {
             Arc::new(myl_pod::shard::ShardNode::new(i, von as usize, bis as usize, i == 0, i == n - 1, Arc::clone(&modell), sk, NEU))
         })
         .collect();
-    let mut referenz = myl_pod::coordinator::Coordinator::new(bild.pods[0].kennung, myl_types::ids::EpochId(bild.epoche), shards, myl_pod::coordinator::DEFAULT_WINDOW_MS);
+    let referenz = myl_pod::coordinator::Coordinator::new(bild.pods[0].kennung, myl_types::ids::EpochId(bild.epoche), shards);
     let im_prozess = referenz.run_prompt(1, &prompt, NEU);
     assert_eq!(ueber_knoten, im_prozess, "über die Knoten anders als im Prozess");
 

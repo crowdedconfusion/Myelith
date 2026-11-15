@@ -42,18 +42,34 @@ ZIEL="$HIER/abbild/fertig/golemos-$ARCH.img.xz"
 
 # ⛔️ **Kein Abbild ohne Lizenzauskunft und Quellen.** Das Abbild enthaelt
 #    Teile unter der GPL; wer es weitergibt, gibt die Quellen mit.
-#    `auskunft.sh` legt beides neben das Abbild, und es muss juenger sein
-#    als das Abbild, sonst gehoert es zu einem anderen Bau.
-# Beide liegen dort, von wo sie hochgeladen werden (`auskunft.sh`).
+#    `auskunft.sh` legt die Auskunft dorthin, von wo sie hochgeladen wird,
+#    und sie muss juenger sein als das Abbild, sonst gehoert sie zu einem
+#    anderen Bau.
 LIZENZEN="$HIER/Quellarchiv/$ARCH/lizenzen-$ARCH.tar.xz"
 QUELLEN="$HIER/Quellarchiv/$ARCH/quellen-$ARCH.tar"
-for f in "$LIZENZEN" "$QUELLEN"; do
-  if [ ! -f "$f" ] || [ "$QUELLE" -nt "$f" ]; then
-    echo "⛔️ Zu diesem Abbild fehlt die Lizenzauskunft ($(basename "$f"))." >&2
+if [ ! -f "$LIZENZEN" ] || [ "$QUELLE" -nt "$LIZENZEN" ]; then
+  echo "⛔️ Zu diesem Abbild fehlt die Lizenzauskunft ($(basename "$LIZENZEN"))." >&2
+  echo "   sh SYSTEM/golemos/auskunft.sh --arch $ARCH" >&2
+  exit 4
+fi
+# ⚑ **Ein neues Quellarchiv nur bei neuen Paketen** (2026-11-15). Ist die
+#   Auskunft inhaltlich gleich der abgelegten (dieselben Dateien mit
+#   demselben Inhalt; das tar selbst unterscheidet sich schon durch
+#   Zeitstempel), gelten die Quellen an der Freigabe golemos-quellen weiter,
+#   und `auskunft.sh` packt auch keine neuen. Sonst muss das Quellarchiv zu
+#   diesem Bau gehoeren, also juenger sein als das Abbild.
+inhalt() { tar -tJf "$1" | LC_ALL=C sort | shasum -a 256; tar -xOJf "$1" | shasum -a 256; }
+ALT_AUSKUNFT="$(dirname "$ZIEL")/$(basename "$LIZENZEN")"
+if [ -f "$ALT_AUSKUNFT" ] && [ "$(inhalt "$ALT_AUSKUNFT")" = "$(inhalt "$LIZENZEN")" ]; then
+  QUELLEN_NEU=0
+else
+  QUELLEN_NEU=1
+  if [ ! -f "$QUELLEN" ] || [ "$QUELLE" -nt "$QUELLEN" ]; then
+    echo "⛔️ Die Pakete haben sich geaendert, und zu diesem Abbild fehlt das Quellarchiv." >&2
     echo "   sh SYSTEM/golemos/auskunft.sh --arch $ARCH" >&2
     exit 4
   fi
-done
+fi
 
 # ⚠️ **Nachsehen, ob sich ueberhaupt etwas geaendert hat.** Ein
 #    Freigeben, das denselben Inhalt noch einmal ablegt, kostet 31 MB
@@ -98,18 +114,10 @@ mv "$ZIEL.neu" "$ZIEL"
 # Die kleine Auskunft (Verzeichnis und Lizenztexte) kommt mit ins
 # Repositorium; die Quellen sind zu gross dafuer und liegen an der
 # Freigabe `golemos-quellen` (ohne Fassung im Namen, Quellarchiv/README.md).
-# ⚑ Ist die neue Auskunft inhaltlich gleich der abgelegten (dieselben
-#   Dateien mit demselben Inhalt; das tar selbst unterscheidet sich schon
-#   durch Zeitstempel), bleibt die alte liegen: Dann gelten die Quellen an
-#   der Freigabe weiter, und die Geschichte waechst nicht um ein Archiv,
-#   das nichts Neues sagt.
-inhalt() { tar -tJf "$1" | LC_ALL=C sort | shasum -a 256; tar -xOJf "$1" | shasum -a 256; }
-ALT_AUSKUNFT="$(dirname "$ZIEL")/$(basename "$LIZENZEN")"
-if [ -f "$ALT_AUSKUNFT" ] && [ "$(inhalt "$ALT_AUSKUNFT")" = "$(inhalt "$LIZENZEN")" ]; then
-  QUELLEN_NEU=0
-else
+# ⚑ Bei denselben Paketen (oben geprueft) bleibt die alte Auskunft liegen:
+#   Die Geschichte waechst nicht um ein Archiv, das nichts Neues sagt.
+if [ "$QUELLEN_NEU" -eq 1 ]; then
   cp "$LIZENZEN" "$(dirname "$ZIEL")/"
-  QUELLEN_NEU=1
 fi
 
 ( cd "$(dirname "$ZIEL")" && \
@@ -136,8 +144,8 @@ if [ "$QUELLEN_NEU" -eq 0 ]; then
 
 ── Die Lizenzauskunft ist inhaltlich gleich der abgelegten: dieselben
    Pakete in denselben Fassungen. Die Quellen an der Freigabe
-   golemos-quellen gelten weiter; dort nur die Beschreibung um diese
-   Fassung ergaenzen.
+   golemos-quellen gelten weiter, dort ist nichts zu tun; HERKUNFT.md
+   sagt, dass dieser Stand dieselben Archive nutzt.
 ENDE
 else
   cat <<ENDE

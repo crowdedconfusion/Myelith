@@ -624,6 +624,59 @@ mod tests {
         );
     }
 
+    /// ⚑ **Die Allaussage mit Generator** (2026-11-15): Jeder Kopf, dessen
+    /// mittleres Quadrat mindestens 256 ist, kommt mit dem Effektivwert 64
+    /// heraus (γ = 1, Ausgabe in 2^6), innerhalb [63, 65].
+    ///
+    /// Hergeleitet: Ideal ist `y = 64·x/√m`. Mit `m ≥ 256` liegt der Index
+    /// nach dem Schieben in [256, 1023]; sein Runden kostet hoechstens 0,1 %,
+    /// das der Tabelle (Werte ab 128) hoechstens 0,4 %, das der Ausgabe
+    /// ±0,5 je Element; zusammen [63,1; 64,9]. ⚠️ Darunter ist die Tabelle
+    /// grob, und die Aussage gilt nicht; die Probe waehlt deshalb nur Koepfe
+    /// darueber und sagt es.
+    #[test]
+    fn qk_norm_bringt_jeden_kopf_ueber_der_tabellengrenze_auf_dieselbe_groesse() {
+        let lut = spec_lut(1024);
+        let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut zufall = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let mut geprueft = 0;
+        for &dim in &[4usize, 8, 64, 128] {
+            let (gamma, gshift) = qk_gamma(dim);
+            for _ in 0..2_000 {
+                // Betrag von 2^4 bis 2^14, je Kopf einer, je Element streuend.
+                let stufe = 4 + (zufall() % 11) as u32;
+                let kopf: Vec<i16> = (0..dim)
+                    .map(|_| {
+                        let v = (zufall() % (1u64 << stufe)) as i64 - (1i64 << (stufe - 1));
+                        v as i16
+                    })
+                    .collect();
+                let quadrate: i64 = kopf.iter().map(|&v| i64::from(v) * i64::from(v)).sum();
+                if quadrate < 256 * dim as i64 {
+                    continue;
+                }
+                let mut heads = vec![kopf.clone()];
+                qk_norm_heads(&mut heads, 6, &gamma, &gshift, &lut, 8, 8, 6);
+                let aus: i64 = heads[0].iter().map(|&v| i64::from(v) * i64::from(v)).sum();
+                // Effektivwert in [63, 65], ohne Wurzel: n·63² ≤ Σy² ≤ n·65².
+                let n = dim as i64;
+                assert!(
+                    (n * 63 * 63..=n * 65 * 65).contains(&aus),
+                    "Kopf {kopf:?}: Σy² = {aus}, erwartet zwischen {} und {}",
+                    n * 63 * 63,
+                    n * 65 * 65
+                );
+                geprueft += 1;
+            }
+        }
+        assert!(geprueft > 4_000, "der Generator waehlte nur {geprueft} Koepfe");
+    }
+
     #[test]
     fn qk_norm_laesst_den_nullkopf_null() {
         let lut = spec_lut(1024);

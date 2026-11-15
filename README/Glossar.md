@@ -1370,16 +1370,23 @@ entscheidend, wenn die Knoten nicht im selben Rechenzentrum stehen.
 
 ### Micro-Batching
 
-Der Koordinator sammelt eingehende Anfragen über ein Zeitfenster
-(Standard 250 ms) und schickt sie gebündelt durch die Pipeline. Während
-Shard B an Batch 1 rechnet, kann Shard A schon Batch 2 bearbeiten.
+Im Whitepaper (Kap. 4.2) das Überlappen in der Pipeline: Während Shard 3
+Token t einer Sitzung rechnet, verarbeitet Shard 1 schon die nächste
+Arbeit. Der Koordinator schickt dazu mehrere Sitzungen nebeneinander durch
+die Pipeline, höchstens so viele wie Shards; jeder Shard bedient eine
+Frage nach der anderen, und so läuft keiner leer.
 
 **Der Punkt ist Durchsatz, nicht Latenz.** Eine einzelne Anfrage wird
-dadurch nicht schneller — im Gegenteil, sie wartet bis zu 250 ms. Aber
-die Gesamtzahl der Anfragen pro Sekunde steigt erheblich, weil kein
-Shard leerläuft.
+dadurch nicht schneller. Die Zahl der Anfragen je Sekunde aber wächst mit
+der Zahl der Sitzungen, bis zur Zahl der Shards.
 
-*Im Code:* `COMPUTE_PIPELINE/myl-pod/src/micro_batch.rs`
+Dazu kommt **Continuous Batching**: Warten mehrere Sitzungen am selben
+Shard, rechnet er sie in einem Schritt, Ebene für Ebene und den LM-Kopf in
+einem Zug; die Gewichte kommen so einmal je Stapel aus dem Speicher statt
+einmal je Token. Ein festes Zeitfenster gibt es nicht: Gestapelt wird nur,
+was ohnehin warten müsste. Jede Zahl bleibt dieselbe wie Token für Token.
+
+*Im Code:* `COMPUTE_PIPELINE/myl-pod/src/coordinator.rs` (`Coordinator::rechne`, `Lauftor`, `Sammelstelle`), `ShardNode::process_stapel`, `IntegerModel::ebenen_stapel`
 
 ### Segment
 

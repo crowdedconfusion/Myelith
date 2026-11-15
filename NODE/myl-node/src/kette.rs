@@ -954,6 +954,10 @@ pub struct Kette {
     /// Der Schlüssel, mit dem dieser Knoten seine Blöcke unterschreibt
     /// (2026-10-27); `None` heißt unsigniert.
     erzeugerschluessel: Option<crate::schluessel::Konsensschluessel>,
+    /// ⚑ Ob dieser Knoten nur nach dem Plan baut, als Miner und nicht als
+    /// ausdrücklicher Erzeuger (2026-11-15): Vor dem Lernen des Erzeugers
+    /// baut er dann gar nicht ([`Self::eigener_slot`]).
+    nur_nach_plan: bool,
     /// Ob diese Kette ihren Stimmsatz aus Block 1 lernt (nur auf einer
     /// Probekette, [`crate::netz::Netz::lernt_erzeuger`]).
     lernt_erzeuger: bool,
@@ -1299,6 +1303,7 @@ impl Kette {
             zustand,
             stimmsatz: None,
             erzeugerschluessel: None,
+            nur_nach_plan: false,
             lernt_erzeuger: netz.lernt_erzeuger,
             naechstes_pruefpunktzertifikat: None,
             offene_zuteilungen: Vec::new(),
@@ -2693,6 +2698,16 @@ impl Kette {
     /// unterschreibt (2026-10-27).
     pub fn erzeugerschluessel_setzen(&mut self, schluessel: crate::schluessel::Konsensschluessel) {
         self.erzeugerschluessel = Some(schluessel);
+        self.nur_nach_plan = false;
+    }
+
+    /// ⚑ **Der Schlüssel eines Miners**, der in seinen Slots erzeugt (7.7
+    /// Schritt 5), aber kein ausdrücklicher Erzeuger ist: wie
+    /// [`Self::erzeugerschluessel_setzen`], nur baut er auf einer Probekette
+    /// erst, wenn sie ihren Erzeuger gelernt hat.
+    pub fn miner_erzeugerschluessel_setzen(&mut self, schluessel: crate::schluessel::Konsensschluessel) {
+        self.erzeugerschluessel = Some(schluessel);
+        self.nur_nach_plan = true;
     }
 
     /// **Trägt der Erzeuger dieses Blocks?**
@@ -2814,8 +2829,16 @@ impl Kette {
         let k = self.erzeugerschluessel.as_ref()?;
         let e = epoche_fuer_hoehe(self.hoehe + 1);
         // Eine Probekette ohne Satz lernt ihren Erzeuger aus dem ersten Block
-        // (`erzeuger_traegt`): Bis dahin ist jeder Slot frei.
+        // (`erzeuger_traegt`): Bis dahin ist jeder Slot frei, ⚑ aber nur für
+        // einen ausdrücklichen Erzeuger (2026-11-15). 📌 Im Probenetz baute
+        // sonst jeder Mitläufer, der seinen ersten Slot vor dem ersten Block
+        // des Erzeugers erreichte, selbst Block 1, lernte sich als Erzeuger
+        // und wies den echten für immer ab; jeder lief dann allein, und jeder
+        // Einsteiger sah je Höhe drei fremde Blöcke (`erzeuger-unbelegt`).
         if self.stimmsatz.is_none() && self.lernt_erzeuger && self.erzeugersatz(e).is_none() {
+            if self.nur_nach_plan {
+                return None;
+            }
             let ab = ab.max(self.zustand.letzter_slot.saturating_add(1));
             return (ab <= bis).then_some(ab);
         }
@@ -4904,6 +4927,13 @@ impl Kette {
             aus.push(b.clone());
         }
         aus
+    }
+
+    /// ⚑ **Die Wechselbelege ab Epoche `ab`, gefaltet** (A44,
+    /// [`crate::belegfolge`]): hoechstens `bytes` gefaltet und nie mehr,
+    /// als ein Empfaenger entfalten darf.
+    pub fn wechselbelege_kompakt_ab(&self, ab: u64, bytes: usize) -> crate::belegfolge::Belegfolge {
+        crate::belegfolge::falten_bis(self.wechselbelege.range(ab..).map(|(_, b)| b), bytes)
     }
 
     /// Die erste Epoche ohne Wechselbeleg nach dem letzten vorhandenen.
@@ -9538,6 +9568,31 @@ mod tests {
     /// ab Genesis, 2026-10-27). Mit Stimmsatz nur ein Mitglied unter seinem
     /// Schlüssel; ohne Satz lernt eine Probekette den Erzeuger aus Block 1
     /// und verlangt ihn danach; ein anderes Netz nimmt ohne Satz nichts.
+    /// ⚑ **Vor dem Lernen baut auf einer Probekette nur der ausdrückliche
+    /// Erzeuger** (2026-11-15, Probenetz): Ein Miner wartet auf Block 1 und
+    /// baut danach nur, wo ihn der Plan zieht; ein Erzeuger beginnt sofort.
+    #[test]
+    fn vor_dem_lernen_baut_nur_der_ausdrueckliche_erzeuger() {
+        let erzeuger_k = crate::schluessel::Konsensschluessel::probe("erzeuger").expect("Schlüssel");
+        let miner_k = crate::schluessel::Konsensschluessel::probe("mitlaeufer").expect("Schlüssel");
+        let mut erzeuger = Kette::im_netz(&crate::netz::PROBEKETTE);
+        erzeuger.erzeugerschluessel_setzen(erzeuger_k);
+        let mut miner = Kette::im_netz(&crate::netz::PROBEKETTE);
+        miner.miner_erzeugerschluessel_setzen(miner_k.clone());
+        assert_eq!(miner.eigener_slot(0, 1_000), None, "der Miner baute vor dem ersten Block");
+        assert!(erzeuger.eigener_slot(0, 1_000).is_some(), "der Erzeuger kam vor dem Lernen nicht dran");
+        // Gegenprobe: derselbe Schlüssel als ausdrücklicher Erzeuger baut.
+        let mut als_erzeuger = Kette::im_netz(&crate::netz::PROBEKETTE);
+        als_erzeuger.erzeugerschluessel_setzen(miner_k);
+        assert!(als_erzeuger.eigener_slot(0, 1_000).is_some());
+        // Nach Block 1 des Erzeugers: Der Miner steht nicht im gelernten Satz.
+        let b1 = erzeuger.baue_block();
+        miner.uebernimm(&b1).expect("Block 1 des Erzeugers");
+        let naechster = miner.letzter_slot() + 1;
+        assert_eq!(miner.eigener_slot(naechster, naechster + 1_000), None);
+        assert!(erzeuger.eigener_slot(naechster, naechster + 1_000).is_some(), "der Erzeuger baut weiter");
+    }
+
     #[test]
     fn nur_ein_belegter_erzeuger_kommt_durch() {
         use myl_consensus::validator::{VotingMember, VotingSet};

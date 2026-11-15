@@ -115,11 +115,10 @@ fn pod_deterministisch_und_bitgleich_mit_einzelknoten() {
 
     let model = Arc::new(model);
     let shards = build_shards(model.clone(), MAX_NEW_TOKENS);
-    let mut coordinator = Coordinator::new(
+    let coordinator = Coordinator::new(
         PodId::new([0xAA; 32]),
         EpochId(0),
         shards,
-        myl_pod::coordinator::DEFAULT_WINDOW_MS,
     );
 
     let prompt_ids = tokenizer.encode(PROMPT);
@@ -309,11 +308,10 @@ fn beanspruchte_arbeit_haengt_nicht_am_zuschnitt() {
                 ))
             })
             .collect();
-        let mut coordinator = Coordinator::new(
+        let coordinator = Coordinator::new(
             PodId::new([0xAA; 32]),
             EpochId(0),
             shards,
-            myl_pod::coordinator::DEFAULT_WINDOW_MS,
         );
         coordinator.run_prompt(1, &prompt_tokens, MAX_NEW_TOKENS);
         coordinator.beanspruchte_vtfe().expect("vTFE berechenbar")
@@ -416,11 +414,10 @@ fn die_spur_haengt_am_modell_nicht_am_zuschnitt() {
                 ))
             })
             .collect();
-        let mut coordinator = Coordinator::new(
+        let coordinator = Coordinator::new(
             PodId::new([0xAA; 32]),
             EpochId(0),
             shards,
-            myl_pod::coordinator::DEFAULT_WINDOW_MS,
         );
         coordinator.run_prompt(1, &prompt_tokens, MAX_NEW_TOKENS);
         coordinator
@@ -473,11 +470,10 @@ fn jede_position_ist_ein_eigenes_segment_mit_eigenem_archiv() {
     let prompt_tokens: Vec<u32> = tokenizer.encode(PROMPT).iter().map(|t| *t as u32).collect();
 
     let shards = build_shards(model.clone(), MAX_NEW_TOKENS);
-    let mut coordinator = Coordinator::new(
+    let coordinator = Coordinator::new(
         PodId::new([0xAA; 32]),
         EpochId(0),
         shards,
-        myl_pod::coordinator::DEFAULT_WINDOW_MS,
     );
     coordinator.run_prompt(1, &prompt_tokens, MAX_NEW_TOKENS);
 
@@ -592,9 +588,8 @@ fn vier_gegen_acht_shards_sind_vergleichbar() {
                 ))
             })
             .collect();
-        let mut c = Coordinator::new(
+        let c = Coordinator::new(
             PodId::new([0xAA; 32]), EpochId(0), shards,
-            myl_pod::coordinator::DEFAULT_WINDOW_MS,
         );
         c.run_prompt(1, &prompt_tokens, MAX_NEW_TOKENS);
         c.completed_segments()[0].trace.clone()

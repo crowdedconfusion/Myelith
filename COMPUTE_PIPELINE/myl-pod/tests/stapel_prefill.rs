@@ -68,7 +68,7 @@ fn koordinator(dir: &std::path::Path, stapel_erlaubt: bool) -> (Coordinator, Arc
         einzeln: AtomicUsize::new(0),
         gestapelt: AtomicUsize::new(0),
     });
-    let k = Coordinator::ueber_weg(PodId::new([0xAA; 32]), EpochId(0), weg.clone(), myl_pod::coordinator::DEFAULT_WINDOW_MS)
+    let k = Coordinator::ueber_weg(PodId::new([0xAA; 32]), EpochId(0), weg.clone())
         .expect("Koordinator");
     (k, weg)
 }
@@ -83,10 +83,10 @@ fn der_stapel_rechnet_bitgleich_in_einer_runde_je_shard() {
     let ids: Vec<u32> = tok.encode("Die Hauptstadt von Frankreich ist").iter().map(|t| *t as u32).collect();
     assert!(ids.len() > 2, "der Prompt ist zu kurz, um etwas zu zeigen");
 
-    let (mut gestapelt, weg_s) = koordinator(&dir, true);
+    let (gestapelt, weg_s) = koordinator(&dir, true);
     let mit = gestapelt.run_prompt(7, &ids, 4);
     // ⛔️ Gegenprobe und Referenz: Token für Token.
-    let (mut einzeln, weg_e) = koordinator(&dir, false);
+    let (einzeln, weg_e) = koordinator(&dir, false);
     let ohne = einzeln.run_prompt(7, &ids, 4);
 
     assert_eq!(mit.len(), 4);

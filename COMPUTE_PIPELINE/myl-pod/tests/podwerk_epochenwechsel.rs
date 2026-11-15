@@ -155,7 +155,7 @@ fn ein_auftrag_ueber_die_epochengrenze_bekommt_seine_antwort() {
     let tok = Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad")).expect("Wortschatz");
     let ids: Vec<u32> = tok.encode(PROMPT).iter().map(|t| *t as u32).collect();
     // Die Referenz: derselbe Auftrag ohne Wechsel.
-    let soll = Coordinator::new(PodId::new([1; 32]), EpochId(ERSTE), shards(&model, 0), myl_pod::coordinator::DEFAULT_WINDOW_MS)
+    let soll = Coordinator::new(PodId::new([1; 32]), EpochId(ERSTE), shards(&model, 0))
         .run_prompt(9, &ids, 4);
     assert_eq!(soll.len(), 4);
 

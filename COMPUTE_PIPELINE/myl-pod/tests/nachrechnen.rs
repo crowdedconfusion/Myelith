@@ -210,8 +210,8 @@ fn ein_checker_rechnet_den_verlauf_ab_den_tokens_nach() {
     }
     let modell = Arc::new(load_model(&dir).expect("Modell-Ladung"));
     let neu = 4u64;
-    let mut koordinator =
-        myl_pod::coordinator::Coordinator::new(PodId::new([0xAA; 32]), EpochId(0), vier_shards(modell.clone(), neu), myl_pod::coordinator::DEFAULT_WINDOW_MS);
+    let koordinator =
+        myl_pod::coordinator::Coordinator::new(PodId::new([0xAA; 32]), EpochId(0), vier_shards(modell.clone(), neu));
     assert!(!koordinator.run_prompt(1, &[9_707, 11, 1_879, 374], neu).is_empty(), "Sitzung 1");
     assert!(!koordinator.run_prompt(2, &[785, 6_722], neu).is_empty(), "Sitzung 2");
 

@@ -14,17 +14,17 @@ startfähigen Datenträger erzeugen können.
 ⚑ **Die Grössenordnung trägt die Entscheidung**, nicht die Art der
 Sache. Projektregel 7 hält Gewichte und fremde Laufzeiten aus dem
 Repositorium heraus, und sie zielt auf das, was **riesig** ist: Die
-Gewichte wiegen 77 bis 165 GB. Dies hier sind **71 und 81 MB** je
+Gewichte wiegen 77 bis 165 GB. Dies hier sind **42 und 52 MB** je
 Architektur, jede Datei unter der Grenze von 100 MiB. Wer beides in dieselbe Kategorie steckt, hat
 die Regel gelesen und nicht verstanden.
 
 ## Was das kostet, ausgesprochen
 
-⚠️ **Die Geschichte wächst bei jedem Neubau um rund 150 MB (beide
+⚠️ **Die Geschichte wächst bei jedem Neubau um rund 95 MB (beide
 Architekturen) und schrumpft nie.** Im September waren es 90 MB; die
-A/B-Umschaltung, ein Kern je Seite und gewachsene Programme haben das
-Abbild größer gemacht. Zwölf Neubauten im Jahr wären 1,8 GB, die für
-immer in jedem Klon liegen. ⛔️ **`freigeben.sh` verweigert ein gepacktes
+A/B-Umschaltung, ein Kern je Seite und gewachsene Programme brachten es
+auf 150 MB, bis v0.8.0 die Lesemodelle aus dem Abbild nahm. Zwölf
+Neubauten im Jahr wären 1,1 GB, die für immer in jedem Klon liegen. ⛔️ **`freigeben.sh` verweigert ein gepacktes
 Abbild ab 100 MiB**, darüber nimmt GitHub keine Datei an. ⚑ **Daraus folgt eine Regel:** Ein neues Abbild kommt nur bei
 einem **benannten Stand** herein, nicht nach jedem Bau.
 
@@ -34,8 +34,18 @@ Fassung, die Konfiguration und das Datum.
 
 ## Dieser Stand
 
-**Grund der Freigabe: GolemOS v0.7.0, Secure Boot.** Gegenüber v0.6.1
-vom selben Tag:
+**Grund der Freigabe: GolemOS v0.8.0, `myl` ohne eingebettete
+Lesemodelle.** Gegenüber v0.7.0 vom Vortag:
+
+- **`myl` trägt die Modelle der Texterkennung nicht mehr in sich.** Sie
+  kommen aus dem Myelith-Ordner auf dem Stick oder einem zweiten
+  Laufwerk; `myl` wiegt im Abbild 35 statt 86 MB, gepackt ist jedes
+  Abbild rund 29 MB kleiner. Ohne Myelith-Ordner gibt es keine
+  Texterkennung, und `myl scan` sagt, was fehlt.
+- Startkette, Kern und Pakete sind dieselben wie in v0.7.0, die
+  Programme auf dem Stand dieses Tages.
+
+**Seit v0.7.0 mit Secure Boot:**
 
 - **Startet mit eingeschaltetem Secure Boot.** Die Firmware startet
   `shim` 16.1 aus Debian 13, unverändert und von Microsoft unter der
@@ -53,12 +63,12 @@ vom selben Tag:
 je rund 0,7 GB, aus `auskunft.sh`): Das Abbild enthält Teile unter der
 GPL. Zu groß fürs Repositorium, deshalb als Anhang der Freigabe
 [GolemOS: Quellen](https://github.com/crowdedconfusion/Myelith/releases/tag/golemos-quellen);
-dieselben Archive wie zu v0.6.1, denn kein Paket hat sich geändert;
+dieselben Archive wie zu v0.6.1 und v0.7.0, denn kein Paket hat sich geändert;
 was dort liegt und wie man es prüft, steht in `SYSTEM/golemos/Quellarchiv/README.md`.
 
 | | |
 |---|---|
-| Gebaut am | 2026-11-14 |
+| Gebaut am | 2026-11-15 |
 | Buildroot | 2026.08.1 |
 | Kern | Linux 7.1.13 |
 | GRUB | 2.14 |
@@ -67,8 +77,8 @@ was dort liegt und wie man es prüft, steht in `SYSTEM/golemos/Quellarchiv/READM
 
 | Architektur | Nenngröße | belegt | gepackt |
 |---|---|---|---|
-| `x86_64` | 1040 MB | 212 MB | **70,8 MB** |
-| `aarch64` | 1040 MB | 290 MB | **80,9 MB** |
+| `x86_64` | 1040 MB | 200 MB | **41,9 MB** |
+| `aarch64` | 1040 MB | 255 MB | **52,4 MB** |
 
 ### Was belegt ist, und wodurch
 
@@ -76,11 +86,11 @@ Genau diese beiden Abbilder, vor dem Packen (entpackt bitgleich, gegen
 die SHA-256 geprüft), unter QEMU 11.1.3 mit UEFI (edk2), ohne Netz,
 bedient über die serielle Leitung. Mit Secure Boot: die Firmware von
 Debian mit den Schlüsseln von Microsoft, je Architektur 15 Starts; ohne
-Secure Boot je 17 Starts.
+Secure Boot je 18 Starts.
 
 | | x86_64 | aarch64 |
 |---|---|---|
-| mit Secure Boot: ein unsigniertes Abbild wird abgewiesen | nicht geprüft | ✓ |
+| mit Secure Boot: ein unsigniertes Abbild wird abgewiesen | nicht geprüft | zuletzt mit v0.7.0, die Startkette ist unverändert |
 | mit Secure Boot: shim weist GRUB zunächst ab, Golem-Emet über den MokManager eingetragen (Fingerabdruck geprüft), danach GRUB und Kern, `SecureBoot`=1 im System | ✓ | ✓ |
 | mit Secure Boot: einspielen, Probe bestätigt, Probe abgebrochen und zurück, kaputte Seite und zurück | ✓ | ✓ |
 | mit Secure Boot: Installation, die installierte Platte startet allein | ✓ | ✓ |
@@ -88,6 +98,8 @@ Secure Boot je 17 Starts.
 | ohne Secure Boot: Datenteil exFAT, eine Datei überlebt den nächsten Start; ein FAT32-Datenteil eines früheren Stands bleibt FAT32 samt Inhalt | ✓ | ✓ |
 | ohne Secure Boot: echtes `xz`, `modprobe` von kmod, ein gepacktes (signiertes) Modul geladen | ✓ | ✓ |
 | ohne Secure Boot: A/B-Kette und Installer-Kette wie oben | ✓ | ✓ |
+| `myl scan` ohne Myelith-Ordner: Rückgabe 1 mit der Meldung, was fehlt | ✓ | ✓ |
+| `myl scan` mit Myelith-Ordner, die Lesemodelle von dort | nicht geprüft (unter macOS belegt) | nicht geprüft (unter macOS belegt) |
 | Lizenzseite, Verzeichnis und Lizenztexte von Kern, GRUB, BusyBox und shim im Abbild | ✓ (Prüfung im Bau) | ✓ (Prüfung im Bau) |
 | „Paris" mit `myl frage`, Modell von einer zweiten Platte | nicht geprüft | zuletzt mit v0.6.1 |
 | Myelith-Ordner auf dem Stick, Konsole ohne Installation, `spread.sh` | zuletzt mit v0.2.0 | zuletzt mit v0.2.0 |
@@ -104,7 +116,7 @@ eudev, seatd, `kmod`, `xz`, `dosfstools`, `exfatprogs`, `kbd`, GRUB 2.14,
 shim und MokManager, und darauf `myelith`, `myl`, `myl-node` und
 `golem-einrichten`.
 
-**Enthält nicht:** Modelle, Gewichte, den Myelith-Ordner, die
+**Enthält nicht:** Modelle (seit v0.8.0 auch die der Texterkennung), Gewichte, den Myelith-Ordner, die
 Oberflächen-Schicht, den geheimen Teil von Golem-Emet. Der Ordner kommt
 nach dem ersten Start auf **Golem**.
 

@@ -271,8 +271,8 @@ fn pod_rechnen(relais: SocketAddr, ausweis: Ausweis, pod_index: u32, prompt: &[u
     // Ein Shard, der gerade gestartet ist, lädt noch sein Modell; bereit ist
     // der Pod, wenn jeder seinen Zuschnitt nennt.
     let bis = Instant::now() + Duration::from_secs(300);
-    let mut k = loop {
-        match myl_pod::coordinator::Coordinator::ueber_weg(pod.kennung, myl_types::ids::EpochId(bild.epoche), Arc::clone(&weg), myl_pod::coordinator::DEFAULT_WINDOW_MS) {
+    let k = loop {
+        match myl_pod::coordinator::Coordinator::ueber_weg(pod.kennung, myl_types::ids::EpochId(bild.epoche), Arc::clone(&weg)) {
             Ok(k) => break k,
             Err(f) if Instant::now() < bis => {
                 eprintln!("[podausklienten] Pod {pod_index} noch nicht bereit: {f}");
@@ -305,7 +305,7 @@ fn im_prozess_rechnen(grenzen: &[(u32, u32)], kennung: myl_types::ids::PodId, ep
             Arc::new(myl_pod::shard::ShardNode::new(i, von as usize, bis as usize, i == 0, i == n - 1, Arc::clone(&modell), sk, NEU))
         })
         .collect();
-    let mut referenz = myl_pod::coordinator::Coordinator::new(kennung, myl_types::ids::EpochId(epoche), shards, myl_pod::coordinator::DEFAULT_WINDOW_MS);
+    let referenz = myl_pod::coordinator::Coordinator::new(kennung, myl_types::ids::EpochId(epoche), shards);
     referenz.run_prompt(1, prompt, NEU)
 }
 

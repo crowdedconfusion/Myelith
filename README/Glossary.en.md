@@ -1304,15 +1304,23 @@ data centre.
 
 ### Micro-batching
 
-The coordinator collects incoming requests over a time window (default
-250 ms) and sends them through the pipeline together. While shard B works
-on batch 1, shard A can already start batch 2.
+In the whitepaper (ch. 4.2), the overlap within the pipeline: while shard 3
+computes token t of one session, shard 1 is already processing the next
+piece of work. To get there, the coordinator sends several sessions through
+the pipeline side by side, at most as many as there are shards; each shard
+serves one request after another, so none of them idles.
 
 **The point is throughput, not latency.** An individual request does not
-get faster — on the contrary, it waits up to 250 ms. But the total number
-of requests per second rises substantially, because no shard idles.
+get faster. The number of requests per second, however, grows with the
+number of sessions, up to the number of shards.
 
-*In code:* `COMPUTE_PIPELINE/myl-pod/src/micro_batch.rs`
+On top of that comes **continuous batching**: when several sessions wait at
+the same shard, it computes them in one step, layer by layer and the LM head
+in one go, so the weights are read once per batch instead of once per
+token. There is no fixed time window: only what would have to wait anyway
+is batched. Every number stays the same as token by token.
+
+*In code:* `COMPUTE_PIPELINE/myl-pod/src/coordinator.rs` (`Coordinator::rechne`, `Lauftor`, `Sammelstelle`), `ShardNode::process_stapel`, `IntegerModel::ebenen_stapel`
 
 ### Segment
 

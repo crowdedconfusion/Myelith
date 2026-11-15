@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.124.1
-> **Datum:** 2026-11-14
+> **Version:** 0.125.0
+> **Datum:** 2026-11-15
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,49 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.125.0 (2026-11-15): Wechselbelege gefaltet (A44), Miner bauen auf der Probekette erst nach dem Lernen, abgelehnte Blöcke mit Herkunft
+
+- ⚑ **Wechselbelege gefaltet** (Sicherheitsaudit A44, Entscheidung B10 a):
+  neues Modul `belegfolge`. Eine Folge von Belegen am Stück, jeder Satz als
+  `Keiner`, `Voll`, `Wie(Epoche)` oder `Aenderung` (Stellen, die wegfallen,
+  neue Gewichte, neue Mitglieder) gegen einen Satz weiter vorn in derselben
+  Folge, jede Unterzeichnerliste als Bitfeld über den Satz, der
+  unterschreibt. Entfaltet entstehen gewöhnliche Belege, geprüft wie
+  bisher; die Bindung im Zertifikat beweist, dass richtig entfaltet wurde,
+  also kein neuer Konsensvertrag. Der Kodierer prüft jede Änderung
+  probeweise und nimmt den vollen Satz, wenn sie nicht genau zurückführt.
+  Gemessen in der Probe: 10 000 Mitglieder, alle Gewichte je Epoche
+  geändert, zwanzig Belege, gefaltet unter einem Achtel.
+- ⛔️ **Deckel vor dem Entfalten** (`ENTFALTET_HOECHSTENS` 64 MiB,
+  `BELEGE_HOECHSTENS` gleich der Haltefrist): Ein Verweis vervielfacht einen
+  Satz; die entfaltete Größe wird aus den Zählungen gerechnet, bevor etwas
+  gebaut wird. `falten_bis` hält beide Grenzen beim Antworten ein.
+- **Protokoll:** neue Marken `Nachforderung::WechselbelegeKompakt` und
+  `Nachlieferung::WechselbelegeKompakt`, hinten angehängt. Ein Knoten fragt
+  gefaltet; antwortet die Gegenstelle mit `Nichts` (ältere Fassung), stellt
+  er die alte Anfrage. Die Anfrage zählt zu den Anfragen, die Arbeit kosten
+  (Drossel, A48). Die Zeile `wechselbelege_angefragt` trägt `form`.
+- ⚑ **Auf der Probekette baut ein Miner erst, wenn sie ihren Erzeuger
+  gelernt hat** (`Kette::miner_erzeugerschluessel_setzen`): Vor dem Lernen
+  galt jeder Slot als frei, auch für Miner (7.7 Schritt 5). 📌 Im
+  Probenetz baute so jeder Mitläufer, der seinen ersten Slot vor dem ersten
+  Block des Erzeugers erreichte, selbst Block 1, lernte sich als Erzeuger
+  und wies den echten für immer ab; jeder lief allein, und ein Einsteiger
+  sah je Höhe drei fremde Blöcke (`erzeuger-unbelegt`, Beobachtung vom
+  2026-11-12). Ein Wettlauf beim Start: in einem Lauf von 5 Minuten sauber,
+  in einem von 16 Minuten von Block 1 an. Ausdrückliche Erzeuger
+  (`--erzeuger`) und das Verhalten nach dem Lernen unverändert.
+- **`block_abgelehnt` mit Herkunft:** `block` (Hash), `von` (letzter
+  Weiterleiter), `erzeuger` (behauptet, aus dem Schlüssel der Unterschrift,
+  ohne sie zu prüfen; `keiner` ohne Unterschrift), `slot`.
+- **`miner_anmelden` als Besitznachweis** im Kommentar der Kette
+  festgehalten (CONSENSUS).
+- Proben: `belegfolge` fünf (hin und zurück über Lücke und Wechsel, Größe,
+  Deckel samt übergroßer Folge von außen, Antwort für Antwort, falsch
+  geformte Folgen), `die_gefalteten_wechselbelege_stehen_hinten`,
+  `vor_dem_lernen_baut_nur_der_ausdrueckliche_erzeuger`. Gegenproben je
+  Zeile: Lernregel, beide Deckel, kanonisches Bitfeld.
 
 ### v0.124.1 (2026-11-14): Ohne fremde Projekte als Vorbild
 

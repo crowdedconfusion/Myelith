@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.68.5
-> **Datum:** 2026-11-14
+> **Version:** 0.69.0
+> **Datum:** 2026-11-15
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,17 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.69.0 (2026-11-15): Ist die Netzadresse ein Schlüssel? (Fund 701)
+
+- **Neu `PeerIdBytes::ist_ed25519_punkt`**: ob die 32 Bytes ein Punkt der
+  Kurve Ed25519 sind (`CompressedEdwardsY::decompress`, `curve25519-dalek`
+  liegt schon im Baum). Dieselbe Regel, nach der der Knoten daraus eine
+  `PeerId` macht; Punkte kleiner Ordnung wie `[0; 32]` gelten als Punkt,
+  wie dort. Die Kette prüft damit die Anmeldung (CONSENSUS 0.88.0), eine
+  Probe in NETWORKING hält beide gleich.
+- Probe `nur_etwa_die_haelfte_aller_folgen_ist_ein_punkt` (10 000 Folgen,
+  zwischen 4 000 und 6 000 Punkte; Basispunkt und `[0; 32]` sind Punkte).
 
 ### v0.68.5 (2026-11-14): Ohne fremde Projekte als Vorbild
 

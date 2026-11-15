@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.150.0 (θ_v 0.22.0; kernels 0.91.0, runtime 0.105.1, pipeline 0.15.4)
-> **Datum:** 2026-11-11
+> **Version:** 0.152.0 (θ_v 0.22.0; kernels 0.92.0, runtime 0.106.1, pipeline 0.15.4)
+> **Datum:** 2026-11-15
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,93 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.152.0 (2026-11-15): int16 mal int16 mit NEON, exakt (kernels 0.92.0, runtime 0.106.1)
+
+- ⚑ **`dot::dot_i16_i16`**: das Skalarprodukt zweier int16-Folgen, exakt in
+  i64, hinter derselben Weiche und demselben Schalter wie `dot_i8_i16`
+  (Fund 34: die Bedingung steht einmal, am `cfg` von `mod gewaehlt`). Auf
+  aarch64 mit `cpu-simd` `vmull_s16` und `vpadalq_s32` auf vier
+  unabhängigen i64-Ketten; sonst die bisherige Schleife (`dot16_skalar`).
+  Auf x86_64 bleibt es skalar: `_mm256_madd_epi16` summiert zwei Produkte in
+  i32, und zweimal (-32768)² ist 2^31. `attention::dot_int` ruft es, damit
+  der LM-Kopf mit `i16`-Gewichten und das Skalarprodukt der Aufmerksamkeit.
+- 📌 **Warum:** Der Übersetzer machte aus der Schleife je 16 Produkte vier
+  `smull` und acht `saddw`; mit `sadalp` sind es vier. Gemessen im
+  Freigabebau (sparrow, Kopf allein): ein Zustand unverändert 1,41 ms (311 MB
+  Kopfgewichte, durch den Speicher begrenzt), vier Zustände 3,06 → 2,25 ms,
+  acht 5,74 → 4,34 ms. `stapelkosten`: acht Token 3,56 → 3,43 Schritte,
+  Logits gleich.
+- **Proben:** `dot16_ist_bitgleich_zur_skalarfassung` (jede Länge 0 bis 80
+  und lange Breiten, Zufall über den ganzen Bereich),
+  `dot16_uebersteht_die_raender` (alle vier Randpaare bis 65 536 Elemente,
+  gegen die geschlossene Formel), `dot16_ungleiche_laengen_wie_zip`. Von
+  Hand gegengeprüft: ohne einen der vier Akkumulatoren alle drei rot.
+  kernels 412 grün, mit `cpu-simd` 421; Clippy auf `reference`, `cpu-simd`,
+  `metal` und für x86_64 (über `x86_64-pc-windows-msvc`) sauber.
+- 📌 **runtime 0.106.1: `kopfzeilen` mit `as_chunks::<2>()`** statt
+  `chunks_exact(2)`; Clippy 1.99 lehnt die Konstante ab. Übersehen in
+  0.151.0: Die Prüfskripte schrieben `echo "$(date +%T) … rc=$?"`, und `$?`
+  war dort der Rückgabewert von `date`, also immer 0; erst das Lesen der
+  Protokolle zeigte den Fehler. Danach Clippy auf allen drei Wegen 0, Tests
+  188 auf beiden, Konformität 55/55 auf beiden.
+- kernels 0.92.0, runtime 0.106.1; θ_v bleibt 0.22.0, keine Zahl ändert sich.
+
+### v0.151.0 (2026-11-15): Ein Stapel über Sitzungen, und der Kopf als Stapel (runtime 0.106.0)
+
+- ⚑ **`IntegerModel::ebenen_stapel`** rechnet einen Ebenenbereich für
+  Zustände, die zu verschiedenen Sitzungen gehören dürfen, je Token mit
+  eigenem Speicher und eigener Position (`Belegung`). Projektionen und MLP
+  laufen für alle zugleich, die Gewichte also einmal je Stapel;
+  Aufmerksamkeit je Speicher, Rekurrenz je Speicher als Gruppe (eine
+  Rekurrenz lässt sich nicht über Sitzungen bündeln). **Derselbe Rumpf wie
+  die Vorbereitung eines Prompts**, die jetzt der Sonderfall „ein Speicher,
+  fortlaufende Positionen“ davon ist; kein zweiter Vorwärtspass. Gebraucht
+  für Continuous Batching in `myl-pod` (COMPUTE_PIPELINE 0.64.0).
+- ⚑ **`IntegerModel::head_logits_stapel`**: der LM-Kopf für B Zustände;
+  jede Kopfzeile kommt einmal aus dem Speicher und rechnet gegen alle. Der
+  Einzelweg (`head_logits`, `forward_token`) ist derselbe Code mit B = 1
+  (`kopfzeilen` über `rechnen_breit`, wie `rechnen_i32` mit Breite 2), die
+  Schlussnorm eine Stelle (`schlussnorm`). `logits_stapel` rechnet den Kopf
+  jetzt als Stapel; der Vermerk, das brauche einen eigenen Schritt mit
+  eigener Gegenprobe, ist damit eingelöst.
+- 📌 **Gemessen** (`stapelkosten`, sparrow, Decode hinter 39 Token, Logits
+  gegen `forward_token` gleich): vier Token kosten 2,60 Schritte (vorher
+  2,81), acht 3,56 (vorher 3,96); ein Einzelschritt unverändert 11,6 ms. Die
+  Zahl vom September (4 + 5 % bei pigeon) ist überholt.
+- **Proben** `tests/stapel_ueber_sitzungen.rs`: ein gemischter Stapel (drei
+  Sitzungen, mehrere Positionen einer neben einzelnen anderer, Bereich 7 bis
+  14 mit Bereichsspeichern wie im Shard) gleicht nach **jeder** Ebene
+  `run_layers`; der Kopf als Stapel gleicht dem einzelnen. Gegenproben im
+  Test (fremder Speicher, zwei verschiedene Zustände) und von Hand
+  (Aufmerksamkeit aus dem ersten Speicher, Kopf nur mit der ersten
+  Eingabe): beide rot.
+- Konformität 55/55 auf `reference` und `cpu-simd`; Tests 188 auf beiden
+  Rechenwegen; Clippy (`reference`, `cpu-simd`, `metal`) sauber;
+  `test_no_float` grün. θ_v bleibt 0.22.0: Keine Zahl ändert sich.
+- runtime 0.106.0.
+
+### v0.150.1 (2026-11-15): Allaussagen mit Generator, und ein Überlauf in `isqrt_round` (kernels 0.91.1)
+
+- 📌 **`isqrt_round` lief für n nahe `u64::MAX` über** (`(r + 1) * (r + 1)`
+  bei r = 2^32 − 1; im Debug-Bau ein Abbruch, im Release ein falsches
+  Ergebnis). Gefunden von der neuen erschöpfenden Probe. Gerundet wird jetzt
+  über `n − r² > r`, gleichwertig zu `(r+1)² − n < n − r²` für ganze Zahlen,
+  also für jedes n ohne Überlauf dasselbe Ergebnis. Heute ruft es nur
+  `inv_sqrt_q15` mit `2^30 / head_dim`, weit unter der Grenze; θ_v bleibt
+  0.22.0, die Konformität mit allen vier Abdrücken ist unverändert.
+- **Neue Proben mit Generator oder erschöpfend:**
+  `isqrt_round_rundet_jedes_n_zur_naechsten_wurzel` (bis 2^20 jedes n,
+  eine Million über ganz u64 samt Rändern),
+  `inv_sqrt_q15_ist_fuer_jede_gerade_zweierpotenz_exakt` (alle 16), und
+  `qk_norm_bringt_jeden_kopf_ueber_der_tabellengrenze_auf_dieselbe_groesse`
+  (fester Generator, Kopfbreiten 4, 8, 64 und 128, Beträge 2^4 bis 2^14;
+  der Effektivwert liegt in [63, 65], hergeleitet im Kommentar, für Köpfe
+  mit mittlerem Quadrat ab 256; darunter ist die Tabelle grob, und die
+  Aussage wird dort nicht behauptet). Gegenproben je Zeile beißen.
+- Härtung: Clippy `kernels` (auch `cpu-simd`, `metal`), Tests `kernels`
+  409, mit `cpu-simd` 418, `runtime` 136; `test_no_float`; Konformität vier
+  Abdrücke.
 
 ### v0.150.0 (2026-11-11): W8A8 für die Sinne (kernels 0.91.0)
 

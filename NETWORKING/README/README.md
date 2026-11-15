@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.25.2
-> **Datum:** 2026-11-11
+> **Version:** 0.25.3
+> **Datum:** 2026-11-15
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,15 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.25.3 (2026-11-15): Netz und Kette haben dieselbe Punktregel (Fund 701, `myl-net` 0.25.3)
+
+- Probe `netz_und_kette_haben_dieselbe_punktregel`: Für alle 256 gleichen
+  Folgen und 10 000 zufällige ergibt `peer_id_aus_bytes` genau dann eine
+  `PeerId`, wenn `PeerIdBytes::ist_ed25519_punkt` (die Regel der Kette,
+  CONSENSUS 0.88.0) ja sagt; sie wählt aus (über 1 000 je Seite).
+  Gegenprobe: mit einer falschen Regel in SHARED_TYPES rot. Am Code nichts
+  geändert.
 
 ### v0.25.2 (2026-11-11): Nicht jede Bytefolge ist eine Peer-ID (Fund 701, `myl-net` 0.25.2)
 

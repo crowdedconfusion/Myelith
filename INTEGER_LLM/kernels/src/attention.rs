@@ -17,13 +17,12 @@ use crate::fixed_point::{clamp_i16_from_i64, rshift_round_i64};
 use crate::softmax::softmax_int;
 
 /// Skalierter Dot-Product in i64 (int16-Operanden).
+///
+/// ⚑ Seit 2026-11-15 über [`crate::dot::dot_i16_i16`]: vektorisiert, wo es
+/// eine exakte Fassung gibt, sonst die bisherige Schleife; dieselbe Zahl.
 #[inline]
 pub fn dot_int(a: &[i16], b: &[i16]) -> i64 {
-    let mut acc: i64 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        acc += (*x as i64) * (*y as i64);
-    }
-    acc
+    crate::dot::dot_i16_i16(a, b)
 }
 
 /// Integer-Attention.

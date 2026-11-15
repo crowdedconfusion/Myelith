@@ -72,6 +72,7 @@ pub mod rechenweg;
 pub mod probe;
 pub mod protokoll;
 pub mod saatdienst;
+pub mod belegfolge;
 pub mod wechsel;
 pub mod schluessel;
 /// Die Relaisleitung zu einem Koordinator.

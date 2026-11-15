@@ -1,7 +1,7 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.7.1 (`golem-einrichten` 0.5.0)
-> **Datum:** 2026-11-14
+> **Version:** 0.8.1 (`golem-einrichten` 0.5.0)
+> **Datum:** 2026-11-15
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
@@ -124,6 +124,56 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.8.1 (2026-11-15): Das Quellarchiv entsteht nur bei neuen Paketen
+
+- ⚑ **`auskunft.sh` packt die Quellen nur, wenn sich Pakete geändert
+  haben.** Gleicht die neue Lizenzauskunft inhaltlich der neben dem
+  abgelegten Abbild (dieselbe Prüfung wie in `freigeben.sh`: Pakete,
+  Fassungen, Lizenztexte, Konfiguration samt Fassung von Buildroot),
+  gelten die Archive an der Freigabe `golemos-quellen` weiter, und es
+  entsteht kein neues. Ein Update, das nur die eigenen Programme ändert,
+  berührt sie also nie. `--immer` packt trotzdem. `freigeben.sh` verlangt
+  das Quellarchiv nur noch bei neuen Paketen.
+- Die Freigabe `golemos-quellen` nennt auch in der Beschreibung keine
+  Fassungen mehr; welche Archive zu einem Abbild gehören, sagt dessen
+  `HERKUNFT.md` (`Quellarchiv/README.md`).
+- Geprüft: `sh -n` beider Skripte; `auskunft.sh` für beide Architekturen
+  gegen den Bau von v0.8.0 (je 20 Pakete in der Basis, 66 in der Schicht):
+  dieselben Pakete wie bei v0.6.1 und v0.7.0, kein Archiv neu gepackt.
+  `freigeben.sh` mit Attrappen in allen vier Fällen: Auskunft älter als
+  das Abbild (bricht mit 4 ab), dieselben Pakete ohne Quellarchiv (gibt
+  frei, die abgelegte Auskunft bleibt), andere Pakete ohne frisches
+  Quellarchiv (bricht mit 4 ab), andere Pakete mit frischem (gibt frei und
+  legt die neue Auskunft ab).
+
+### v0.8.0 (2026-11-15): `myl` ohne eingebettete Lesemodelle
+
+- ⚑ **`bauen.sh` baut `myl` mit `--features scan-extern`** (CLIENT
+  0.236.0): Die Modelle der Texterkennung kommen aus dem Myelith-Ordner auf
+  dem Stick (`MYELITH_WURZEL`, gesetzt aus `/run/golemos/wurzel`), nicht mehr
+  aus dem Programm. Gemessen unter macOS: rund 28 MB weniger je Abbild
+  gepackt, Platz für die nächsten Stände unter der Grenze von 100 MiB je
+  Datei. ⚠️ Ohne Myelith-Ordner gibt es keine Texterkennung; dann gibt es
+  aber auch kein Modell, das die Texte liest, und `myl scan` sagt, was
+  fehlt.
+- ✅ **Gebaut und signiert** (2026-11-15, beide Architekturen, GRUB und Kern
+  mit Golem-Emet, shim und MokManager auf der Bootpartition): `myl` im
+  Abbild 35 MB; die Aktualisierung aarch64 97,7 MiB (vorher 125,3, jetzt
+  unter der Grenze von 100 MiB), x86_64 56,9 MiB (vorher 84,6); das
+  Startdateisystem aarch64 55,0 MiB (vorher 82,7), x86_64 42,0 MiB.
+- ✅ **Unter QEMU geprüft**, je Architektur: ein kurzer Start (Status,
+  `myl scan` ohne Myelith-Ordner: Rückgabe 1 mit der Meldung), Erststart,
+  A/B-Kette (sieben Starts samt Abbruch und Panik von A) und
+  Installer-Kette (sechs Starts) ohne Secure Boot, dieselben beiden Ketten
+  mit Secure Boot (Golem-Emet mit dem erwarteten Fingerabdruck eingetragen,
+  `SECUREBOOT=01`): alle grün. Die Gegenprobe mit einem unsignierten Abbild
+  entfiel, die Startkette ist unverändert.
+- **Freigegeben** nach `abbild/fertig/`: `golemos-x86_64.img.xz` (41,9 MB,
+  vorher 70,8) und `golemos-aarch64.img.xz` (52,4 MB, vorher 80,9),
+  entpackt bitgleich mit den geprüften Abbildern; `HERKUNFT.md`
+  nachgezogen. Die Quellen sind dieselben wie zu v0.6.1 und v0.7.0, an
+  der Freigabe `golemos-quellen` ändert sich nichts.
 
 ### v0.7.1 (2026-11-14): Die Quellen liegen an einer Stelle
 

@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.235.0 (`myl-client` 0.133.0, `myl-oberflaeche` 0.92.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.4.0)
+> **Version:** 0.236.0 (`myl-client` 0.134.0, `myl-oberflaeche` 0.92.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
 > **Datum:** 2026-11-14
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -182,6 +182,30 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.236.0 (2026-11-15): Lesemodelle aus dem Myelith-Ordner, nur für GolemOS (`myl-client` 0.134.0, `myl-scan` 0.5.0)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-15:** Im GolemOS-Bau bettet
+  `myl` die Modelle der Texterkennung nicht mehr ein, sondern liest sie aus
+  dem Myelith-Ordner auf dem Stick; auf allen anderen Systemen bleibt alles
+  eingebettet wie bisher.
+- **`myl-scan`, Merkmal `lesemodelle-extern`:** Jedes Modell hat eine
+  Quelle (`Modell`), eingebettet oder ein Dateiname unter
+  `CLIENT/myl-scan/modelle` des Klons. Die Wurzel kommt aus
+  `myl_senses::ort::wurzel` (zuerst `MYELITH_WURZEL`, das GolemOS setzt),
+  einer Stelle für alle Kisten. Geladen wird beim ersten Gebrauch, danach
+  gehalten; die kleinen Zeichenlisten bleiben eingebettet. Ohne Klon sagt
+  der Fehler, was zu tun ist.
+- **`myl-client`, Merkmal `scan-extern`** (`scan` samt dem obigen), gesetzt
+  von `SYSTEM/golemos/bauen.sh`.
+- 📌 **Gemessen** (macOS, Freigabebau): `myl` 79,8 MB eingebettet gegen
+  45,0 MB, gepackt (xz -9) 37,4 gegen 9,1 MB, also rund 28 MB weniger je
+  Abbild. Ausserhalb des Klons: ohne `MYELITH_WURZEL` die Meldung, mit ihr
+  dasselbe Ergebnis wie eingebettet, Byte für Byte (Fraktur-Probe).
+- **Proben:** `myl-scan` 38 grün eingebettet, 40 mit dem Merkmal (neu:
+  geladen wird genau die Datei, einmal; ein fehlendes Modell nennt seinen
+  Pfad), `myl-client` 235 grün in beiden Bauarten, Clippy in allen vier
+  sauber.
 
 ### v0.235.0 (2026-11-14): Die Sicherheitskopie entsteht lokal, ersetzt die alte und nimmt die Schlüsselablage mit
 

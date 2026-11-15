@@ -1747,7 +1747,7 @@ impl IntegerModel {
         token_ids: &[usize],
         pos_start: usize,
         cache: &mut KVCache,
-        mut nach_ebene: Option<&mut dyn FnMut(usize, &[Vec<i16>])>,
+        nach_ebene: Option<&mut dyn FnMut(usize, &[Vec<i16>])>,
     ) -> Vec<Vec<i16>> {
         if token_ids.is_empty() {
             return Vec::new();
@@ -1762,9 +1762,60 @@ impl IntegerModel {
                 .map(|(i, &t)| self.vierstrom_durch(t, pos_start + i, cache))
                 .collect();
         }
-        let mut zustaende: Vec<Vec<i16>> =
+        let zustaende: Vec<Vec<i16>> =
             token_ids.iter().map(|&t| self.embed_token(t)).collect();
-        for (i, layer) in self.layers.iter().enumerate() {
+        let belegung: Vec<Belegung> =
+            (0..token_ids.len()).map(|b| Belegung { speicher: 0, position: pos_start + b }).collect();
+        self.ebenen_stapel_innen(zustaende, &belegung, std::slice::from_mut(cache), 0, self.layers.len(), nach_ebene)
+    }
+
+    /// ⚑ **Ebenen `[von, bis)` fuer einen Stapel von Zustaenden, die zu
+    /// verschiedenen Sitzungen gehoeren duerfen** (Continuous Batching,
+    /// 2026-11-15): Token `b` rechnet an `belegung[b].position` mit dem
+    /// Speicher `speicher[belegung[b].speicher]`. Die Projektionen und der MLP
+    /// laufen fuer alle zugleich, die Gewichte also einmal je Stapel statt
+    /// einmal je Token; Aufmerksamkeit und Rekurrenz bleiben je Speicher.
+    ///
+    /// ⚑ **Derselbe Rumpf wie die Vorbereitung eines Prompts**, die dieser
+    /// Weg mit einem Speicher und fortlaufenden Positionen ist; kein zweiter
+    /// Vorwaertspass. Gemessen am 2026-11-15 (`stapelkosten`, sparrow, Decode
+    /// hinter 39 Token): vier Token kosten 2,81 Schritte, acht 3,96.
+    ///
+    /// ⚠️ **Je Speicher in aufsteigender Position**, wie tokenweise: Erst
+    /// werden alle K und V in der Folge des Stapels geschrieben, dann liest
+    /// jedes Token bis zu seiner eigenen Position. `None` fuer ein Modell mit
+    /// vier Stroemen; dort rechnet der Aufrufer Token fuer Token.
+    pub fn ebenen_stapel(
+        &self,
+        zustaende: Vec<Vec<i16>>,
+        belegung: &[Belegung],
+        speicher: &mut [KVCache],
+        von: usize,
+        bis: usize,
+    ) -> Option<Vec<Vec<i16>>> {
+        if self.vierstrom.is_some() || zustaende.len() != belegung.len() || bis > self.layers.len() || von > bis {
+            return None;
+        }
+        if belegung.iter().any(|b| b.speicher >= speicher.len()) {
+            return None;
+        }
+        Some(self.ebenen_stapel_innen(zustaende, belegung, speicher, von, bis, None))
+    }
+
+    fn ebenen_stapel_innen(
+        &self,
+        mut zustaende: Vec<Vec<i16>>,
+        belegung: &[Belegung],
+        speicher: &mut [KVCache],
+        von: usize,
+        bis: usize,
+        mut nach_ebene: Option<&mut dyn FnMut(usize, &[Vec<i16>])>,
+    ) -> Vec<Vec<i16>> {
+        if zustaende.is_empty() {
+            return zustaende;
+        }
+        for i in von..bis {
+            let layer = &self.layers[i];
             // ⛔️ **Eine Rekurrenz laesst sich nicht buendeln.**
             //
             // Der gebuendelte Vorlauf rechnet viele Token auf einmal und
@@ -1821,7 +1872,20 @@ impl IntegerModel {
                 });
                 let normen: Vec<&[i16]> = normen.chunks_exact(hs).collect();
                 let acc_mischer = akkumulationsskala_mischer(sc);
-                let o_aus = self.zustandsmischer(layer, zs, &normen, cache, &acc_mischer);
+                // ⚑ **Je Speicher eine Gruppe** (2026-11-15): Die Rekurrenz
+                //   einer Sitzung laeuft ueber ihre Token in Folge; mehrere
+                //   Sitzungen im Stapel teilen sich nur, was nicht rekurriert.
+                let mut o_aus: Vec<Vec<i16>> = vec![Vec::new(); n];
+                for (c, sp) in speicher.iter_mut().enumerate() {
+                    let glieder: Vec<usize> = (0..n).filter(|&b| belegung[b].speicher == c).collect();
+                    if glieder.is_empty() {
+                        continue;
+                    }
+                    let teil: Vec<&[i16]> = glieder.iter().map(|&b| normen[b]).collect();
+                    for (b, aus) in glieder.into_iter().zip(self.zustandsmischer(layer, zs, &teil, sp, &acc_mischer)) {
+                        o_aus[b] = aus;
+                    }
+                }
                 let zwischen = rechnen_breit(n, 2 * hs, faeden, |b, ziel| {
                     let (residual, norm) =
                         self.residual_eins_und_norm(layer, &zustaende[b], &o_aus[b], &acc_mischer, None);
@@ -1920,7 +1984,7 @@ impl IntegerModel {
             let breite = (nh + 2 * nkv) * hd;
             let koepfe = rechnen_breit(n, breite, faeden, |b, ziel| {
                 let [q, k, v] = &qkv[b];
-                let (q_heads, k_heads, v_heads) = self.koepfe_drehen(layer, q, k, v, pos_start + b);
+                let (q_heads, k_heads, v_heads) = self.koepfe_drehen(layer, q, k, v, belegung[b].position);
                 for (teil, kopf) in ziel
                     .chunks_exact_mut(hd)
                     .zip(q_heads.iter().chain(k_heads.iter()).chain(v_heads.iter()))
@@ -1934,13 +1998,15 @@ impl IntegerModel {
             };
             for b in 0..n {
                 let k_und_v = zeile(b);
-                self.kv_schreiben(layer, &k_und_v[nh..nh + nkv], &k_und_v[nh + nkv..], pos_start + b, cache);
+                let Belegung { speicher: c, position } = belegung[b];
+                self.kv_schreiben(layer, &k_und_v[nh..nh + nkv], &k_und_v[nh + nkv..], position, &mut speicher[c]);
             }
-            let lesend: &KVCache = cache;
+            let lesend: &[KVCache] = speicher;
             let attn_aus = rechnen_breit(n, nh * hd, faeden, |b, ziel| {
                 let mut q_heads = zeile(b);
                 q_heads.truncate(nh);
-                ziel.copy_from_slice(&self.aufmerksamkeit_lesen(layer, &q_heads, pos_start + b, lesend, None));
+                let Belegung { speicher: c, position } = belegung[b];
+                ziel.copy_from_slice(&self.aufmerksamkeit_lesen(layer, &q_heads, position, &lesend[c], None));
             });
             drop(koepfe);
 
@@ -2030,11 +2096,10 @@ impl IntegerModel {
     ///
     /// ⚑ **Dieselbe Rechnung, andere Reihenfolge.** Die Ebenen laufen
     /// ueber [`Model::vorbereiten_stapel`], dessen Kopf ausfuehrt, warum
-    /// jede einzelne Rechnung dieselbe bleibt. **Der LM-Kopf bleibt
-    /// tokenweise**, Zeichen fuer Zeichen derselbe Aufruf wie in
-    /// [`Model::forward_token`]: Er ist damit nicht schneller, aber auch
-    /// nicht anders, und das ist hier mehr wert. Wer ihn buendelt, tut
-    /// es als eigenen Schritt mit eigener Gegenprobe.
+    /// jede einzelne Rechnung dieselbe bleibt. **Der LM-Kopf laeuft seit
+    /// dem 2026-11-15 als Stapel** ([`Model::head_logits_stapel`]), mit
+    /// eigener Gegenprobe; bis dahin tokenweise, mit dem Vermerk, wer ihn
+    /// buendle, tue es als eigenen Schritt.
     ///
     /// ⚑ **In Fenstern von [`VORBEREITUNGSFENSTER`]**, wie
     /// [`Model::prompt_vorbereiten_ab`]: Eine Folge von zehntausend
@@ -2058,21 +2123,11 @@ impl IntegerModel {
                 aus.extend(zustaende.iter().map(|ein| self.logits_aus_normiertem(ein, cfg.logit_frac_bits)));
                 continue;
             }
-            for hidden in &zustaende {
-                // Wortgleich zu `forward_token`, Schritt 3 und 4.
-                let normed = rmsnorm_i16(
-                    hidden,
-                    &self.final_residual_frac,
-                    &self.final_norm_gamma.data,
-                    &self.final_norm_gamma.shifts,
-                    &self.rsqrt_lut,
-                    cfg.rsqrt_input_shift,
-                    cfg.rsqrt_output_frac,
-                    self.inv_n_q20,
-                    self.final_norm_frac,
-                );
-                aus.push(self.logits_aus_normiertem(&normed, cfg.logit_frac_bits));
-            }
+            // ⚑ Der Kopf als Stapel (2026-11-15), mit eigener Gegenprobe
+            //   (`tests/stapel_ueber_sitzungen.rs`): jedes Logit dieselbe
+            //   ganze Zahl wie `forward_token`, die Kopfzeile einmal gelesen.
+            let refs: Vec<&[i16]> = zustaende.iter().map(Vec::as_slice).collect();
+            aus.extend(self.head_logits_stapel(&refs));
         }
         aus
     }
@@ -2326,14 +2381,25 @@ impl IntegerModel {
     /// `logit_frac` ist die Skala der Ausgabe, siehe
     /// [`Self::head_logits_mit_spur`].
     fn logits_aus_normiertem(&self, normed: &[i16], logit_frac: u8) -> Vec<i32> {
+        self.logits_stapel_aus_normierten(&[normed], logit_frac).pop().unwrap_or_default()
+    }
+
+    /// ⚑ **Der Kopf über B normierten Strömen, ein Weg für B = 1 und mehr**
+    /// (2026-11-15). Je Kopfzeile alle B Logits hintereinander, verteilt
+    /// über die Fäden wie bisher (Fund 370); die Zeile bleibt dabei im
+    /// Zwischenspeicher. Jedes Logit ist dieselbe ganze Zahl wie zuvor: Zeile
+    /// mal Eingabe, Umskalierung, Kappung, je Zeile und Eingabe für sich.
+    /// Mit B = 1 ist es die bisherige Rechnung (`rechnen_i32` ist
+    /// `rechnen_breit` mit Breite 2).
+    fn logits_stapel_aus_normierten(&self, normen: &[&[i16]], logit_frac: u8) -> Vec<Vec<i32>> {
         // 📌 **Fund 370, zweiter Teil (2026-09-14): der Kopf rechnete
         // einkernig**, beim 30B 29 % eines Decode-Schritts: 151 936 Zeilen
         // mal 2 048 Spalten auf einem Faden, während die übrigen warteten.
         // Jede Zeile ist ihr eigenes Skalarprodukt und schreibt in ihr
         // eigenes Feld; verteilt ändert sich also keine Zahl, dieselbe
         // Eigenschaft wie bei `linear.rs`.
-        let hidden_dim = normed.len();
         let faeden = integer_llm_kernels::linear::kerngrenze();
+        let kappen = |y: i64| y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         if let Some(lmh) = &self.lm_head_int16 {
             // ⚑ **Ein ternaer gepackter int16-Kopf** rechnet jede Zeile als
             //   dieselbe ganze Zahl wie `dot_int` ueber die ungepackte
@@ -2343,36 +2409,34 @@ impl IntegerModel {
                 let m = t.matrix();
                 // ⚑ Ein gedrehter Kopf dreht die normierte Eingabe vorher
                 //   und rechnet dann auf deren Skala.
-                let (gedreht, ein_frac) = match lmh.drehung.as_deref() {
-                    Some(d) => (std::borrow::Cow::Owned(d.drehen(normed, self.final_norm_frac)), d.frac),
-                    None => (std::borrow::Cow::Borrowed(normed), self.final_norm_frac),
-                };
-                let e = integer_llm_kernels::ternaer::Eingabe::neu(&gedreht);
-                return integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
-                    let acc = m.zeile_mal_mit(row, &e);
-                    let row_frac = lmh.shifts[row] + ein_frac;
-                    let y = rescale_i64(acc, row_frac, logit_frac);
-                    y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+                let gedrehte: Vec<(std::borrow::Cow<[i16]>, u8)> = normen
+                    .iter()
+                    .map(|&normed| match lmh.drehung.as_deref() {
+                        Some(d) => (std::borrow::Cow::Owned(d.drehen(normed, self.final_norm_frac)), d.frac),
+                        None => (std::borrow::Cow::Borrowed(normed), self.final_norm_frac),
+                    })
+                    .collect();
+                let es: Vec<_> = gedrehte.iter().map(|(g, _)| integer_llm_kernels::ternaer::Eingabe::neu(g)).collect();
+                return kopfzeilen(self.vocab_size, normen.len(), faeden, |row, b| {
+                    let acc = m.zeile_mal_mit(row, &es[b]);
+                    kappen(rescale_i64(acc, lmh.shifts[row] + gedrehte[b].1, logit_frac))
                 });
             }
             let werte: &[i16] = &lmh.data;
-            integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
-                let base = row * hidden_dim;
-                let acc = integer_llm_kernels::attention::dot_int(&werte[base..base + hidden_dim], normed);
-                let row_frac = lmh.shifts[row] + self.final_norm_frac;
-                let y = rescale_i64(acc, row_frac, logit_frac);
-                y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+            kopfzeilen(self.vocab_size, normen.len(), faeden, |row, b| {
+                let normed = normen[b];
+                let base = row * normed.len();
+                let acc = integer_llm_kernels::attention::dot_int(&werte[base..base + normed.len()], normed);
+                kappen(rescale_i64(acc, lmh.shifts[row] + self.final_norm_frac, logit_frac))
             })
         } else {
             let kopf = self.lm_head.matrix();
-            let (gedreht, ein_frac) = self.lm_head.eingang(normed, self.final_norm_frac);
-            let e = kopf.eingabe(&gedreht);
+            let gedrehte: Vec<_> = normen.iter().map(|&normed| self.lm_head.eingang(normed, self.final_norm_frac)).collect();
+            let es: Vec<_> = gedrehte.iter().map(|(g, _)| kopf.eingabe(g)).collect();
             let spalten = self.lm_head.cols();
-            integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
-                let acc = kopf.zeile_mal(row, spalten, &e);
-                let row_frac = self.lm_head.shifts[row] + ein_frac;
-                let y = rescale_i64(acc, row_frac, logit_frac);
-                y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+            kopfzeilen(self.vocab_size, normen.len(), faeden, |row, b| {
+                let acc = kopf.zeile_mal(row, spalten, &es[b]);
+                kappen(rescale_i64(acc, self.lm_head.shifts[row] + gedrehte[b].1, logit_frac))
             })
         }
     }
@@ -2398,8 +2462,15 @@ impl IntegerModel {
         logit_frac: u8,
         spur: Option<&mut integer_llm_kernels::rmsnorm::Rmsnormspur>,
     ) -> Vec<i32> {
+        let normed = self.schlussnorm(hidden, spur);
+        self.logits_aus_normiertem(&normed, logit_frac)
+    }
+
+    /// Die Abschlussnormierung vor dem Kopf; eine Stelle für
+    /// [`Self::head_logits_mit_spur`] und [`Self::head_logits_stapel`].
+    fn schlussnorm(&self, hidden: &[i16], spur: Option<&mut integer_llm_kernels::rmsnorm::Rmsnormspur>) -> Vec<i16> {
         let cfg = &self.config;
-        let normed = integer_llm_kernels::rmsnorm::rmsnorm_i16_mit_spur(
+        integer_llm_kernels::rmsnorm::rmsnorm_i16_mit_spur(
             hidden,
             &self.final_residual_frac,
             &self.final_norm_gamma.data,
@@ -2410,8 +2481,18 @@ impl IntegerModel {
             self.inv_n_q20,
             self.final_norm_frac,
             spur,
-        );
-        self.logits_aus_normiertem(&normed, logit_frac)
+        )
+    }
+
+    /// ⚑ **Der Kopf für einen Stapel** (Continuous Batching, 2026-11-15):
+    /// je Zustand dasselbe wie [`Self::head_logits`], aber jede Kopfzeile
+    /// kommt einmal aus dem Speicher und rechnet gegen alle Zustände. Der
+    /// Kopf ist eine einzige grosse Matrix (sparrow: 151 936 Zeilen) und am
+    /// Kopf-Shard die halbe Arbeit; Bündeln trifft hier den Engpass.
+    pub fn head_logits_stapel(&self, hiddens: &[&[i16]]) -> Vec<Vec<i32>> {
+        let normen: Vec<Vec<i16>> = hiddens.iter().map(|h| self.schlussnorm(h, None)).collect();
+        let normen: Vec<&[i16]> = normen.iter().map(Vec::as_slice).collect();
+        self.logits_stapel_aus_normierten(&normen, self.config.logit_frac_bits)
     }
 
     /// **Der Aufmerksamkeitsteil einer Ebene, bis vor den MLP.**
@@ -4112,6 +4193,41 @@ pub(crate) const GEMISCH_EINZELN_UNTER: usize = 16;
 /// ⚑ **Gemessen und nicht geschaetzt**, siehe den Kommentar an der
 /// Aufrufstelle in `aufmerksamkeit_lesen`.
 const KOEPFE_VERTEILEN_AB: usize = 1 << 16;
+
+/// Wo ein Token eines Stapels rechnet: mit welchem Speicher (Index in die
+/// Speicher des Aufrufs) an welcher Position; siehe
+/// [`IntegerModel::ebenen_stapel`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Belegung {
+    pub speicher: usize,
+    pub position: usize,
+}
+
+/// Je Kopfzeile `b_n` Logits, verteilt über die Fäden wie
+/// `fadenpool::rechnen_i32` (das mit einem Logit je Zeile genau dies ist);
+/// zurück je Eingabe die Logits aller Zeilen.
+fn kopfzeilen<F>(zeilen: usize, b_n: usize, faeden: usize, f: F) -> Vec<Vec<i32>>
+where
+    F: Fn(usize, usize) -> i32 + Sync,
+{
+    if b_n == 0 {
+        return Vec::new();
+    }
+    let flach = integer_llm_kernels::fadenpool::rechnen_breit(zeilen, 2 * b_n, faeden, |row, ziel| {
+        for b in 0..b_n {
+            let wert = f(row, b) as u32;
+            ziel[2 * b] = wert as u16 as i16;
+            ziel[2 * b + 1] = (wert >> 16) as u16 as i16;
+        }
+    });
+    let mut aus: Vec<Vec<i32>> = (0..b_n).map(|_| Vec::with_capacity(zeilen)).collect();
+    for zeile in flach.chunks_exact(2 * b_n) {
+        for (b, p) in zeile.as_chunks::<2>().0.iter().enumerate() {
+            aus[b].push((((p[1] as u16 as u32) << 16) | p[0] as u16 as u32) as i32);
+        }
+    }
+    aus
+}
 
 fn vorbereitungsfaeden(n: usize) -> usize {
     if n < 2 {

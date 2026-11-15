@@ -24,7 +24,7 @@
 //! Warteschlange.**
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // ⚑ **Der Netzbetrieb laedt ueber `load_model_fuer_netz`** (2026-10-19): Ein
 //   privates lokales Modell (`betrieb = "lokal"`) wird abgelehnt, bevor ein
@@ -94,7 +94,11 @@ pub fn grenzen_pruefen(grenzen: &[(usize, usize)], ebenen: usize) -> Result<Vec<
 
 /// Das Rechenwerk über einer geladenen Shard-Pipeline.
 pub struct Pipelinewerk {
-    koordinator: Mutex<Coordinator>,
+    /// ⚑ **Ohne Sperre** (2026-11-15): [`Coordinator::rechne`] nimmt
+    /// `&self`, Sitzungen rechnen nebeneinander und werden je Shard
+    /// gestapelt. 📌 Bis dahin ein `Mutex` um die ganze Anfrage, also eine
+    /// nach der anderen und je Augenblick ein Shard von vier.
+    koordinator: Coordinator,
     wortschatz: Tokenizer,
     pipeline: Hash,
     /// Wie viele Token höchstens, unabhängig vom Auftrag.
@@ -167,12 +171,7 @@ impl Pipelinewerk {
             )));
         }
         Ok(Self {
-            koordinator: Mutex::new(Coordinator::new(
-                pod,
-                epoche,
-                shards,
-                crate::coordinator::DEFAULT_WINDOW_MS,
-            )),
+            koordinator: Coordinator::new(pod, epoche, shards),
             wortschatz,
             pipeline,
             eigener_deckel,
@@ -184,7 +183,7 @@ impl Pipelinewerk {
     /// ohne Unterschriften (`Coordinator::build_poi_bundle`): zur Einsicht und
     /// zum Vergleich zweier Zwillinge (Stufe 1).
     pub fn buendelinhalt(&self) -> Result<myl_types::PoIBundle, String> {
-        self.koordinator.lock().map_err(|_| "Koordinator vergiftet".to_string())?.build_poi_bundle()
+        self.koordinator.build_poi_bundle()
     }
 
     pub fn shardzahl(&self) -> u32 {
@@ -199,10 +198,7 @@ impl Pipelinewerk {
     /// `rechne` zu streichen, blieb deshalb **grün**. Eine Zusicherung
     /// über einen Aufruf muss über den Weg gehen, der ihn tut.
     pub fn gehaltene_sitzungen(&self) -> usize {
-        self.koordinator
-            .lock()
-            .map(|k| k.gehaltene_sitzungen())
-            .unwrap_or(0)
+        self.koordinator.gehaltene_sitzungen()
     }
 }
 
@@ -229,18 +225,13 @@ impl Klartextwerk for Pipelinewerk {
         // hat, bekommt trotzdem eine Antwort.
         let deckel = u64::from(auftrag.max_token.min(self.eigener_deckel));
 
-        let Ok(mut koordinator) = self.koordinator.lock() else {
-            return Inferenzantwort::Abgelehnt { sitzung };
-        };
-        let token = koordinator.run_prompt(sitzung, &eingabe, deckel);
+        let koordinator = &self.koordinator;
+        let lauf = koordinator.rechne(sitzung, &eingabe, deckel);
+        let token = lauf.token;
         // ⚑ **Das Segment ist der Faden zur bezeugten Arbeit.** Es
         // entsteht beim Rechnen; ohne es hätte der Nutzer Token und
         // keine Möglichkeit, sie einer Abrechnung zuzuordnen.
-        let segment = koordinator
-            .completed_segments()
-            .last()
-            .map(|s| s.id)
-            .unwrap_or(SegmentId::new([0u8; 32]));
+        let segment = lauf.letztes_segment.unwrap_or(SegmentId::new([0u8; 32]));
         // ⚑ **Und jetzt ist die Sitzung vorbei** (Fund 164, 2026-09-04).
         //
         // Hier stand nichts, und deshalb behielt jeder Shard den
@@ -255,7 +246,6 @@ impl Klartextwerk for Pipelinewerk {
         // Sonst gilt die schlichte Regel: Was zu einer Anfrage gehört,
         // wird frei, sobald sie fertig ist.
         koordinator.sitzung_abschliessen(sitzung);
-        drop(koordinator);
 
         let ausgabe: Vec<usize> = token.iter().map(|t| *t as usize).collect();
         Inferenzantwort::Ergebnis {

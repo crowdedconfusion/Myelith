@@ -725,11 +725,10 @@ pub fn run_shard(
             )));
         }
 
-        let mut coordinator = Coordinator::new(
+        let coordinator = Coordinator::new(
             PodId::new([0xAA; 32]),
             EpochId(0),
             shards,
-            myl_pod::coordinator::DEFAULT_WINDOW_MS,
         );
 
         let pod_out = log.timed(
@@ -799,7 +798,7 @@ pub fn run_shard(
                 format!(
                     "vTFE={}, Segmente={}",
                     b.vtfe_claimed,
-                    coordinator.completed_segments().len()
+                    coordinator.segmentzahl()
                 ),
             ),
             Err(e) => log.note(format!("Kein PoI-Bündel für Prompt {}: {}", nr, e)),
