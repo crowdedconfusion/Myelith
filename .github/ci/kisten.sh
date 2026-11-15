@@ -272,6 +272,11 @@ grosse_proben() {
 # zuerst der kurze Lauf (unter einer Minute): Die Proben fahren nach Namen.
 lange_proben() {
   echo "TESTCLIENT/myl-testclient pod_aus_klienten"
+  # Durchsatz mit Sitzungen nebeneinander: misst und meldet nur. Hier im
+  # Pruefbau zeigt sie keinen Gewinn durch Stapel (der Pruefbau rechnet,
+  # statt auf den Speicher zu warten); belegt wird der mit Shards aus dem
+  # Freigabebau ueber `MYL_SHARD_PROGRAMM`.
+  echo "COMPUTE_PIPELINE/myl-pod vier_prozesse_ein_pod"
 }
 
 # Faehrt die Proben einer Liste mit `--ignored`, eine nach der anderen. Gut

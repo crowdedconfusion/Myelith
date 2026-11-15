@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.65.0 (`myl-pod` 0.56.0, `myl-dispatcher` 0.11.2)
+> **Version:** 0.65.1 (`myl-pod` 0.56.0, `myl-dispatcher` 0.11.2)
 > **Datum:** 2026-11-15
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -106,6 +106,18 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.65.1 (2026-11-15): Die Durchsatzmessung steht bei den langen Proben
+
+- 📌 **Die Vorprüfung der CI war zu `b2271178` rot:** Die Messung
+  `durchsatz_mit_sitzungen_nebeneinander` (`tests/vier_prozesse_ein_pod.rs`,
+  `#[ignore]`) stand weder bei den großen noch bei den langen Proben, und
+  eine solche Probe fährt niemand von selbst. Sie steht jetzt in
+  `lange_proben` (`.github/ci/kisten.sh`). Im Prüfbau meldet sie nur Zahlen
+  und zeigt keinen Gewinn durch Stapel; belegt wird der mit Shards aus dem
+  Freigabebau über `MYL_SHARD_PROGRAMM`.
+- Geprüft: `kisten.sh wache` (29 Kisten, jede in einer Gruppe, jede auf
+  1.99) und die übrigen Schritte der Vorprüfung lokal grün.
 
 ### v0.65.0 (2026-11-15): Prefill und Decode im selben Stapel (`myl-pod` 0.56.0)
 
