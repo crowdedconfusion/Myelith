@@ -189,6 +189,7 @@ pub fn probe_poi_buendel(absender: &str, folge: u64) -> Option<PoIBundle> {
         segmente: 1,
         ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
         vertreter: Vec::new(),
+        sitzungen: Vec::new(),
     })
 }
 

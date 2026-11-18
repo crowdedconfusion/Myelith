@@ -91,6 +91,17 @@ pub struct PoIBundle {
     /// des Inhabers und vergütet die Position an ihn. Leer: keine Übernahme.
     /// Mitunterschrieben, sobald nicht leer. Angehängt.
     pub vertreter: Vec<(u32, crate::ids::MinerId)>,
+    /// ⚑ **Was der Pod je Sitzung bezeugt** (Stufe 1 je Sitzung, Whitepaper
+    /// 6.4; Festlegung des Projektinhabers vom 2026-11-16): je Anfragerunde
+    /// ihre Nummer, die Zahl ihrer Segmente und die Wurzel ueber ihre
+    /// Ausgabenzeugnisse ([`sitzungszeugnisse`]), aufsteigend nach Nummer.
+    /// Damit rechnet die Kette ein Paar je Sitzung ab: gleiche sofort,
+    /// abweichende ueber den Differenzbeweis, fehlende ueber einen
+    /// Pflicht-Pruefauftrag ([`sitzungen_abgleichen`]). Die flache
+    /// [`Self::ausgabenwurzel`] bleibt, gegen sie traegt der Differenzbeweis.
+    /// Leer: keine Liste, das Paar wird als Ganzes verglichen wie zuvor.
+    /// Mitunterschrieben, sobald nicht leer. Angehaengt.
+    pub sitzungen: Vec<Sitzungszeugnis>,
 }
 
 /// Inferenz-Credit: durch Burn erworbenes Guthaben an Inferenzarbeit
@@ -177,6 +188,164 @@ pub fn ausgabenwurzel(zeugnisse: &[Ausgabenzeugnis]) -> Result<MerkleRoot, Merkl
     let refs: Vec<&[u8]> = blaetter.iter().map(|b| b.as_slice()).collect();
     let tree = MerkleTree::new(&refs)?;
     Ok(MerkleRoot::new(tree.root().0))
+}
+
+/// ⚑ **Was ein Pod ueber eine Sitzung bezeugt** (Stufe 1 je Sitzung,
+/// 2026-11-16): die Nummer der Sitzung (eine Anfragerunde, die ersten acht
+/// Bytes jeder ihrer Segmentkennungen), die Zahl ihrer Segmente und die
+/// [`ausgabenwurzel`] ueber genau diese Segmente.
+///
+/// **Warum die Sitzung und nicht das Segment:** Ein Segment ist eine
+/// Token-Position; ein Buendel traegt bis zu hunderttausend. Je Segment
+/// koennte die Kette nur vergleichen, wenn alle Blaetter in ihr staenden.
+/// Eine Sitzung ist die Einheit, die ein Pod ganz oder gar nicht anhaengt
+/// und die ein Pruefer ganz nachrechnet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Sitzungszeugnis {
+    /// Die Nummer der Sitzung.
+    pub sitzung: u64,
+    /// Wie viele Segmente des Buendels zu ihr gehoeren.
+    pub segmente: u32,
+    /// Die [`ausgabenwurzel`] ueber ihre Segmente.
+    pub wurzel: MerkleRoot,
+}
+
+/// Hoechstens so viele Sitzungen traegt die Liste eines Buendels: rund
+/// 45 KiB, unter der Grenze einer Transaktion auf der Leitung (64 KiB). Ein
+/// Koordinator legt in einer Epoche keine weitere Sitzung ab, sobald er so
+/// viele abgeschlossen hat: Er verwirft den Lauf und zaehlt ihn.
+pub const SITZUNGEN_JE_BUENDEL_HOECHSTENS: usize = 1024;
+
+/// **Die Liste der Sitzungen eines Buendels**: die Ausgabenzeugnisse nach
+/// Sitzung gruppiert, aufsteigend nach Nummer, je Gruppe Zahl und
+/// [`ausgabenwurzel`]. Zwei Zwillinge, die dieselbe Sitzung gleich gerechnet
+/// haben, kommen auf denselben Eintrag, gleich was sonst in ihren Buendeln
+/// steht.
+pub fn sitzungszeugnisse(zeugnisse: &[Ausgabenzeugnis]) -> Result<Vec<Sitzungszeugnis>, MerkleError> {
+    let mut gruppen: std::collections::BTreeMap<u64, Vec<Ausgabenzeugnis>> = std::collections::BTreeMap::new();
+    for z in zeugnisse {
+        gruppen.entry(sitzung_und_position(&z.id).0).or_default().push(*z);
+    }
+    gruppen
+        .into_iter()
+        .map(|(sitzung, blaetter)| {
+            Ok(Sitzungszeugnis { sitzung, segmente: blaetter.len() as u32, wurzel: ausgabenwurzel(&blaetter)? })
+        })
+        .collect()
+}
+
+/// Warum die Liste der Sitzungen eines Buendels nicht gilt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sitzungslistenfehler {
+    /// Mehr als [`SITZUNGEN_JE_BUENDEL_HOECHSTENS`].
+    ZuViele,
+    /// Nicht streng aufsteigend nach Nummer (auch: eine Nummer doppelt).
+    NichtAufsteigend,
+    /// Eine Sitzung ohne Segment.
+    Leer,
+    /// Die Summe der Segmente ist nicht die Segmentzahl des Buendels.
+    SummePasstNicht,
+}
+
+/// **Gilt die Liste der Sitzungen?** Leer gilt (keine Liste). Sonst:
+/// hoechstens [`SITZUNGEN_JE_BUENDEL_HOECHSTENS`], streng aufsteigend, keine
+/// leere Sitzung, und die Summe ist die Segmentzahl des Buendels. Die Summe
+/// bindet die Liste an die Zahl, aus der die Stichprobe zieht: Wer eine
+/// Sitzung groesser angibt, muss eine andere kleiner angeben.
+pub fn sitzungsliste_pruefen(liste: &[Sitzungszeugnis], segmente: u32) -> Result<(), Sitzungslistenfehler> {
+    if liste.is_empty() {
+        return Ok(());
+    }
+    if liste.len() > SITZUNGEN_JE_BUENDEL_HOECHSTENS {
+        return Err(Sitzungslistenfehler::ZuViele);
+    }
+    if liste.windows(2).any(|w| w[0].sitzung >= w[1].sitzung) {
+        return Err(Sitzungslistenfehler::NichtAufsteigend);
+    }
+    if liste.iter().any(|z| z.segmente == 0) {
+        return Err(Sitzungslistenfehler::Leer);
+    }
+    let summe: u64 = liste.iter().map(|z| u64::from(z.segmente)).sum();
+    if summe != u64::from(segmente) {
+        return Err(Sitzungslistenfehler::SummePasstNicht);
+    }
+    Ok(())
+}
+
+/// Eine Sitzung, die nur einer der beiden Zwillinge bezeugt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct FehlendeSitzung {
+    /// Die Nummer der Sitzung.
+    pub sitzung: u64,
+    /// Die Zahl ihrer Segmente.
+    pub segmente: u32,
+    /// Die Stelle ihres **letzten** Segments im Buendel dessen, der sie hat
+    /// (kanonische Folge: nach Sitzung, dann Position). Wer dieses Segment
+    /// nachrechnet, rechnet die ganze Sitzung nach.
+    pub stelle: u32,
+}
+
+/// ⚑ **Der Abgleich zweier Zwillinge je Sitzung** (Stufe 1, 2026-11-16).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Sitzungsabgleich {
+    /// Segmente in Sitzungen, die beide gleich bezeugen (gleiche Zahl,
+    /// gleiche Wurzel).
+    pub gleich: u32,
+    /// Segmente in Sitzungen, die beide bezeugen, aber verschieden: je Seite
+    /// ihre eigene Zahl.
+    pub abweichend: (u32, u32),
+    /// Sitzungen, die nur `a` bezeugt.
+    pub nur_a: Vec<FehlendeSitzung>,
+    /// Sitzungen, die nur `b` bezeugt.
+    pub nur_b: Vec<FehlendeSitzung>,
+}
+
+/// **Zwei Listen abgleichen.** Beide muessen gelten
+/// ([`sitzungsliste_pruefen`]); der Aufrufer prueft das beim Einreichen.
+/// Eine reine Funktion der beiden Listen: Jeder Knoten kommt auf dasselbe.
+pub fn sitzungen_abgleichen(a: &[Sitzungszeugnis], b: &[Sitzungszeugnis]) -> Sitzungsabgleich {
+    let mut aus = Sitzungsabgleich::default();
+    let (mut i, mut j) = (0usize, 0usize);
+    // Die Zahl der Segmente vor der laufenden Sitzung, je Seite.
+    let (mut vor_a, mut vor_b) = (0u32, 0u32);
+    let fehlend = |z: &Sitzungszeugnis, vor: u32| FehlendeSitzung {
+        sitzung: z.sitzung,
+        segmente: z.segmente,
+        stelle: vor.saturating_add(z.segmente).saturating_sub(1),
+    };
+    while i < a.len() || j < b.len() {
+        match (a.get(i), b.get(j)) {
+            (Some(x), Some(y)) if x.sitzung == y.sitzung => {
+                if x.segmente == y.segmente && x.wurzel == y.wurzel {
+                    aus.gleich = aus.gleich.saturating_add(x.segmente);
+                } else {
+                    aus.abweichend.0 = aus.abweichend.0.saturating_add(x.segmente);
+                    aus.abweichend.1 = aus.abweichend.1.saturating_add(y.segmente);
+                }
+                vor_a = vor_a.saturating_add(x.segmente);
+                vor_b = vor_b.saturating_add(y.segmente);
+                i += 1;
+                j += 1;
+            }
+            (Some(x), Some(y)) if x.sitzung < y.sitzung => {
+                aus.nur_a.push(fehlend(x, vor_a));
+                vor_a = vor_a.saturating_add(x.segmente);
+                i += 1;
+            }
+            (Some(x), None) => {
+                aus.nur_a.push(fehlend(x, vor_a));
+                vor_a = vor_a.saturating_add(x.segmente);
+                i += 1;
+            }
+            (_, Some(y)) => {
+                aus.nur_b.push(fehlend(y, vor_b));
+                vor_b = vor_b.saturating_add(y.segmente);
+                j += 1;
+            }
+            (None, None) => break,
+        }
+    }
+    aus
 }
 
 /// Das Blatt eines [`Ausgabenzeugnis`] in der [`ausgabenwurzel`].
@@ -426,6 +595,90 @@ mod tests {
         assert_ne!(w, ausgabenwurzel(&[z(1, 2, 3), z(4, 5, 6)]).expect("Wurzel"));
     }
 
+    /// ⚑ **Stufe 1 je Sitzung:** Die Liste gruppiert nach Sitzung, und der
+    /// Abgleich zweier Listen nennt, was gleich ist, was abweicht und was
+    /// einem fehlt, samt der Stelle des letzten Segments im Bündel.
+    #[test]
+    fn der_abgleich_je_sitzung_trennt_gleich_abweichend_und_fehlend() {
+        let blatt = |s: u64, p: u64, aus: u8| {
+            let mut b = [0u8; 32];
+            b[..8].copy_from_slice(&s.to_le_bytes());
+            b[8..16].copy_from_slice(&p.to_le_bytes());
+            Ausgabenzeugnis { id: SegmentId::new(b), eingang: [p as u8; 32], ausgang: [aus; 32] }
+        };
+        let sitzung = |s: u64, n: u64, aus: u8| (0..n).map(move |p| blatt(s, p, aus));
+        // A: 7 (3 Segmente), 9 (2), 12 (4). B: 7 gleich, 9 mit anderem
+        // Ausgang, 12 fehlt, dafür 15 (1). Verschränkt abgeschlossen.
+        let mut a: Vec<Ausgabenzeugnis> = sitzung(12, 4, 1).chain(sitzung(7, 3, 1)).chain(sitzung(9, 2, 1)).collect();
+        let b: Vec<Ausgabenzeugnis> = sitzung(15, 1, 1).chain(sitzung(9, 2, 2)).chain(sitzung(7, 3, 1)).collect();
+        let la = sitzungszeugnisse(&a).expect("Liste");
+        let lb = sitzungszeugnisse(&b).expect("Liste");
+        assert_eq!(la.iter().map(|z| (z.sitzung, z.segmente)).collect::<Vec<_>>(), vec![(7, 3), (9, 2), (12, 4)]);
+        assert_eq!((sitzungsliste_pruefen(&la, 9), sitzungsliste_pruefen(&lb, 6)), (Ok(()), Ok(())));
+        assert_eq!(la[0], lb[0], "dieselbe Sitzung gleich gerechnet, derselbe Eintrag");
+        assert_ne!(la[1].wurzel, lb[1].wurzel);
+        let g = sitzungen_abgleichen(&la, &lb);
+        assert_eq!((g.gleich, g.abweichend), (3, (2, 2)));
+        // 12 steht bei A hinter 7 und 9: letzte Stelle 3 + 2 + 4 - 1.
+        assert_eq!(g.nur_a, vec![FehlendeSitzung { sitzung: 12, segmente: 4, stelle: 8 }]);
+        assert_eq!(g.nur_b, vec![FehlendeSitzung { sitzung: 15, segmente: 1, stelle: 5 }]);
+        // Die Folge des Abschlusses ändert nichts.
+        a.reverse();
+        assert_eq!(sitzungszeugnisse(&a).expect("Liste"), la);
+        // Gegen sich selbst: alles gleich. Gegen nichts: alles fehlt.
+        let selbst = sitzungen_abgleichen(&la, &la);
+        assert_eq!((selbst.gleich, selbst.abweichend, selbst.nur_a.len(), selbst.nur_b.len()), (9, (0, 0), 0, 0));
+        let allein = sitzungen_abgleichen(&la, &[]);
+        assert_eq!((allein.gleich, allein.nur_a.len()), (0, 3));
+        assert_eq!(allein.nur_a.iter().map(|f| f.stelle).collect::<Vec<_>>(), vec![2, 4, 8]);
+        // Eine andere Zahl bei gleicher Nummer ist eine Abweichung, kein Fehlen.
+        let kurz = sitzungszeugnisse(&sitzung(7, 2, 1).collect::<Vec<_>>()).expect("Liste");
+        assert_eq!(sitzungen_abgleichen(&la[..1], &kurz).abweichend, (3, 2));
+
+        // ⛔️ Gegenproben der Liste: falsche Summe, nicht aufsteigend,
+        //    doppelt, leere Sitzung, zu viele; leer gilt.
+        assert_eq!(sitzungsliste_pruefen(&la, 10), Err(Sitzungslistenfehler::SummePasstNicht));
+        let verdreht = vec![la[1], la[0], la[2]];
+        assert_eq!(sitzungsliste_pruefen(&verdreht, 9), Err(Sitzungslistenfehler::NichtAufsteigend));
+        assert_eq!(sitzungsliste_pruefen(&[la[0], la[0]], 6), Err(Sitzungslistenfehler::NichtAufsteigend));
+        let leer = vec![la[0], Sitzungszeugnis { segmente: 0, ..la[1] }];
+        assert_eq!(sitzungsliste_pruefen(&leer, 3), Err(Sitzungslistenfehler::Leer));
+        let viele: Vec<Sitzungszeugnis> =
+            (0..=SITZUNGEN_JE_BUENDEL_HOECHSTENS as u64).map(|s| Sitzungszeugnis { sitzung: s, segmente: 1, wurzel: la[0].wurzel }).collect();
+        assert_eq!(sitzungsliste_pruefen(&viele, viele.len() as u32), Err(Sitzungslistenfehler::ZuViele));
+        assert_eq!(sitzungsliste_pruefen(&viele[1..], viele.len() as u32 - 1), Ok(()));
+        assert_eq!(sitzungsliste_pruefen(&[], 9), Ok(()));
+    }
+
+    /// Die Botschaft eines Bündels trägt die Liste der Sitzungen, sobald es
+    /// sie gibt: Wer einen Eintrag ändert, streicht oder anhängt, ändert sie.
+    #[test]
+    fn die_botschaft_traegt_die_sitzungen() {
+        let z = |s: u64, n: u32, w: u8| Sitzungszeugnis { sitzung: s, segmente: n, wurzel: MerkleRoot::new([w; 32]) };
+        let ohne = PoIBundle {
+            epoch: EpochId(3),
+            pod: PodId::new([1; 32]),
+            segments_root: MerkleRoot::new([2; 32]),
+            vtfe_claimed: 9,
+            aggregate_sig: BlsSignature([0; 96]),
+            segmente: 5,
+            ausgabenwurzel: MerkleRoot::new([7; 32]),
+            vertreter: Vec::new(),
+            sitzungen: Vec::new(),
+        };
+        let mit = PoIBundle { sitzungen: vec![z(4, 2, 1), z(6, 3, 2)], ..ohne.clone() };
+        let b = crate::poi_botschaft::bundle_message;
+        let m = b(&mit);
+        assert_ne!(m, b(&ohne));
+        assert!(m.starts_with(&b(&ohne)), "angehängt, nichts davor verändert");
+        // ⛔️ Gegenproben: andere Wurzel, andere Zahl, andere Nummer, ein
+        //    Eintrag weniger.
+        assert_ne!(m, b(&PoIBundle { sitzungen: vec![z(4, 2, 1), z(6, 3, 3)], ..ohne.clone() }));
+        assert_ne!(m, b(&PoIBundle { sitzungen: vec![z(4, 1, 1), z(6, 4, 2)], ..ohne.clone() }));
+        assert_ne!(m, b(&PoIBundle { sitzungen: vec![z(4, 2, 1), z(7, 3, 2)], ..ohne.clone() }));
+        assert_ne!(m, b(&PoIBundle { sitzungen: vec![z(4, 2, 1)], ..ohne }));
+    }
+
     /// Die Botschaft eines Bündels trägt die Ausgabenwurzel, sobald sie
     /// nicht null ist; ohne sie bleibt sie, wie sie war.
     #[test]
@@ -439,6 +692,7 @@ mod tests {
             segmente: 4,
             ausgabenwurzel: MerkleRoot::new([0; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         };
         let ohne = crate::poi_botschaft::bundle_message(&b);
         assert_eq!(ohne, crate::poi_botschaft::poi_bundle_message(b.epoch, b.pod, &b.segments_root, 9, 4));
@@ -501,6 +755,7 @@ mod tests {
             segmente: 1,
             ausgabenwurzel: MerkleRoot::new([0u8; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         }
     }
 

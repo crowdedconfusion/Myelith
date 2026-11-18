@@ -108,6 +108,10 @@ impl Modulzusatz {
         };
         if let (Some(k), Some(p)) = (&kiste, &programm) {
             myl_local_agent::kisten::umgebung_setzen(k, vec![(PROGRAMMVARIABLE.to_string(), p.display().to_string())]);
+            // ⚑ Die Werkzeuge starten das Programm, und das laeuft nach der
+            // Signatur ohne Abschottung; ein Manifest, das eine Grenze nennt,
+            // behaelt sie (`myl_local_agent::kisten::vorgabe_setzen`).
+            myl_local_agent::kisten::vorgabe_setzen(k, myl_local_agent::sandkasten::Sandkasten::Frei);
         }
         Ok(Self {
             name: b.name.clone(),

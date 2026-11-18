@@ -1,6 +1,6 @@
 [package]
 name = "myl-local-agent"
-version = "0.51.0"
+version = "0.58.0"
 edition = "2021"
 rust-version = "1.99"
 description = "Der oertliche Agent: Schleife, Tuerklient, Werkzeuge mit Einhaengegrenze, Werkzeugkisten, Skills, Loop, Notaus. Von der Kette isoliert, nie Teil einer pruefbaren Netzaktion."
@@ -34,7 +34,9 @@ toml = "0.8"
 myl-senses = { path = "../../CLIENT/myl-senses" }
 
 [target.'cfg(unix)'.dependencies]
-# Nur fuer `kill(pid, 0)`: lebt der Prozess, der einen Loop haelt?
+# Fuer `kill(pid, 0)` (lebt der Prozess, der einen Loop haelt?) und unter
+# Linux fuer den Sandkasten: Landlock und seccomp nimmt der Kern nur ueber
+# Systemaufrufe entgegen (`src/sandkasten_linux.rs`).
 libc = "0.2"
 
 [dev-dependencies]

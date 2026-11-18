@@ -1,6 +1,6 @@
 [package]
 name = "myl-pod"
-version = "0.56.0"
+version = "0.63.0"
 edition = "2021"
 rust-version = "1.99"
 description = "L2-Compute-Pipeline für Myelith (Whitepaper Kap. 4, Anhang A.3): Pod-Mining-Loop mit Spur-Hashes und Eingangs-Prüfung (Manipulationserkennung), BLS-Signierung der Shard-Übergänge, KV-Cache-Session-Affinität und erasure-codierter DA-Archivierung. Konsumiert die INTEGER_LLM-Stage-API und myl-types."
@@ -33,6 +33,11 @@ getrandom = "0.2"
 # Zusage „zwei Pods mit verschiedenem Zuschnitt sind vergleichbar" lässt
 # sich nur gegen ihn belegen. Eine Nachbildung im Test wäre eine zweite
 # Quelle für dieselbe Aussage (Fund 34).
+# ⚑ Die GPU von Apple-Silizium auch fuer die Shards (Fund 705), wie im
+# Klienten. Ob sie rechnet, entscheiden Freigabe und Einmessung beim Start.
+[target.'cfg(target_os = "macos")'.dependencies]
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["cpu-simd", "metal"] }
+
 [dev-dependencies]
 myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
 myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
@@ -46,6 +51,27 @@ integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["pruefne
 # Netzlauf, dass zwei Pods uneinig werden. Nie im ausgelieferten Programm.
 [features]
 faelscher = []
+# ⚑ **Der Rechenweg der Shards: `cpu-simd` als Vorgabe** (Fund 705,
+# 2026-11-15). Ohne Merkmal rechnet die Laufzeit mit `reference`, skalar, und
+# so baute die Installation jeden ausgelieferten `myl-shard`. Gemessen am
+# 35B mit vier Shards im Prozess, 3 563 Prompt-Token: `reference` 251 s,
+# `cpu-simd` 61 s, mit `metal` dazu 80 s (bei Stapeln von 64 Token kostet das
+# Absetzen an die GPU mehr, als es bringt); dieselben Token auf allen drei
+# Wegen. Der Klient rechnet seit Fund 367 ebenso mit `cpu-simd`.
+#
+# ⚑ **Und jeder Beschleuniger, der zur Laufzeit geladen wird** (Fund 705,
+# Festlegung des Projektinhabers vom 2026-11-16: das Programm waehlt die beste
+# Ressourcenverteilung selbst, je nach Hardwarefreigabe). `cuda` und `rocm`
+# bauen ohne Abhaengigkeit, Treiber und Uebersetzer kommen zur Laufzeit, und
+# ohne Karte rechnet die CPU. Ob eine Karte rechnet, entscheiden die Freigabe
+# des Besitzers (`--rechenwerke`), ihre Selbstpruefung gegen die CPU und die
+# Einmessung beim Start. Auf macOS kommt `metal` ueber die Abhaengigkeit unten
+# dazu.
+default = ["cpu-simd", "cuda", "rocm"]
+cpu-simd = ["integer-llm-runtime/cpu-simd"]
+cuda = ["integer-llm-runtime/cuda"]
+rocm = ["integer-llm-runtime/rocm"]
+metal = ["integer-llm-runtime/metal"]
 
 [lib]
 name = "myl_pod"

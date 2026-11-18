@@ -85,6 +85,8 @@ pub mod kennzeichnung;
 pub mod markdown;
 /// Fremder Text ohne Steuerzeichen, fuer Konsole und `myl`.
 pub mod terminal;
+/// Der Agent über die Tür eines Knotens, mit der Vorlage des Klienten.
+pub mod tuerweg;
 pub mod mining;
 pub mod module;
 pub mod oertlich;

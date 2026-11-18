@@ -44,6 +44,9 @@ myl: lokaler Betrieb von Myelith
   myl modell <artefakt>           Was in einem Artefakt steht
   myl agent [artefakt] <auftrag>  Die Agentenschleife, lokal
   myl sitzung [artefakt]          Viele Auftraege, Modell einmal geladen
+  myl sitzung --tuer HOST:PORT [--agent NAME] [--nachkauf WALLET [--vorrat RUNDEN]]
+                                  Dasselbe, das Modell im Netz, bezahlt mit der Vollmacht des Agenten;
+                                  mit --nachkauf kauft der Klient Credits nach, hoechstens bis zum Rest des Sitzungsbudgets
   myl auftraege [artefakt] A B    Mehrere Auftraege NEBENLAEUFIG
   myl loop [ziel]                 Ein Vorhaben in Runden verfolgen (ohne Ziel: fortsetzen)
   myl tasks [add ZIEL [--abnahme BEFEHL]|abnahme ID BEFEHL|resume ID|pause ID|confirm ID|rework ID WO|answer ID TEXT]
@@ -227,17 +230,30 @@ fn myl_hauptteil(args: &[String]) -> i32 {
 
 /// **Eine Frage über die Tür**: `--tuer HOST:PORT`, `--agent NAME` (seine
 /// Vollmacht liegt bei den Wallets, aus einer eröffneten Sitzung).
+/// Die Vollmacht des Agenten aus `--agent` (Vorgabe `agent`), wie
+/// `myl wallet sitzung` sie abgelegt hat.
+fn vollmacht_des_agenten(args: &[String]) -> Result<String, String> {
+    let agent = args.iter().position(|a| a == "--agent").and_then(|j| args.get(j + 1)).cloned().unwrap_or_else(|| "agent".into());
+    let datei = myl_client::bezahlen::agentenordner().join(format!("{agent}.vollmacht"));
+    std::fs::read_to_string(&datei).map(|v| v.trim().to_string()).map_err(|_| {
+        format!("keine Vollmacht für {agent} ({}); erst eine Sitzung eröffnen: myl wallet sitzung", datei.display())
+    })
+}
+
+/// `HOST:PORT` hinter `--tuer`.
+fn tuer_angabe(args: &[String], i: usize) -> Option<(String, u16)> {
+    args.get(i + 1).and_then(|a| a.rsplit_once(':')).and_then(|(h, p)| Some((h.to_string(), p.parse::<u16>().ok()?)))
+}
+
 fn frage_ueber_die_tuer(args: &[String], i: usize, e: &Einstellungen) -> i32 {
-    let Some((wirt, port)) = args.get(i + 1).and_then(|a| a.rsplit_once(':')).and_then(|(h, p)| Some((h.to_string(), p.parse::<u16>().ok()?))) else {
+    let Some((wirt, port)) = tuer_angabe(args, i) else {
         eprintln!("myl frage: --tuer erwartet HOST:PORT");
         return 2;
     };
-    let agent = args.iter().position(|a| a == "--agent").and_then(|j| args.get(j + 1)).cloned().unwrap_or_else(|| "agent".into());
-    let datei = myl_client::bezahlen::agentenordner().join(format!("{agent}.vollmacht"));
-    let vollmacht = match std::fs::read_to_string(&datei) {
-        Ok(v) => v.trim().to_string(),
-        Err(_) => {
-            eprintln!("myl frage: keine Vollmacht für {agent} ({}); erst eine Sitzung eröffnen: myl wallet sitzung", datei.display());
+    let vollmacht = match vollmacht_des_agenten(args) {
+        Ok(v) => v,
+        Err(f) => {
+            eprintln!("myl frage: {f}");
             return 1;
         }
     };
@@ -588,7 +604,10 @@ fn wallet(args: &[String]) -> i32 {
             let w = wallet::laden(name)?;
             entsperren_falls_noetig(name)?;
             let agent = args.get(2).cloned().unwrap_or_else(|| "agent".into());
-            let budget: u64 = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(10_000);
+            // ⚑ **Seit Fund 711 kostet eine Anfrage Prompt und Ausgabe**, im
+            //   Auftragslauf rund das Fünfundzwanzigfache: also das alte
+            //   Budget von 10 000 mal 25, das Einzellimit ein Zehntel davon.
+            let budget: u64 = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(myl_client::bezahlen::SITZUNGSBUDGET);
             let epochen: u64 = args.get(4).and_then(|v| v.parse().ok()).unwrap_or(20);
             myl_client::bezahlen::sitzung_eroeffnen(&l, &w, &agent, budget, budget.div_ceil(10).max(1), epochen).map(|s| {
                 println!("Sitzung {} für {agent}: Budget {budget} Credits, bis Epoche {}.", hex(s.id.as_bytes()), s.gueltig_bis);
@@ -2733,7 +2752,7 @@ fn agent(args: &[String]) -> i32 {
     let schritte = zahl(args, "--schritte").unwrap_or(e.agent.schrittgrenze());
     hinweis_betriebsart(bezeugtes, ruestung.kasten.angebote().len());
     let roh = args.iter().any(|a| a == "--roh");
-    einen_auftrag(&m, &ruestung, schritte, bezeugtes, roh, &auftrag)
+    einen_auftrag(&m, m.grenze as u32, &ruestung, schritte, bezeugtes, roh, &auftrag)
 }
 
 /// Eine Sitzung: **das Modell einmal laden, dann viele Auftraege.**
@@ -2757,6 +2776,11 @@ fn sitzung(args: &[String]) -> i32 {
             return 1;
         }
     };
+    // ⚑ **Über die Tür eines Knotens** (2026-11-15): kein Modell auf dieser
+    //   Maschine, die Werkzeuge schon.
+    if let Some(i) = args.iter().position(|a| a == "--tuer") {
+        return sitzung_ueber_die_tuer(args, i, &e);
+    }
     kapazitaet_anwenden(&e);
     let (artefakt, rest) = artefakt_und_rest(args, &e);
     let Some(artefakt) = artefakt else {
@@ -2803,6 +2827,11 @@ fn sitzung(args: &[String]) -> i32 {
         ),
         None => println!("  Eingehaengt: nichts, also keine Dateiwerkzeuge"),
     }
+    // ⚑ Befehle gibt es nur mit Schreiberlaubnis; dann steht hier, unter
+    // welcher Grenze sie laufen.
+    if let Some(ein) = ruestung.einhaengung.as_ref().filter(|ein| ein.darf_schreiben()) {
+        println!("  Sandbox:     {}", myl_local_agent::sandkasten::ansage(ein.sandkasten()));
+    }
     println!(
         "  Werkzeuge:   {} ({})",
         ruestung.kasten.angebote().len(),
@@ -2818,6 +2847,162 @@ fn sitzung(args: &[String]) -> i32 {
         "  Betriebsart: {}",
         if bezeugtes { "Alles, bezeugte Werkzeuge laufen" } else { "NurVerankert, lokale Werkzeuge gesperrt" }
     );
+    sitzungsschleife(&m, m.grenze as u32, &ruestung, schritte, bezeugtes, roh, &|| ())
+}
+
+/// **`myl sitzung --tuer HOST:PORT [--agent NAME] [--frist S] [--nachkauf
+/// WALLET [--vorrat RUNDEN]]`**: der Agent
+/// mit Werkzeugen auf dieser Maschine, das Modell im Netz (2026-11-15).
+///
+/// ⚑ Jede Runde geht als fertiger Prompt in der Vorlage des Modells an die
+/// Tür ([`myl_client::tuerweg`]) und wird mit der Vollmacht des Agenten
+/// bezahlt. Je Auftrag steht auf dem Fehlerkanal, wie viele Runden und Token
+/// über die Tür gingen; die Token heraus sind die abgebuchten Credits.
+/// ⚑ **Die Werkzeugkiste nach dem Netzmodell** (Festlegung des
+/// Projektinhabers vom 2026-11-16): Ohne `--werkzeuge` und ohne eigens
+/// eingestellte Kiste bekommt ein großes Netzmodell über die Tür `Advanced`,
+/// wie ein großes eigenes Artefakt; die Größe steht im Namen, den die Tür
+/// nennt. 📌 Im Auftragslauf rechnete das 35B mit `Base` und konnte nichts
+/// ausrechnen lassen; drei Aufträge scheiterten am Kopfrechnen.
+///
+/// ⚑ **`Advanced` heißt `run_command`**, und die Zeile im Protokoll sagt,
+/// unter welcher Grenze es läuft (`myl_local_agent::sandkasten`).
+fn kiste_ueber_die_tuer(e: &Einstellungen, rest: &[String], tuer: &myl_local_agent::Tuerklient) -> myl_local_agent::werkzeuge::Werkzeugkiste {
+    let ausdruecklich = rest.iter().any(|a| a == "--werkzeuge") || agent_fuer_diesen_lauf(e, rest).kistenordner.is_some();
+    if ausdruecklich {
+        return satz_fuer_diesen_lauf(e, rest);
+    }
+    match tuer.modelle() {
+        Ok(namen) if !namen.is_empty() => {
+            let (kiste, grund) = myl_local_agent::werkzeuge::Werkzeugkiste::fuer_modellname(&namen[0]);
+            println!("  Werkzeuge:   {} nach dem Netzmodell ({grund})", kiste.name());
+            if kiste == myl_local_agent::werkzeuge::Werkzeugkiste::Advanced {
+                println!("  Sandbox:     {}", myl_local_agent::sandkasten::ansage(agent_fuer_diesen_lauf(e, rest).sandkasten));
+            }
+            kiste
+        }
+        _ => satz_fuer_diesen_lauf(e, rest),
+    }
+}
+
+fn sitzung_ueber_die_tuer(args: &[String], i: usize, e: &Einstellungen) -> i32 {
+    let Some((wirt, port)) = tuer_angabe(args, i) else {
+        eprintln!("myl sitzung: --tuer erwartet HOST:PORT");
+        return 2;
+    };
+    let vollmacht = match vollmacht_des_agenten(args) {
+        Ok(v) => v,
+        Err(f) => {
+            eprintln!("myl sitzung: {f}");
+            return 1;
+        }
+    };
+    let rest: Vec<String> = {
+        let mut aus = Vec::new();
+        let mut k = 0;
+        while k < args.len() {
+            if matches!(args[k].as_str(), "--tuer" | "--agent" | "--frist" | "--nachkauf" | "--vorrat" | "--relais" | "--relaisausweis") {
+                k += 2;
+                continue;
+            }
+            aus.push(args[k].clone());
+            k += 1;
+        }
+        aus
+    };
+    // ⚑ **Eine halbe Stunde je Runde.** Über Pods mit dem 35B rechnet ein
+    //   langer Prompt Minuten, und eine abgebrochene Runde ist bezahlt.
+    let frist = std::time::Duration::from_secs(zahl(args, "--frist").unwrap_or(1800) as u64);
+    // ⚑ **Nachkauf** (Fund 707): mit `--nachkauf WALLET` kauft der Klient vor
+    //   einer Runde Credits nach, wenn das Guthaben sie nicht deckt, nie über
+    //   den Rest des Sitzungsbudgets. Das Wallet wird hier entsperrt, bevor
+    //   die Sitzung beginnt; der Agent bekommt den Schlüssel nicht.
+    let nachkauf = match args.iter().position(|a| a == "--nachkauf").map(|j| args.get(j + 1).cloned().unwrap_or_default()) {
+        None => None,
+        Some(name) => {
+            let vorrat = zahl(args, "--vorrat").map(|v| v as u64).unwrap_or(myl_client::bezahlen::VORRAT_RUNDEN);
+            let bereit = leitung(args).and_then(|l| {
+                let w = myl_client::wallet::laden(&name)?;
+                entsperren_falls_noetig(&name)?;
+                myl_client::bezahlen::Nachkaeufer::neu(l, w, &vollmacht, vorrat)
+            });
+            match bereit {
+                Ok(n) => Some((name, vorrat, n)),
+                Err(f) => {
+                    eprintln!("myl sitzung: Nachkauf: {f}");
+                    return 1;
+                }
+            }
+        }
+    };
+    let nachkaufzeile = nachkauf.as_ref().map(|(name, vorrat, _)| format!("aus „{name}“, Vorrat {vorrat} Runden, höchstens bis zum Rest des Sitzungsbudgets"));
+    let tuer = myl_local_agent::Tuerklient::neu(wirt.clone(), port, vollmacht).mit_frist(frist);
+    // ⚑ Im Netz rechnet nur das 35B (Netzliste), dessen Familie die Vorlage
+    //   mit Denkblock hat; ohne Denken sind beide ChatML-Formen gleich.
+    let grenze = zahl(&rest, "--token").unwrap_or(e.modell.token) as u32;
+    let kiste = kiste_ueber_die_tuer(e, &rest, &tuer);
+    let mut weg = myl_client::tuerweg::Vorlagentuer::neu(tuer, myl_client::oertlich::Vorlage::ChatMlDenkblock, "myelith")
+        .mit_deckel(grenze);
+    if let Some((_, _, kaeufer)) = nachkauf {
+        weg = weg.mit_vorlauf(Box::new(move |lage| {
+            use myl_client::bezahlen::{Nachkaufbericht, RUNDE_GESCHAETZT};
+            let runde = if lage.laengste_runde.is_zero() { RUNDE_GESCHAETZT } else { lage.laengste_runde };
+            match kaeufer.vor_der_runde(lage.bedarf.max(1), lage.je_runde, lage.abgerechnet, runde, lage.abgelehnt)? {
+                Nachkaufbericht::Genug => {}
+                Nachkaufbericht::Gekauft { credits, myl, preis, epoche } => eprintln!(
+                    "[myl] Nachkauf: {credits} Credits für {} MYL (Preis {preis}, Epoche {epoche})",
+                    myl_client::mining::myl_text(myl)
+                ),
+            }
+            Ok(())
+        }));
+    }
+    let ruestung = match myl_local_agent::ruestung::ruesten(
+        &agent_fuer_diesen_lauf(e, &rest),
+        form_fuer_diesen_lauf(&rest),
+        kiste,
+        vec![werkzeug_uhr()],
+    ) {
+        Ok(r) => r,
+        Err(msg) => {
+            eprintln!("myl sitzung: {msg}");
+            return 1;
+        }
+    };
+    let bezeugtes = !rest.iter().any(|a| a == "--nur-verankert");
+    let schritte = zahl(&rest, "--schritte").unwrap_or(e.agent.schrittgrenze());
+    let roh = rest.iter().any(|a| a == "--roh");
+    println!("myl Sitzung");
+    println!("  Modell:      im Netz, über die Tür {wirt}:{port}, je Runde höchstens {grenze} Token");
+    if let Some(z) = &nachkaufzeile {
+        println!("  Nachkauf:    {z}");
+    }
+    match ruestung.einhaengung.as_ref() {
+        Some(ein) => println!(
+            "  Eingehaengt: {} ({})",
+            ein.wurzel().display(),
+            if ein.darf_schreiben() { "lesen und schreiben" } else { "nur lesen" }
+        ),
+        None => println!("  Eingehaengt: nichts, also keine Dateiwerkzeuge"),
+    }
+    let melden = || {
+        let s = weg.stand();
+        eprintln!("[myl] über die Tür: {} Runden, {} Token hinein, {} heraus", s.runden, s.hinein, s.heraus);
+    };
+    sitzungsschleife(&weg, grenze, &ruestung, schritte, bezeugtes, roh, &melden)
+}
+
+/// Die Schleife einer Sitzung: je Zeile ein Auftrag, bis `:ende` oder
+/// Dateiende. `danach` läuft nach jedem Auftrag.
+fn sitzungsschleife(
+    weg: &dyn myl_local_agent::Modellweg,
+    grenze: u32,
+    ruestung: &myl_local_agent::ruestung::Ruestung,
+    schritte: usize,
+    bezeugtes: bool,
+    roh: bool,
+    danach: &dyn Fn(),
+) -> i32 {
     println!("  `:hilfe` zeigt die Befehle, `:ende` beendet.\n");
 
     let eingabe = std::io::stdin();
@@ -2860,7 +3045,8 @@ fn sitzung(args: &[String]) -> i32 {
             Zeile::Auftrag(a) => a.to_string(),
         };
         let anfang = std::time::Instant::now();
-        einen_auftrag(&m, &ruestung, schritte, bezeugtes, roh, &auftrag);
+        einen_auftrag(weg, grenze, ruestung, schritte, bezeugtes, roh, &auftrag);
+        danach();
         eprintln!("[myl] {:.1} s", anfang.elapsed().as_secs_f64());
     }
 }
@@ -3019,7 +3205,8 @@ fn hinweis_betriebsart(bezeugtes: bool, wieviele: usize) {
 /// Empfehlung. Was ueber Auftraege hinweg traegt, sind die
 /// **geschriebenen Dateien** und nicht das Gespraechsprotokoll.
 fn einen_auftrag(
-    m: &Oertlichesmodell,
+    m: &dyn myl_local_agent::Modellweg,
+    grenze: u32,
     ruestung: &myl_local_agent::ruestung::Ruestung,
     schritte: usize,
     bezeugtes: bool,
@@ -3039,7 +3226,7 @@ fn einen_auftrag(
     //   Hinweis nie bekam, obwohl er gebaut und geprueft war. Zwei Wege
     //   zu derselben Schleife laufen auseinander, und der zweite meldet
     //   sich nicht.
-    let erg = myl_local_agent::lauf::fahren(m, ruestung, schritte, bezeugtes, m.grenze as u32, auftrag);
+    let erg = myl_local_agent::lauf::fahren(m, ruestung, schritte, bezeugtes, grenze, auftrag);
     zeigen(&erg.nachrichten, roh);
     saat_nennen(erg.saat);
     eprintln!("[myl] Ende: {:?}, {} Nachrichten", erg.ende, erg.nachrichten.len());
@@ -3234,6 +3421,7 @@ mod schalter {
                 blick_kamera: false,
                 web_recherche: false,
                 text_kennzeichnen: true,
+                sandkasten: true,
                 netzsaat: None,
                 modul: None,
                 modulkiste: None,

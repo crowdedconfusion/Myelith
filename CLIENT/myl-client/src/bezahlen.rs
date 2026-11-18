@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use myl_consensus::block::{Anweisung, Transaktion};
-use myl_types::relais::{Kontostand, Relaisantwort, Relaisfrage};
+use myl_types::relais::{Kontostand, Relaisantwort, Relaisfrage, Sitzungsstand};
 use myl_types::ids::SitzungId;
 use myl_types::sitzung::{Grenzen, Sitzungskontrakt};
 use myl_types::zeitprobe::AUSWEIS_LEN;
@@ -51,6 +51,15 @@ impl Knotenleitung {
     pub fn kontostand(&self, adresse: &Address) -> Result<Kontostand, String> {
         match self.fragen(&Relaisfrage::Konto { adresse: *adresse })? {
             Relaisantwort::Konto(k) => Ok(k),
+            Relaisantwort::Fehler(f) => Err(f),
+            andere => Err(format!("unerwartete Antwort: {andere:?}")),
+        }
+    }
+
+    /// Wie eine Sitzung in der Kette steht, samt Credit-Preis (Fund 707).
+    pub fn sitzungsstand(&self, id: SitzungId) -> Result<Sitzungsstand, String> {
+        match self.fragen(&Relaisfrage::Sitzung { id })? {
+            Relaisantwort::Sitzung(s) => Ok(s),
             Relaisantwort::Fehler(f) => Err(f),
             andere => Err(format!("unerwartete Antwort: {andere:?}")),
         }
@@ -186,6 +195,246 @@ pub fn credits_kaufen(leitung: &Knotenleitung, w: &Wallet, betrag: u64) -> Resul
     senden(leitung, w, Anweisung::Burn { betrag })
 }
 
+/// ⚑ **Das Budget einer Sitzung, wenn keines genannt ist**, in Credits; das
+/// Einzellimit ist ein Zehntel davon. Seit Fund 711 kostet eine Anfrage
+/// Prompt und Ausgabe, im Auftragslauf rund das Fünfundzwanzigfache der
+/// Ausgabe allein: also das alte Budget von 10 000 mal 25. Eine Runde eines
+/// Agenten mit 16 000 Prompt-Token und 4 096 neuen liegt unter dem
+/// Einzellimit.
+pub const SITZUNGSBUDGET: u64 = 250_000;
+
+/// ⚑ **So viele Runden deckt ein Nachkauf** (Fund 707), wenn nichts
+/// anderes verlangt ist. Credits verfallen kurz nach dem Kauf: Ein grosser
+/// Vorrat verfällt ungenutzt, ein Kauf je Runde wartet jedes Mal auf einen
+/// Block. Vier Runden sind bei einem Agenten rund ein Auftrag.
+pub const VORRAT_RUNDEN: u64 = 4;
+
+/// Die Lage vor einer Runde über die Tür, für [`nachkauf_entscheiden`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Nachkauflage {
+    /// Credits des Inhabers, die für diese Runde zählen: die geltenden,
+    /// oder nur die haltbaren, wenn der Epochenwechsel in die Runde fällt
+    /// ([`zaehlbare_credits`]).
+    pub credits: u64,
+    /// Über die Tür ausgegeben, aber noch nicht von der Kette abgebucht.
+    pub offen: u64,
+    /// Was diese Runde voraussichtlich höchstens kostet: Prompt und Deckel
+    /// (Fund 711).
+    pub bedarf: u64,
+    /// Was eine Runde bisher höchstens kostete; null vor der ersten. Der
+    /// Vorrat über diese Runde hinaus bemisst sich daran.
+    pub je_runde: u64,
+    /// So viele Runden soll ein Kauf decken.
+    pub vorrat_runden: u64,
+    /// Budget des Kontrakts abzüglich dessen, was die Kette abgebucht hat.
+    pub budget_rest: u64,
+    /// Kleinstbeträge je Credit.
+    pub preis: u64,
+    /// Guthaben des Wallets in Kleinstbeträgen.
+    pub guthaben: u64,
+    /// Was die Kauftransaktion höchstens an Gebühr kostet.
+    pub gebuehr: u64,
+}
+
+/// Was vor einer Runde zu tun ist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Nachkauf {
+    /// Das Guthaben deckt die Runde.
+    Genug,
+    /// So viele Credits kaufen, für so viele Kleinstbeträge.
+    Kaufen { credits: u64, myl: u64 },
+    /// ⚑ Der Rest des Budgets deckt die Runde nicht: **nicht kaufen**, die
+    /// Tür lehnte ohnehin ab, und der Kauf verfiele ungenutzt.
+    BudgetErschoepft { rest: u64 },
+    /// Das Wallet kann die Runde nicht decken.
+    GeldFehlt { noetig: u64, guthaben: u64 },
+}
+
+/// ⚑ **Die Entscheidung des Nachkaufs, ohne Netz und ohne Uhr** (Fund 707,
+/// Festlegung des Projektinhabers vom 2026-11-16: Credits bleiben kurz
+/// gültig, der Klient kauft innerhalb des Sitzungsbudgets nach).
+///
+/// - Deckt das Guthaben abzüglich des Offenen die Runde, geschieht nichts.
+/// - Sonst wird auf den Vorrat aufgefüllt: diese Runde und `vorrat_runden - 1`
+///   weitere wie die teuerste bisher; vor der ersten Runde nur diese. **Nie
+///   über den Rest des Budgets**: Das Budget des Kontrakts bleibt der
+///   Sprengradius (Kap. 8.2), auch für das, was der Nachkauf verbrennt.
+///   📌 Seit Fund 711 ist der Bedarf einer Runde eine Schätzung über dem
+///   Preis, vor der ersten Runde die Schranke aus Bytes und Deckel (rund das
+///   Vierfache). Im kurzen Auftragslauf vom 2026-11-17 kaufte der Vorrat aus
+///   vier Schranken 60 177 Credits für einen Auftrag von 17 758; 53 782
+///   blieben übrig und verfallen. Der Vorrat wartet deshalb auf eine
+///   gemessene Runde.
+/// - Reicht das Geld nicht für den Vorrat, aber für die Runde, wird gekauft,
+///   was geht.
+pub fn nachkauf_entscheiden(l: &Nachkauflage) -> Nachkauf {
+    let verfuegbar = l.credits.saturating_sub(l.offen);
+    if verfuegbar >= l.bedarf {
+        return Nachkauf::Genug;
+    }
+    let rest = l.budget_rest.saturating_sub(l.offen);
+    if rest < l.bedarf {
+        return Nachkauf::BudgetErschoepft { rest };
+    }
+    let preis = l.preis.max(1);
+    let ziel = l.bedarf.saturating_add(l.je_runde.saturating_mul(l.vorrat_runden.max(1) - 1)).min(rest);
+    let mut credits = ziel - verfuegbar;
+    let bezahlbar = l.guthaben.saturating_sub(l.gebuehr) / preis;
+    if bezahlbar < credits {
+        let mindestens = l.bedarf - verfuegbar;
+        if bezahlbar < mindestens {
+            return Nachkauf::GeldFehlt {
+                noetig: mindestens.saturating_mul(preis).saturating_add(l.gebuehr),
+                guthaben: l.guthaben,
+            };
+        }
+        credits = bezahlbar;
+    }
+    Nachkauf::Kaufen { credits, myl: credits.saturating_mul(preis) }
+}
+
+/// ⚑ **Welche Credits für eine Runde zählen** (Fund 707): Eine Runde wird
+/// abgebucht, wenn sie fertig ist. Fällt der Epochenwechsel hinein, zählt
+/// nur, was ihn übersteht; sonst rechnete die Runde gegen Credits, die bei
+/// der Abbuchung verfallen sind, und der Miner ginge leer aus. „Hinein“
+/// heisst: Der Wechsel kommt früher als das Doppelte der längsten Runde.
+pub fn zaehlbare_credits(s: &Sitzungsstand, laengste_runde: Duration) -> u64 {
+    let bis_wechsel_ms = u128::from(s.bloecke_bis_wechsel) * u128::from(s.slot_ms);
+    if bis_wechsel_ms <= laengste_runde.as_millis() * 2 {
+        s.credits_haltbar
+    } else {
+        s.credits
+    }
+}
+
+/// So lange gilt eine Runde als lang, bevor eine gemessen ist. 📌 Über die
+/// Pods des 35B brauchten Runden im Auftragslauf 82 bis 356 s.
+pub const RUNDE_GESCHAETZT: Duration = Duration::from_secs(300);
+
+/// Was ein Nachkauf vor einer Runde tat, für eine Zeile im Protokoll.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Nachkaufbericht {
+    /// Nichts zu tun.
+    Genug,
+    /// Gekauft, und die Credits stehen in der Kette.
+    Gekauft { credits: u64, myl: u64, preis: u64, epoche: u64 },
+}
+
+/// **Der Nachkauf einer Sitzung** (Fund 707): Wallet, Leitung und Sitzung,
+/// dazu der Stand der Abbuchungen beim ersten Blick.
+///
+/// ⚑ **Der Schlüssel des Wallets bleibt beim Klienten.** Der Agent bekommt
+/// ihn auch hier nicht: Er unterschreibt nur über diese Stelle, nur einen
+/// Burn, und nie mehr, als der Rest des Sitzungsbudgets deckt.
+pub struct Nachkaeufer {
+    leitung: Knotenleitung,
+    wallet: Wallet,
+    sitzung: SitzungId,
+    vorrat_runden: u64,
+    /// `verbraucht` der Kette beim ersten Blick und was dieser Klient
+    /// seither selbst über die Tür ausgab, als die Kette das zuletzt
+    /// einholte: daraus folgt das Offene.
+    anfang: std::sync::Mutex<Option<u64>>,
+}
+
+impl Nachkaeufer {
+    /// Für die Sitzung, die in der Vollmacht des Agenten steht.
+    pub fn neu(leitung: Knotenleitung, wallet: Wallet, vollmacht: &str, vorrat_runden: u64) -> Result<Self, String> {
+        let sitzung = myl_types::vollmacht::Vollmacht::aus_bearer(vollmacht)
+            .and_then(|v| v.sitzung())
+            .ok_or("Die Vollmacht nennt keine Sitzung; ein Nachkauf braucht eine.")?;
+        let stand = leitung.sitzungsstand(sitzung)?;
+        if stand.inhaber != wallet.adresse {
+            return Err(format!("Das Wallet „{}“ ist nicht der Inhaber dieser Sitzung.", wallet.name));
+        }
+        Ok(Self { leitung, wallet, sitzung, vorrat_runden: vorrat_runden.max(1), anfang: std::sync::Mutex::new(None) })
+    }
+
+    /// Die Lage aus dem Stand der Kette: `heraus` Credits gingen über die
+    /// Tür, seit dieser Klient läuft.
+    fn lage(&self, s: &Sitzungsstand, konto: &Kontostand, bedarf: u64, je_runde: u64, heraus: u64, laengste_runde: Duration) -> Nachkauflage {
+        let anfang = {
+            let mut a = self.anfang.lock().unwrap_or_else(|e| e.into_inner());
+            *a.get_or_insert(s.verbraucht.saturating_sub(heraus))
+        };
+        let abgebucht = s.verbraucht.saturating_sub(anfang);
+        Nachkauflage {
+            credits: zaehlbare_credits(s, laengste_runde),
+            offen: heraus.saturating_sub(abgebucht),
+            bedarf,
+            je_runde,
+            vorrat_runden: self.vorrat_runden,
+            budget_rest: s.budget.saturating_sub(s.verbraucht),
+            preis: s.credit_preis,
+            guthaben: konto.guthaben,
+            // Der Betrag ändert die Länge der Transaktion nicht.
+            gebuehr: gebuehr(konto, &Anweisung::Burn { betrag: 0 }).saturating_mul(GEBUEHR_SPIELRAUM),
+        }
+    }
+
+    /// ⚑ **Vor einer Runde**: prüfen, bei Bedarf kaufen und warten, bis die
+    /// Credits in der Kette stehen. `abgelehnt` sagt, dass die Tür die
+    /// Runde eben wegen des Guthabens ablehnte, obwohl dieser Klient es für
+    /// gedeckt hielt: Dann sieht ihr Knoten den Kauf noch nicht, und es
+    /// wird zwei Slots gewartet, bevor neu geprüft wird.
+    pub fn vor_der_runde(
+        &self,
+        bedarf: u64,
+        je_runde: u64,
+        heraus: u64,
+        laengste_runde: Duration,
+        abgelehnt: bool,
+    ) -> Result<Nachkaufbericht, String> {
+        let mut s = self.leitung.sitzungsstand(self.sitzung)?;
+        let slot = Duration::from_millis(s.slot_ms.clamp(100, 10_000));
+        if abgelehnt {
+            std::thread::sleep(slot * 2);
+            s = self.leitung.sitzungsstand(self.sitzung)?;
+        }
+        if s.widerrufen {
+            return Err("Die Sitzung ist widerrufen.".into());
+        }
+        if s.epoche > s.gueltig_bis {
+            return Err(format!("Die Sitzung galt bis Epoche {}, jetzt läuft {}.", s.gueltig_bis, s.epoche));
+        }
+        let konto = self.leitung.kontostand(&self.wallet.adresse)?;
+        let lage = self.lage(&s, &konto, bedarf, je_runde, heraus, laengste_runde);
+        let (credits, myl) = match nachkauf_entscheiden(&lage) {
+            Nachkauf::Genug => return Ok(Nachkaufbericht::Genug),
+            Nachkauf::Kaufen { credits, myl } => (credits, myl),
+            Nachkauf::BudgetErschoepft { rest } => {
+                return Err(format!("Das Budget der Sitzung ist erschöpft: Rest {rest} Credits, die Runde braucht bis zu {bedarf}."));
+            }
+            Nachkauf::GeldFehlt { noetig, guthaben } => {
+                return Err(format!("Das Wallet deckt den Nachkauf nicht: nötig {noetig} Kleinstbeträge, vorhanden {guthaben}."));
+            }
+        };
+        senden_mit(&self.leitung, &self.wallet, &konto, Anweisung::Burn { betrag: myl })?;
+        // ⚑ Warten, bis der Kauf in der Kette steht: an der Nonce des
+        //   Wallets abgelesen, nicht an einer Zeit. Die Frist ist nur der
+        //   Ausweg, wenn die Transaktion verloren ging.
+        let frist = std::time::Instant::now() + (slot * 60).max(Duration::from_secs(60));
+        loop {
+            std::thread::sleep(slot);
+            let jetzt = self.leitung.kontostand(&self.wallet.adresse)?;
+            if jetzt.nonce > konto.nonce {
+                let s = self.leitung.sitzungsstand(self.sitzung)?;
+                let danach = self.lage(&s, &jetzt, bedarf, je_runde, heraus, laengste_runde);
+                if danach.credits.saturating_sub(danach.offen) < bedarf {
+                    return Err(format!(
+                        "Der Kauf steht in der Kette, deckt die Runde aber nicht ({} Credits, nötig {bedarf}); der Preis ist gestiegen oder die Epoche hat gewechselt.",
+                        danach.credits.saturating_sub(danach.offen)
+                    ));
+                }
+                return Ok(Nachkaufbericht::Gekauft { credits, myl, preis: s.credit_preis, epoche: s.epoche });
+            }
+            if std::time::Instant::now() >= frist {
+                return Err("Der Kauf steht nach der Frist nicht in der Kette.".into());
+            }
+        }
+    }
+}
+
 /// Eine eröffnete Sitzung, wie der Client sie für den Agenten ablegt.
 #[derive(Debug, Clone)]
 pub struct Sitzung {
@@ -280,4 +529,95 @@ fn hex_lesen(t: &str) -> Option<Vec<u8>> {
         return None;
     }
     (0..t.len() / 2).map(|i| u8::from_str_radix(t.get(i * 2..i * 2 + 2)?, 16).ok()).collect()
+}
+
+#[cfg(test)]
+mod nachkauf_proben {
+    use super::*;
+
+    fn lage() -> Nachkauflage {
+        Nachkauflage { credits: 100, offen: 0, bedarf: 512, je_runde: 512, vorrat_runden: 4, budget_rest: 10_000, preis: 67, guthaben: 1_000_000, gebuehr: 300 }
+    }
+
+    /// ⚑ **Aufgefüllt wird auf den Vorrat, nie über den Rest des Budgets.**
+    /// Gegenprobe zu jeder Grenze: Ohne das Abziehen des Offenen gälte die
+    /// zweite Lage als gedeckt; ohne die Budgetgrenze kaufte die dritte 1948
+    /// statt 500.
+    #[test]
+    fn der_nachkauf_fuellt_auf_den_vorrat_und_nie_ueber_das_budget() {
+        assert_eq!(nachkauf_entscheiden(&Nachkauflage { credits: 512, ..lage() }), Nachkauf::Genug);
+        assert_eq!(
+            nachkauf_entscheiden(&Nachkauflage { credits: 600, offen: 100, ..lage() }),
+            Nachkauf::Kaufen { credits: 2048 - 500, myl: (2048 - 500) * 67 }
+        );
+        assert_eq!(nachkauf_entscheiden(&lage()), Nachkauf::Kaufen { credits: 1948, myl: 1948 * 67 });
+        assert_eq!(
+            nachkauf_entscheiden(&Nachkauflage { budget_rest: 600, ..lage() }),
+            Nachkauf::Kaufen { credits: 500, myl: 500 * 67 }
+        );
+        // Das Offene zählt auch gegen das Budget.
+        assert_eq!(
+            nachkauf_entscheiden(&Nachkauflage { budget_rest: 600, offen: 100, ..lage() }),
+            Nachkauf::BudgetErschoepft { rest: 500 }
+        );
+        assert_eq!(nachkauf_entscheiden(&Nachkauflage { budget_rest: 511, ..lage() }), Nachkauf::BudgetErschoepft { rest: 511 });
+    }
+
+    /// ⚑ **Der Vorrat bemisst sich an der teuersten Runde, nicht an der
+    /// Schätzung** (Fund 711): diese Runde mit ihrem Bedarf, drei weitere wie
+    /// die teuerste bisher. Vor der ersten Runde nur diese; Gegenprobe zur
+    /// Fassung davor, die viermal den Bedarf kaufte (1948).
+    #[test]
+    fn der_vorrat_folgt_der_teuersten_runde() {
+        assert_eq!(
+            nachkauf_entscheiden(&Nachkauflage { je_runde: 200, ..lage() }),
+            Nachkauf::Kaufen { credits: 512 + 3 * 200 - 100, myl: (512 + 3 * 200 - 100) * 67 }
+        );
+        assert_eq!(nachkauf_entscheiden(&Nachkauflage { je_runde: 0, ..lage() }), Nachkauf::Kaufen { credits: 412, myl: 412 * 67 });
+        assert_eq!(nachkauf_entscheiden(&Nachkauflage { je_runde: 200, vorrat_runden: 1, ..lage() }), Nachkauf::Kaufen { credits: 412, myl: 412 * 67 });
+    }
+
+    /// ⚑ Reicht das Geld nicht für den Vorrat, aber für die Runde, wird
+    /// gekauft, was geht; reicht es nicht für die Runde, wird nichts
+    /// verbrannt. Gegenprobe: Wer die Gebühr nicht abzieht, kauft einen
+    /// Credit zu viel und die Transaktion scheitert.
+    #[test]
+    fn ein_knappes_wallet_kauft_was_geht_oder_nichts() {
+        let knapp = Nachkauflage { guthaben: 500 * 67 + 300, ..lage() };
+        assert_eq!(nachkauf_entscheiden(&knapp), Nachkauf::Kaufen { credits: 500, myl: 500 * 67 });
+        let zu_knapp = Nachkauflage { guthaben: 411 * 67 + 300, ..lage() };
+        assert_eq!(nachkauf_entscheiden(&zu_knapp), Nachkauf::GeldFehlt { noetig: 412 * 67 + 300, guthaben: 411 * 67 + 300 });
+        // Ein Preis von null teilt nicht durch null.
+        assert!(matches!(nachkauf_entscheiden(&Nachkauflage { preis: 0, ..lage() }), Nachkauf::Kaufen { credits: 1948, .. }));
+    }
+
+    fn stand(bloecke_bis_wechsel: u64) -> Sitzungsstand {
+        Sitzungsstand {
+            hoehe: 0,
+            epoche: 3,
+            bloecke_bis_wechsel,
+            slot_ms: 2_000,
+            credit_preis: 67,
+            inhaber: Address::new([1; 32]),
+            credits: 900,
+            credits_haltbar: 500,
+            guthaben: 0,
+            budget: 4_000,
+            einzellimit: 1_000,
+            verbraucht: 0,
+            hoechste_abrechnung: 0,
+            gueltig_bis: 9,
+            widerrufen: false,
+        }
+    }
+
+    /// ⚑ **Nah am Wechsel zählt nur, was ihn übersteht.** Eine Runde von
+    /// 300 s: 300 Blöcke zu 2 s sind genau das Doppelte, also nah; 301 nicht.
+    /// Gegenprobe: Wer immer die geltenden zählt, bekommt beide Male 900.
+    #[test]
+    fn nah_am_wechsel_zaehlen_nur_haltbare_credits() {
+        assert_eq!(zaehlbare_credits(&stand(300), Duration::from_secs(300)), 500);
+        assert_eq!(zaehlbare_credits(&stand(301), Duration::from_secs(300)), 900);
+        assert_eq!(zaehlbare_credits(&stand(1), Duration::ZERO), 900, "ohne Rundenzeit ist nichts nah");
+    }
 }

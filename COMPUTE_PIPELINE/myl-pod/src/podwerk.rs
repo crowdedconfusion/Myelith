@@ -20,10 +20,11 @@
 //! # ⚑ Der Zwilling (Stufe 1, 2026-10-28)
 //!
 //! Nennt das Podbild für den ersten Pod einen Zwilling, rechnet dieser
-//! jeden Auftrag ein zweites Mal, in einem eigenen Faden mit eigenem
-//! Koordinator. Die Antwort geht nach dem ersten Pod hinaus (optimistisch,
-//! Whitepaper 6.4); beide reichen am Ende der Epoche ihr Bündel ein, und die
-//! Kette vergütet nur, wenn die Ausgabenwurzeln gleich sind.
+//! jeden Auftrag ein zweites Mal, zugleich, in einem eigenen Faden mit
+//! eigenem Koordinator. Die Antwort des zuerst fertigen Pods geht hinaus
+//! (optimistisch, Whitepaper 6.4); beide reichen am Ende der Epoche ihr
+//! Bündel ein, und die Kette gleicht sie je Sitzung ab: Gleiche Sitzungen
+//! werden vergütet, abweichende bestritten, fehlende nachgerechnet.
 //!
 //! Der Prozess hält keine Gewichte, nur den Wortschatz.
 
@@ -43,11 +44,75 @@ use crate::coordinator::Coordinator;
 use crate::entsiegelung::Klartextwerk;
 use crate::shardweg::{Ausweis, Shardanfrage, Shardantwort, Shardweg, UeberDenKnoten};
 
-/// Ab welchem Teil einer Epoche das Bündel eingereicht wird, in Sechsteln:
-/// im letzten Sechstel, damit die Arbeit der Epoche fast ganz darin steht und
-/// noch Zeit für den Weg in einen Block bleibt. Die Länge der Epoche nennt
-/// das Podbild.
-pub const EINREICHEN_AB_SECHSTEL: u64 = 5;
+/// ⚑ **Der Rand vor dem Wechsel, in dem das Bündel eingereicht wird**
+/// (2026-11-18): mindestens ein Dreißigstel der Epoche und
+/// mindestens [`EINREICHEN_RAND_MS`] nach der gemessenen Blockzeit, höchstens
+/// ein Sechstel ([`einreichen_ab`]).
+///
+/// 📌 Bis hierher galt fest das letzte Sechstel: Was danach gerechnet
+/// wurde, stand in keinem Bündel, bis zu einem Sechstel der Arbeit ohne
+/// Vergütung. Der Rand war nicht für den Weg in den Block nötig, sondern weil
+/// das Einreichen auf laufende Sitzungen wartete (seit Fund 713 nicht mehr).
+/// Gemessen im gezielten Auftragslauf vom 2026-11-17 unter Last 22 (acht
+/// Shards des 35B auf einer Maschine, Runden liefen): Unterschreiben und
+/// Abgeben in 0,4 bis 4,2 s, das Bündel 1 bis 3 Blöcke danach in der Kette.
+pub const EINREICHEN_RAND_DREISSIGSTEL: u64 = 1;
+
+/// Die zeitliche Untergrenze des Rands: 30 s, rund das Siebenfache des
+/// Längsten, was Unterschreiben und Abgeben unter Last brauchten. Sie zählt
+/// bei schnellem Blocktakt (60 ms im Podlauf: ein Dreißigstel wären 3,6 s).
+pub const EINREICHEN_RAND_MS: u64 = 30_000;
+
+/// **Ab welcher Stelle der Epoche das Bündel fällig ist**, bei `laenge`
+/// Blöcken je Epoche und `ms_je_block` gemessener Blockzeit. Ohne Messung
+/// das letzte Sechstel, wie bisher.
+pub fn einreichen_ab(laenge: u64, ms_je_block: Option<u64>) -> u64 {
+    let sechstel = laenge / 6;
+    let rand = match ms_je_block {
+        None => sechstel,
+        Some(ms) => {
+            let zeit = EINREICHEN_RAND_MS.div_ceil(ms.max(1));
+            (laenge * EINREICHEN_RAND_DREISSIGSTEL / 30).max(zeit).min(sechstel)
+        }
+    };
+    laenge.saturating_sub(rand.max(1))
+}
+
+/// **Die Blockzeit, wie dieser Pod sie sieht**: aus der ersten gesehenen
+/// Höhe und der jetzigen, über mindestens [`Blocktakt::MINDESTENS`] Blöcke.
+/// Fällt die Höhe (ein Neustart der Kette), beginnt die Messung neu.
+#[derive(Debug, Default)]
+pub struct Blocktakt {
+    erste: Option<(std::time::Instant, u64)>,
+    ms: Option<u64>,
+}
+
+impl Blocktakt {
+    /// Über so viele Blöcke wird mindestens gemessen.
+    pub const MINDESTENS: u64 = 20;
+
+    /// Eine Höhe, gesehen zur Zeit `jetzt`.
+    pub fn sehen(&mut self, hoehe: u64, jetzt: std::time::Instant) {
+        match self.erste {
+            Some((t, h)) if hoehe >= h => {
+                let bloecke = hoehe - h;
+                if bloecke >= Self::MINDESTENS {
+                    let ms = jetzt.saturating_duration_since(t).as_millis() as u64;
+                    self.ms = Some((ms / bloecke).max(1));
+                }
+            }
+            _ => {
+                self.erste = Some((jetzt, hoehe));
+                self.ms = None;
+            }
+        }
+    }
+
+    /// Die gemessene Zeit je Block, sobald genug Blöcke gesehen sind.
+    pub fn ms_je_block(&self) -> Option<u64> {
+        self.ms
+    }
+}
 
 /// **Wie lange auf einen neuen Pod gewartet wird**, bevor über ihn
 /// gerechnet wird.
@@ -75,7 +140,9 @@ struct Podstand {
     epoche: u64,
     kennung: PodId,
     koordinator: Coordinator,
-    eingereicht: bool,
+    /// ⚑ **Atomar**, denn eingereicht wird unter der Lesesperre, neben
+    /// laufenden Sitzungen ([`einreichen_wenn_faellig`]).
+    eingereicht: std::sync::atomic::AtomicBool,
     /// Die Netzadressen der rechnenden Mitglieder, Vertreter eingeschlossen:
     /// bei ihnen werden die Spuren abgelegt (Stufe 2).
     adressen: Vec<PeerIdBytes>,
@@ -107,6 +174,8 @@ pub struct Podwerk {
     /// Prozess, denn er braucht dessen Ortsausweis.
     ausweis: Arc<Ausweisquelle>,
     wortschatz: Tokenizer,
+    /// Die Endmarken aus dem Wortschatz (Fund 702), siehe [`haltemarken`].
+    haltemarken: Vec<u32>,
     pipeline: Hash,
     deckel: u32,
     /// ⚑ **Ein Koordinator je Pod** (2026-10-28): Jedes Zwillingspaar
@@ -117,9 +186,10 @@ pub struct Podwerk {
 
 /// ⚑ **Lesend rechnen, schreibend wechseln** (2026-11-15): Sitzungen
 /// rechnen unter der Lesesperre nebeneinander ([`Coordinator::rechne`]
-/// nimmt `&self`); Neubesetzen und Einreichen nehmen die Schreibsperre und
-/// warten damit, bis die laufenden Sitzungen angehängt haben. So sehen
-/// Bündel und Spurablage denselben Stand. 📌 Bis dahin ein `Mutex` über die
+/// nimmt `&self`); nur das Neubesetzen nimmt die Schreibsperre. Eingereicht
+/// wird lesend (Fund 713): Bündel und Spurablage sehen denselben Stand,
+/// weil beide aus den ersten `segmente` Segmenten entstehen
+/// ([`Coordinator::kanonisch_bis`]). 📌 Bis dahin ein `Mutex` über die
 /// ganze Anfrage: Der Pod rechnete eine nach der anderen.
 type Platz = Arc<RwLock<Option<Podstand>>>;
 
@@ -189,21 +259,43 @@ impl Podwerk {
         let buch = Blaetterbuch::default();
         std::thread::Builder::new()
             .name("buendel".into())
-            .spawn(move || loop {
-                std::thread::sleep(Duration::from_secs(3));
-                // Ohne Ausweis (der Knoten startet noch) gibt es nichts zu tun.
-                let Ok(ausweis) = a.holen() else { continue };
-                let plaetze: Vec<Platz> = s.lock().map(|g| g.values().cloned().collect()).unwrap_or_default();
-                for stand in &plaetze {
-                    if let Err(f) = einreichen_wenn_faellig(relais, &ausweis, stand, &buch) {
-                        eprintln!("[myl-pod] Bündel: {f}");
+            .spawn(move || {
+                let mut takt = Blocktakt::default();
+                loop {
+                    std::thread::sleep(Duration::from_secs(3));
+                    // Ohne Ausweis (der Knoten startet noch) gibt es nichts zu tun.
+                    let Ok(ausweis) = a.holen() else { continue };
+                    let plaetze: Vec<Platz> = s.lock().map(|g| g.values().cloned().collect()).unwrap_or_default();
+                    for stand in &plaetze {
+                        if let Err(f) = einreichen_wenn_faellig(relais, &ausweis, stand, &buch, &mut takt) {
+                            eprintln!("[myl-pod] Bündel: {f}");
+                        }
                     }
+                    differenzen_melden(relais, &ausweis, &buch);
                 }
-                differenzen_melden(relais, &ausweis, &buch);
             })
             .map_err(|e| e.to_string())?;
-        Ok(Self { relais, ausweis, wortschatz, pipeline, deckel, staende })
+        let haltemarken = haltemarken(&wortschatz);
+        Ok(Self { relais, ausweis, wortschatz, haltemarken, pipeline, deckel, staende })
     }
+}
+
+/// **Die Token, bei denen eine Antwort zu Ende ist** (Fund 702).
+///
+/// ⚑ Aus dem Wortschatz und nicht aus einer Tabelle, nach derselben Regel
+/// wie der Klient für ein Modell auf seiner Maschine: `<|im_end|>` beendet
+/// eine Runde, `<|endoftext|>` den Text. 📌 Nur eine Marke, die zu
+/// **einem** Token wird, zählt; ein Wortschatz ohne sie zerlegte sie in
+/// gewöhnliche Stücke, und ein Halt auf `<` beendete jede Antwort mit einer
+/// spitzen Klammer.
+pub fn haltemarken(wortschatz: &Tokenizer) -> Vec<u32> {
+    ["<|im_end|>", "<|endoftext|>"]
+        .iter()
+        .filter_map(|m| {
+            let t = wortschatz.encode(m);
+            (t.len() == 1).then(|| t[0] as u32)
+        })
+        .collect()
 }
 
 fn podbild(relais: SocketAddr, ausweis: &Ausweis) -> Result<Podbild, String> {
@@ -227,10 +319,11 @@ fn podbild(relais: SocketAddr, ausweis: &Ausweis) -> Result<Podbild, String> {
 /// vergütet). Gezogen wird erst mit dem Zertifikat nach dem Wechsel, die
 /// Spuren liegen also auch danach noch rechtzeitig.
 ///
-/// ⚑ Derselbe Stand wie das Bündel: Der Aufrufer hält den Platz exklusiv
-/// ([`einreichen_wenn_faellig`]), kein Lauf hängt dazwischen an.
+/// ⚑ Derselbe Stand wie das Bündel: die ersten `buendel.segmente` Segmente
+/// ([`Coordinator::kanonisch_bis`]). Was seither angehängt hat, gehört in
+/// kein Bündel dieser Epoche und nicht in die Ablage.
 fn spuren_ablegen(relais: SocketAddr, ausweis: &Ausweis, s: &Podstand, buendel: &myl_types::PoIBundle) {
-    let folge = s.koordinator.kanonisch();
+    let folge = s.koordinator.kanonisch_bis(buendel.segmente as usize);
     let ablage = myl_types::Spurablage {
         epoche: buendel.epoch,
         pod: buendel.pod,
@@ -320,30 +413,54 @@ fn einreichen_wenn_faellig(
     ausweis: &Ausweis,
     stand: &RwLock<Option<Podstand>>,
     buch: &Blaetterbuch,
+    takt: &mut Blocktakt,
 ) -> Result<(), String> {
     let bild = podbild(relais, ausweis)?;
+    takt.sehen(bild.hoehe, std::time::Instant::now());
     let laenge = bild.bloecke_je_epoche.max(1);
+    let ab = einreichen_ab(laenge, takt.ms_je_block());
     let faellig = |s: &Podstand| {
-        !s.eingereicht
+        !s.eingereicht.load(std::sync::atomic::Ordering::SeqCst)
             && s.epoche == bild.epoche
-            && bild.hoehe % laenge >= laenge * EINREICHEN_AB_SECHSTEL / 6
+            && bild.hoehe % laenge >= ab
             && s.koordinator.segmentzahl() > 0
     };
-    // ⚑ Erst lesend fragen, ob es fällig ist: Die Schreibsperre wartet auf
-    //   jede laufende Sitzung und hält neue auf, also nur, wenn es sein muss.
-    if !stand.read().map_err(|_| "Stand vergiftet")?.as_ref().is_some_and(faellig) {
-        return Ok(());
-    }
-    let mut g = stand.write().map_err(|_| "Stand vergiftet")?;
-    let Some(s) = g.as_mut() else { return Ok(()) };
+    // ⚑ **Unter der Lesesperre, neben laufenden Sitzungen** (Fund 713).
+    //   📌 Hier stand die Schreibsperre, und sie wartete auf jede laufende
+    //   Sitzung. Im gezielten Auftragslauf vom 2026-11-17 liefen zum Fünftel
+    //   der Epoche Runden des 35B von 5 bis 15 Minuten; das Einreichen kam
+    //   erst nach dem Wechsel dran, die Shards der Epoche waren beendet, kein
+    //   Mitglied unterschrieb, und beide Pods bekamen für die ganze Epoche
+    //   nichts. Der Koordinator nimmt einen Schnappschuss (ein Lauf kommt
+    //   ganz oder gar nicht hinein), und ein Shard prüft nur, ob Anspruch und
+    //   Segmentzahl des Bündels zueinander passen; die Sperre schützte nichts.
+    let g = stand.read().map_err(|_| "Stand vergiftet")?;
+    let Some(s) = g.as_ref() else { return Ok(()) };
     if !faellig(s) {
         return Ok(());
     }
-    let buendel = s.koordinator.build_signed_poi_bundle()?;
-    let bytes = borsh::to_vec(&buendel).map_err(|e| e.to_string())?;
-    // Eingereicht ist eingereicht, auch wenn es scheitert: Ein zweiter
-    // Versuch derselben Epoche fände dieselben Gründe.
-    s.eingereicht = true;
+    // ⚑ Atomar getauscht: Von zwei Fäden reicht genau einer ein.
+    if s.eingereicht.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
+    // ⚑ **Gemessen für den Rand** (2026-11-17): wie lange Unterschreiben und
+    //   Abgeben dauern und wie viele Blöcke der Epoche danach bleiben; der
+    //   Rand ([`einreichen_ab`]) steht auf dieser Messung, die Zeile prüft
+    //   ihn in jedem Lauf.
+    let anfang = std::time::Instant::now();
+    let rest_bei_beginn = laenge - bild.hoehe % laenge;
+    // Scheitert schon das Bündel (ein Mitglied unterschreibt gerade nicht),
+    // versucht es der nächste Blick wieder, wie bisher. Ist es abgegeben,
+    // ist es eingereicht, auch wenn die Kette ablehnt: Ein zweiter Versuch
+    // derselben Epoche fände dieselben Gründe.
+    let gebaut = s.koordinator.build_signed_poi_bundle().and_then(|b| Ok((borsh::to_vec(&b).map_err(|e| e.to_string())?, b)));
+    let (bytes, buendel) = match gebaut {
+        Ok(x) => x,
+        Err(f) => {
+            s.eingereicht.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err(f);
+        }
+    };
     let antwort = myl_types::relais::fragen(relais, ausweis, &Relaisfrage::BuendelEinreichen { buendel: bytes }, Duration::from_secs(30));
     // ⚑ Stufe 2: Danach legt jedes Mitglied die Spuren ab, damit es auf die
     //   Stichprobe antworten kann, wenn sein Shard längst endete (Fund 680:
@@ -351,10 +468,14 @@ fn einreichen_wenn_faellig(
     spuren_ablegen(relais, ausweis, s, &buendel);
     match antwort? {
         Relaisantwort::Erledigt(z) => {
-            eprintln!("[myl-pod] Bündel der Epoche {}: {z}", s.epoche);
+            eprintln!(
+                "[myl-pod] Bündel der Epoche {}: {z} (unterschrieben und abgegeben in {} ms, {rest_bei_beginn} Blöcke vor dem Wechsel begonnen)",
+                s.epoche,
+                anfang.elapsed().as_millis()
+            );
             // Die Blätter für einen Differenzbeweis nach dem Wechsel.
             if let Some(eintrag) = bild.pods.iter().find(|p| p.kennung == s.kennung) {
-                let (ausgaben, segmente) = s.koordinator.blaetter();
+                let (ausgaben, segmente) = s.koordinator.blaetter_bis(buendel.segmente as usize);
                 if let Ok(mut b) = buch.lock() {
                     b.insert(
                         (s.epoche, eintrag.pod_index),
@@ -473,10 +594,77 @@ fn besetzen(
 
 /// Was ein Pod für einen Auftrag rechnet: Sitzung, Token, höchstens so
 /// viele neue.
+#[derive(Clone, Copy)]
 struct Arbeit<'a> {
     sitzung: u64,
     eingabe: &'a [u32],
     deckel: u64,
+    /// Die Endmarken des Modells (Fund 702).
+    halt: &'a [u32],
+}
+
+/// Besetzt `pod` für `epoche` und baut seinen Koordinator.
+fn podstand_bauen(
+    relais: SocketAddr,
+    ausweis: &Ausweis,
+    epoche: u64,
+    pod: &myl_types::relais::Podeintrag,
+    halt: &[u32],
+) -> Result<Podstand, String> {
+    // Erst wenn der Pod steht (Fund 649, zweiter Teil).
+    let bis = std::time::Instant::now() + BEREIT_FRIST;
+    while !pod_bereit(relais, ausweis, pod) && std::time::Instant::now() < bis {
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    // ⚑ Wer dann noch fehlt, wird aus der Reserve ersetzt (6.8).
+    let (mitglieder, vertreter) = besetzen(relais, ausweis, epoche, pod);
+    let weg = Arc::new(UeberDenKnoten::neu(relais, *ausweis, mitglieder.clone()));
+    let mut k = Coordinator::ueber_weg(pod.kennung, EpochId(epoche), weg)?;
+    k.vertreter_setzen(vertreter);
+    k.haltemarken_setzen(halt.to_vec());
+    Ok(Podstand {
+        epoche,
+        kennung: pod.kennung,
+        koordinator: k,
+        eingereicht: std::sync::atomic::AtomicBool::new(false),
+        adressen: mitglieder,
+    })
+}
+
+/// ⚑ **Neu besetzen und erben** (2026-11-17, Restpunkt 9 zu Fund 706): Der
+/// neue Koordinator übernimmt die abgeschlossenen Segmente des alten
+/// derselben Epoche und dessen Vermerk, ob schon eingereicht ist (sonst
+/// reichte er ein zweites Bündel derselben Epoche ein, das die Kette
+/// abweist). Unter einer Schreibsperre: Laufende Sitzungen des alten hängen
+/// vorher noch an, und zwei Fäden, die zugleich neu besetzen, erben
+/// nacheinander. Scheitert der Bau, bleibt der alte stehen, mit seinen
+/// Segmenten. 📌 Bis hierher wurde der Platz geleert, und alles, was der
+/// Pod in dieser Epoche schon gerechnet hatte, ging unvergütet verloren.
+fn neu_besetzen(
+    relais: SocketAddr,
+    ausweis: &Ausweis,
+    platz: &Platz,
+    epoche: u64,
+    pod: &myl_types::relais::Podeintrag,
+    halt: &[u32],
+) -> Result<(), String> {
+    let mut g = platz.write().map_err(|_| "Stand vergiftet")?;
+    let mut neu = podstand_bauen(relais, ausweis, epoche, pod, halt)?;
+    if let Some(alt) = g.as_ref().filter(|a| a.epoche == epoche && a.kennung == pod.kennung) {
+        erben(&mut neu, alt, pod.pod_index);
+    }
+    *g = Some(neu);
+    Ok(())
+}
+
+/// Segmente und Einreichvermerk von `alt` nach `neu` ([`neu_besetzen`]).
+fn erben(neu: &mut Podstand, alt: &Podstand, pod_index: u32) {
+    match neu.koordinator.segmente_erben(&alt.koordinator) {
+        Ok(zahl) => eprintln!("[myl-pod] Epoche {}, Pod {pod_index}: neu besetzt, {zahl} Segmente übernommen", neu.epoche),
+        Err(f) => eprintln!("[myl-pod] Epoche {}, Pod {pod_index}: neu besetzt, Segmente nicht übernommen: {f}", neu.epoche),
+    }
+    let eingereicht = alt.eingereicht.load(std::sync::atomic::Ordering::SeqCst);
+    neu.eingereicht.store(eingereicht, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Rechnet einen Auftrag einmal über `pod`: Token, letztes Segment, Epoche.
@@ -489,7 +677,7 @@ fn ueber_pod(
     pod: &myl_types::relais::Podeintrag,
     arbeit: Arbeit<'_>,
 ) -> Result<(Vec<u32>, SegmentId, u64), String> {
-    let Arbeit { sitzung, eingabe, deckel } = arbeit;
+    let Arbeit { sitzung, eingabe, deckel, halt } = arbeit;
     let passt = |g: &Option<Podstand>| g.as_ref().map(|s| (s.epoche, s.kennung)) == Some((epoche, pod.kennung));
     // Lesend, wenn der Pod schon steht; sonst schreibend besetzen und dann
     // lesend rechnen (eine Schreibsperre lässt sich nicht herabstufen).
@@ -503,17 +691,7 @@ fn ueber_pod(
         if passt(&g) {
             continue;
         }
-        // Erst wenn der Pod steht (Fund 649, zweiter Teil).
-        let bis = std::time::Instant::now() + BEREIT_FRIST;
-        while !pod_bereit(relais, ausweis, pod) && std::time::Instant::now() < bis {
-            std::thread::sleep(Duration::from_secs(2));
-        }
-        // ⚑ Wer dann noch fehlt, wird aus der Reserve ersetzt (6.8).
-        let (mitglieder, vertreter) = besetzen(relais, ausweis, epoche, pod);
-        let weg = Arc::new(UeberDenKnoten::neu(relais, *ausweis, mitglieder.clone()));
-        let mut k = Coordinator::ueber_weg(pod.kennung, EpochId(epoche), weg)?;
-        k.vertreter_setzen(vertreter);
-        *g = Some(Podstand { epoche, kennung: pod.kennung, koordinator: k, eingereicht: false, adressen: mitglieder });
+        *g = Some(podstand_bauen(relais, ausweis, epoche, pod, halt)?);
     };
     let s = g.as_ref().ok_or("kein Koordinator")?;
     let beginn = std::time::Instant::now();
@@ -539,9 +717,15 @@ impl Podwerk {
         Ok(Arc::clone(g.entry(pod).or_default()))
     }
 
-    /// Rechnet einen Auftrag einmal über den Pod, den die Sitzung zugelost
-    /// bekommt ([`paar_waehlen`]), und, hat er einen Zwilling, im
-    /// Hintergrund noch einmal über diesen.
+    /// Rechnet einen Auftrag über das Paar, das die Sitzung zugelost bekommt
+    /// ([`paar_waehlen`]).
+    ///
+    /// ⚑ **Beide Zwillinge zugleich, die erste Antwort geht hinaus**
+    /// (Whitepaper 6.4, Stufe 1 je Sitzung). Je Pod ein Faden mit dem
+    /// Koordinator dieses Pods; wer zuerst Token liefert, antwortet, der
+    /// andere rechnet zu Ende und hängt an. 📌 Bis dahin begann der Zwilling
+    /// erst nach der Antwort des ersten Pods: Er lag um einen Auftrag zurück,
+    /// und was beim Einreichen noch lief, fehlte in seinem Bündel.
     fn einmal(
         &self,
         bild: &Podbild,
@@ -551,36 +735,71 @@ impl Podwerk {
         deckel: u64,
     ) -> Result<(Vec<u32>, SegmentId, u64), String> {
         let (pod, zwilling) = paar_waehlen(bild, sitzung).ok_or("kein Pod in dieser Epoche")?;
-        let platz = self.platz(pod.pod_index)?;
-        let mut ergebnis = ueber_pod(self.relais, ausweis, &platz, bild.epoche, pod, Arbeit { sitzung, eingabe, deckel })?;
-        // ⚑ Kein Token **mitten in der Epoche**: Der Pod wird einmal neu
-        //   besetzt (ein Mitglied kann ausgefallen sein, 6.8) und rechnet
-        //   erneut. 📌 Nur in derselben Epoche: Ist sie inzwischen vorbei,
-        //   rechnet der Pod der neuen (Fund 649); der erste Einbau wartete
-        //   hier auf den alten Pod und verlor die Antwort.
-        let dieselbe = podbild(self.relais, ausweis).is_ok_and(|neu| neu.epoche == bild.epoche);
-        if ergebnis.0.is_empty() && dieselbe {
-            if let Ok(mut g) = platz.write() {
-                *g = None;
-            }
-            ergebnis = ueber_pod(self.relais, ausweis, &platz, bild.epoche, pod, Arbeit { sitzung, eingabe, deckel })?;
-        }
-        // ⚑ Stufe 1: derselbe Auftrag über den Zwilling, ohne die Antwort
-        //   aufzuhalten. Ein Faden je Auftrag; sie rechnen im Koordinator
-        //   des Zwillings nebeneinander, und weil das Bündel die Segmente
-        //   kanonisch ordnet, hängt seine Wurzel nicht an ihrem Takt.
-        if let Some(zwilling) = zwilling.cloned() {
-            let (relais, ausweis, stand, epoche) = (self.relais, *ausweis, self.platz(zwilling.pod_index)?, bild.epoche);
-            let eingabe = eingabe.to_vec();
-            let _ = std::thread::Builder::new().name("zwilling".into()).spawn(move || {
-                let arbeit = Arbeit { sitzung, eingabe: &eingabe, deckel };
-                if let Err(f) = ueber_pod(relais, &ausweis, &stand, epoche, &zwilling, arbeit) {
-                    eprintln!("[myl-pod] Zwilling (Pod {}): {f}", zwilling.pod_index);
+        let Some(zwilling) = zwilling else {
+            let arbeit = Arbeit { sitzung, eingabe, deckel, halt: &self.haltemarken };
+            return mit_neubesetzung(self.relais, ausweis, &self.platz(pod.pod_index)?, bild.epoche, pod, arbeit);
+        };
+        let (senden, empfangen) = std::sync::mpsc::channel();
+        for p in [pod, zwilling] {
+            let (relais, ausweis, platz, epoche, p) = (self.relais, *ausweis, self.platz(p.pod_index)?, bild.epoche, p.clone());
+            let (eingabe, halt, senden) = (eingabe.to_vec(), self.haltemarken.clone(), senden.clone());
+            let faden = std::thread::Builder::new().name(format!("pod-{}", p.pod_index)).spawn(move || {
+                let arbeit = Arbeit { sitzung, eingabe: &eingabe, deckel, halt: &halt };
+                let ergebnis = mit_neubesetzung(relais, &ausweis, &platz, epoche, &p, arbeit);
+                if let Err(f) = &ergebnis {
+                    eprintln!("[myl-pod] Pod {}: {f}", p.pod_index);
                 }
+                // Niemand hört mehr zu, wenn der andere schon geantwortet hat.
+                let _ = senden.send(ergebnis);
             });
+            if let Err(f) = faden {
+                eprintln!("[myl-pod] kein Faden für einen Pod: {f}");
+            }
         }
-        Ok(ergebnis)
+        drop(senden);
+        erste_antwort(empfangen)
     }
+}
+
+/// Die erste Antwort mit Token; kommt keine, die letzte ohne Fehler, sonst
+/// der letzte Fehler. Endet, sobald beide Seiten geantwortet haben.
+fn erste_antwort<T>(antworten: impl IntoIterator<Item = Result<(Vec<u32>, T, u64), String>>) -> Result<(Vec<u32>, T, u64), String> {
+    let mut bisher = Err("kein Pod antwortete".to_string());
+    for antwort in antworten {
+        if antwort.as_ref().is_ok_and(|a| !a.0.is_empty()) {
+            return antwort;
+        }
+        if bisher.is_err() || antwort.is_ok() {
+            bisher = antwort;
+        }
+    }
+    bisher
+}
+
+/// Rechnet einen Auftrag über `pod` und, kam mitten in der Epoche kein
+/// Token, nach neuer Besetzung noch einmal.
+///
+/// ⚑ Der Pod wird einmal neu besetzt (ein Mitglied kann ausgefallen sein,
+/// 6.8). 📌 Nur in derselben Epoche: Ist sie inzwischen vorbei, rechnet der
+/// Pod der neuen (Fund 649); der erste Einbau wartete hier auf den alten Pod
+/// und verlor die Antwort. Gilt für beide Zwillinge gleich. Der neue
+/// Koordinator erbt, was der alte schon abgeschlossen hat ([`neu_besetzen`]).
+fn mit_neubesetzung(
+    relais: SocketAddr,
+    ausweis: &Ausweis,
+    platz: &Platz,
+    epoche: u64,
+    pod: &myl_types::relais::Podeintrag,
+    arbeit: Arbeit<'_>,
+) -> Result<(Vec<u32>, SegmentId, u64), String> {
+    let ergebnis = ueber_pod(relais, ausweis, platz, epoche, pod, arbeit)?;
+    if !ergebnis.0.is_empty() || !podbild(relais, ausweis).is_ok_and(|neu| neu.epoche == epoche) {
+        return Ok(ergebnis);
+    }
+    if let Err(f) = neu_besetzen(relais, ausweis, platz, epoche, pod, arbeit.halt) {
+        eprintln!("[myl-pod] Epoche {epoche}, Pod {}: Neubesetzung gescheitert: {f}", pod.pod_index);
+    }
+    ueber_pod(relais, ausweis, platz, epoche, pod, arbeit)
 }
 
 impl Klartextwerk for Podwerk {
@@ -597,11 +816,22 @@ impl Klartextwerk for Podwerk {
         if eingabe.is_empty() {
             return abgelehnt("leerer Prompt");
         }
+        // ⚑ **Der Hoechstbetrag, jetzt wo die Token gezaehlt sind** (Fund
+        //   711): Kostet schon der Prompt mehr, wird nicht gerechnet, und die
+        //   Tuer erfaehrt es als eigene Antwort; sonst wird die Ausgabe so
+        //   gekuerzt, dass die Abrechnung den Betrag nicht uebersteigt. Vor
+        //   dem Ausweis und dem Pod, denn ein ungedeckter Auftrag soll nichts
+        //   kosten.
+        let prompt_token = eingabe.len() as u64;
+        let Some(im_rahmen) = auftrag.neue_token_im_rahmen(prompt_token) else {
+            eprintln!("[myl-pod] nicht gedeckt: {prompt_token} Prompt-Token, hoechstens {} Credits", auftrag.hoechstens);
+            return Inferenzantwort::Ungedeckt { sitzung, prompt_token };
+        };
         let ausweis = match self.ausweis.holen() {
             Ok(a) => a,
             Err(f) => return abgelehnt(&f),
         };
-        let deckel = u64::from(auftrag.max_token.min(self.deckel));
+        let deckel = u64::from(im_rahmen.min(self.deckel));
         let bild = match podbild(self.relais, &ausweis) {
             Ok(b) => b,
             Err(f) => return abgelehnt(&f),
@@ -633,8 +863,15 @@ impl Klartextwerk for Podwerk {
         if token.is_empty() {
             return abgelehnt("der Pod lieferte kein Token");
         }
-        let ausgabe: Vec<usize> = token.iter().map(|t| *t as usize).collect();
-        Inferenzantwort::Ergebnis { sitzung, text: self.wortschatz.decode(&ausgabe), token, segment, prompt_token: eingabe.len() as u64 }
+        // ⚑ Der Text ohne die Endmarke (Fund 702): Sie sagt, dass die Antwort
+        //   zu Ende ist, und gehört nicht zu ihr. Die Token behalten sie, denn
+        //   sie ist gerechnet und wird abgerechnet wie jedes andere.
+        let ende = match token.last() {
+            Some(t) if self.haltemarken.contains(t) => token.len() - 1,
+            _ => token.len(),
+        };
+        let ausgabe: Vec<usize> = token[..ende].iter().map(|t| *t as usize).collect();
+        Inferenzantwort::Ergebnis { sitzung, text: self.wortschatz.decode(&ausgabe), token, segment, prompt_token }
     }
 
     fn pipeline(&self) -> Hash {
@@ -653,6 +890,40 @@ impl Klartextwerk for Podwerk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⚑ **Der Rand vor dem Wechsel** (2026-11-18): ohne Messung das
+    /// Sechstel; mit Messung ein Dreißigstel, aber nie unter 30 s und nie über
+    /// das Sechstel. Gegenproben: Bei 60 ms je Block wäre ein Dreißigstel 3,6 s,
+    /// kürzer als das Gemessene; dort bleibt das Sechstel.
+    #[test]
+    fn der_rand_ist_ein_dreissigstel_und_nie_unter_dreissig_sekunden() {
+        assert_eq!(einreichen_ab(1800, None), 1500, "ohne Messung das Sechstel");
+        assert_eq!(einreichen_ab(1800, Some(600)), 1740, "600 ms: 60 Blöcke, 36 s");
+        assert_eq!(einreichen_ab(1800, Some(2_000)), 1740, "Testnetz: 60 Blöcke, 2 min");
+        assert_eq!(einreichen_ab(1800, Some(400)), 1725, "400 ms: 75 Blöcke für 30 s");
+        assert_eq!(einreichen_ab(1800, Some(60)), 1500, "60 ms: höchstens das Sechstel");
+        for ms in [1u64, 60, 100, 400, 500, 600, 1_000, 2_000, 10_000] {
+            let rand = 1800 - einreichen_ab(1800, Some(ms));
+            assert!((60..=300).contains(&rand), "{ms} ms: Rand {rand}");
+            assert!(rand * ms >= EINREICHEN_RAND_MS || rand == 300, "{ms} ms: Rand {rand} unter 30 s");
+        }
+        assert_eq!(einreichen_ab(1, Some(600)), 0, "eine Epoche aus einem Block");
+    }
+
+    /// Der Blocktakt misst über mindestens zwanzig Blöcke und beginnt neu,
+    /// wenn die Höhe fällt.
+    #[test]
+    fn der_blocktakt_misst_ueber_zwanzig_bloecke() {
+        let t0 = std::time::Instant::now();
+        let mut b = Blocktakt::default();
+        b.sehen(100, t0);
+        b.sehen(110, t0 + Duration::from_secs(6));
+        assert_eq!(b.ms_je_block(), None, "zehn Blöcke sind zu wenig");
+        b.sehen(130, t0 + Duration::from_secs(18));
+        assert_eq!(b.ms_je_block(), Some(600));
+        b.sehen(5, t0 + Duration::from_secs(20));
+        assert_eq!(b.ms_je_block(), None, "nach einem Neustart neu");
+    }
     use myl_types::relais::Podeintrag;
 
     fn bild(paare: &[(u32, Option<u32>)], epoche: u64) -> Podbild {
@@ -699,5 +970,29 @@ mod tests {
         let allein = bild(&[(0, None)], 7);
         assert_eq!(paar_waehlen(&allein, 5).map(|(p, z)| (p.pod_index, z.is_none())), Some((0, true)));
         assert!(paar_waehlen(&bild(&[], 7), 5).is_none());
+    }
+
+    /// ⚑ **Die erste Antwort mit Token geht hinaus**, gleich von welchem
+    /// Zwilling; ein Fehler oder eine leere Antwort davor hält sie nicht
+    /// auf. ⛔️ Gegenproben: Nach ihr wird nicht weiter gewartet; ohne Token
+    /// zählt die leere Antwort vor dem Fehler, und ohne jede Antwort ist es
+    /// ein Fehler.
+    #[test]
+    fn die_erste_antwort_mit_token_geht_hinaus() {
+        let mit = |t: u32| Ok((vec![t], (), 7u64));
+        let leer = || Ok((Vec::new(), (), 7u64));
+        let fehler = |f: &str| Err(f.to_string());
+        assert_eq!(erste_antwort([mit(1), mit(2)]), mit(1));
+        assert_eq!(erste_antwort([fehler("a"), mit(2)]), mit(2));
+        assert_eq!(erste_antwort([leer(), mit(2)]), mit(2));
+        // Nach der ersten mit Token liest niemand mehr.
+        let mut gelesen = 0;
+        let folge = [mit(1), mit(2), mit(3)].into_iter().inspect(|_| gelesen += 1);
+        assert_eq!(erste_antwort(folge), mit(1));
+        assert_eq!(gelesen, 1);
+        assert_eq!(erste_antwort([fehler("a"), leer()]), leer());
+        assert_eq!(erste_antwort([leer(), fehler("b")]), leer());
+        assert_eq!(erste_antwort([fehler("a"), fehler("b")]), fehler("b"));
+        assert!(erste_antwort(Vec::<Result<(Vec<u32>, (), u64), String>>::new()).is_err());
     }
 }

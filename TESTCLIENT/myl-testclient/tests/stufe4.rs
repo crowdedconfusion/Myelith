@@ -247,6 +247,7 @@ fn der_knoten_startet_seinen_shard_aus_der_kette() {
         konsensschluessel: konsensdatei(&ordner, ich),
         training: false,
         netzlast: ordner.join(myl_store::teilablage::NETZLAST_DATEI),
+        freigabe: Default::default(),
     });
     assert!(matches!(f.abgleichen(Some(auftrag.clone())), Ok(myl_node::shardfuehrung::Wechsel::Gestartet(_))));
     let bis = std::time::Instant::now() + std::time::Duration::from_secs(120);

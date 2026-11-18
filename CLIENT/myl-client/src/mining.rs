@@ -528,6 +528,31 @@ pub fn shardstart(programm: Option<PathBuf>, orte: &[PathBuf], modell: &str) -> 
     Ok(Shardstart { programm, artefakte, zusage: format!("{ebenen}:{EBENENZEIT_ANFANG_US}") })
 }
 
+/// ⚑ **Die Freigabe als Optionen des Knotens** (Fund 705, Festlegung des
+/// Projektinhabers vom 2026-11-16: das Programm waehlt die beste
+/// Ressourcenverteilung selbst, je nach Hardwarefreigabe). Kerne und der
+/// Freigabeplan der Rechenwerke, aus demselben Schaltplan wie die
+/// Kapazitaet des Klienten ([`crate::hardware::schaltplan`]): Ein Werk ist
+/// frei, wenn seine Kennung in der Freigabe steht. Der Knoten setzt beides
+/// fuer seinen Pruefer und gibt es jedem Shard weiter, der sich beim Start
+/// einmisst und einen Beschleuniger nur nimmt, wo er schneller ist.
+///
+/// 📌 Bis hierher bekam der Knoten beides nicht, und sein Shard nahm die
+/// ganze Maschine, gleich was die Mining-Seite freigab.
+pub fn freigabe_optionen(f: &Freigabe, werke: &[crate::hardware::Rechenwerk]) -> Vec<String> {
+    let (karten, wege) = crate::hardware::schaltplan(werke, |kennung| f.rechenwerke.iter().any(|r| r == kennung));
+    let plan = integer_llm_runtime::rechenwege::Freigabeplan {
+        wege: wege.into_iter().map(|(weg, an)| (weg.to_string(), an)).collect(),
+        karten,
+    };
+    let mut aus = Vec::new();
+    if f.kerne > 0 {
+        aus.extend(["--kerne".to_string(), f.kerne.to_string()]);
+    }
+    aus.extend(["--rechenwerke".to_string(), plan.als_text()]);
+    aus
+}
+
 /// **Startet den Knoten** mit der Freigabe.
 ///
 /// Prueft, legt ab, schreibt die Zusage und wartet, bis der Knoten
@@ -609,6 +634,9 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
     };
     if let Ok(s) = &shard {
         c.arg("--modellzusage").arg(&s.zusage).arg("--shard-programm").arg(&s.programm).arg("--artefakte").arg(&s.artefakte);
+        // ⚑ **Die Freigabe des Besitzers** (Fund 705): Kerne und Rechenwerke
+        //   fuer den Pruefer im Knoten und jeden seiner Shards.
+        c.args(freigabe_optionen(f, &crate::hardware::rechenwerke_gemerkt()));
     }
     c.arg("--podrelais").arg(&relais).arg("--podrelaisausweis").arg(daten.join(RELAISAUSWEIS));
     c.arg("--kette").arg(knotenordner.join("kette.dat"))
@@ -1119,6 +1147,45 @@ mod tests {
         assert!(pruefen(&Freigabe { kerne: 0, ..gut.clone() }, &hw).is_err());
         assert!(pruefen(&Freigabe { rechenwerke: vec!["gibtsnicht".into()], ..gut.clone() }, &hw).is_err());
         assert!(pruefen(&Freigabe { platte: "/gibt/es/nicht".into(), ..gut }, &hw).unwrap_err().contains("nicht da"));
+    }
+
+    /// ⚑ **Die Freigabe der Mining-Seite erreicht den Knoten** (Fund 705):
+    /// Die freigegebene Karte ist an, die andere aus, Metal ohne Freigabe aus,
+    /// und die Kerne stehen dabei. Gegenprobe im selben Zug: Ohne Kennung in
+    /// der Freigabe ist jedes Werk aus.
+    #[test]
+    fn die_freigabe_wird_zu_optionen_des_knotens() {
+        use crate::hardware::{Rechenwerk, Rueckseite};
+        let werk = |kennung: &str, r: Rueckseite, pci: Option<&str>| Rechenwerk {
+            rueckseite: Some(r),
+            pci: pci.map(str::to_string),
+            ..karte(kennung, kennung)
+        };
+        let werke = [
+            werk("gpu-apple", Rueckseite::Metal, None),
+            werk("pci-0000-01-00-0", Rueckseite::Cuda, Some("0000:01:00.0")),
+            werk("pci-0000-02-00-0", Rueckseite::Cuda, Some("0000:02:00.0")),
+        ];
+        let f = Freigabe {
+            platte: "/p".into(),
+            ordner: "m".into(),
+            volumen_gib: 10,
+            gewichte: false,
+            kerne: 6,
+            rechenwerke: vec!["pci-0000-01-00-0".into()],
+        };
+        assert_eq!(
+            freigabe_optionen(&f, &werke),
+            ["--kerne", "6", "--rechenwerke", "metal=aus,cuda=an,karte:0000:01:00.0=an,karte:0000:02:00.0=aus"]
+        );
+        let ohne = Freigabe { rechenwerke: vec![], kerne: 0, ..f.clone() };
+        assert_eq!(
+            freigabe_optionen(&ohne, &werke),
+            ["--rechenwerke", "metal=aus,cuda=an,karte:0000:01:00.0=aus,karte:0000:02:00.0=aus"]
+        );
+        // Der Knoten liest, was der Klient schreibt.
+        let text = &freigabe_optionen(&f, &werke)[3];
+        assert!(integer_llm_runtime::rechenwege::Freigabeplan::aus_text(text).is_ok(), "{text}");
     }
 
     fn karte(kennung: &str, name: &str) -> crate::hardware::Rechenwerk {

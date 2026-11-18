@@ -1,6 +1,6 @@
 # Sicherheitsaudit
 
-**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A31) am 2026-10-27, Saat und Unterschrift der Zeitprobe (A32) am 2026-10-28, der rotierende Erzeuger und die Prüfpunkte (A33 bis A40) am 2026-11-05, die Wahl des Tokens (A41) am selben Tag, die Kollusion beider Pods im Netz (A12) am 2026-11-06, die Lücke der Wechselbelege nach einer Ruhe der Finalität (A42) am 2026-11-07, der Durchgang vor dem Testnetz (A10, A12, A23 neu geprüft, A43 bis A45 neu) und seine Behebungen (A23, A43, A46) sowie der grosse Durchgang über die Eingänge des Knotens (A47 bis A50) am 2026-11-08
+**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A31) am 2026-10-27, Saat und Unterschrift der Zeitprobe (A32) am 2026-10-28, der rotierende Erzeuger und die Prüfpunkte (A33 bis A40) am 2026-11-05, die Wahl des Tokens (A41) am selben Tag, die Kollusion beider Pods im Netz (A12) am 2026-11-06, die Lücke der Wechselbelege nach einer Ruhe der Finalität (A42) am 2026-11-07, der Durchgang vor dem Testnetz (A10, A12, A23 neu geprüft, A43 bis A45 neu) und seine Behebungen (A23, A43, A46) sowie der grosse Durchgang über die Eingänge des Knotens (A47 bis A50) am 2026-11-08, die Funde an Vorlage, Tür und Prüfvolumen (A54 bis A57) am 2026-11-17, der Durchgang über Saat, Agentenschicht und Update (A51 bis A53) am 2026-11-18
 **Grundlage:** die Angreiferklassen aus Whitepaper Kap. 5.6 und 9.2, die
 Sicherheitsargumente aus Kap. 6.8 und Anhang B, sowie die Funde 41 bis 53
 dieses Projekts.
@@ -9,11 +9,21 @@ dieses Projekts.
 abgewehrt werden, welche gemessen offen sind und welche niemand geprüft
 hat. Es ist **kein externes Review** (K5, K9) und ersetzt keines.
 
-**Der wichtigste Satz vorweg:** Von den fünfzig Angriffsklassen
-unten (Stand 2026-11-08) sind **46 abgewehrt und belegt**, **drei offen mit
-gemessener oder benannter Lücke** (A9, A12, A44) und **eine
+**Der wichtigste Satz vorweg:** Von den 57 Angriffsklassen
+unten (Stand 2026-11-18) sind **53 abgewehrt und belegt**, **drei offen mit
+gemessener oder benannter Lücke** (A9, A12, A53) und **eine
 ungeprüft** (A13, die Krypto-Primitiven ohne externes Review). Keine der
 Lücken ist neu entdeckt worden, ohne dass sie hier steht.
+
+⚑ **Nachtrag vom 2026-11-18: Saat, Agentenschicht und Update (A51 bis
+A53), dazu die Funde vom Vortag (A54 bis A57).** Gelesen wurden die Flächen,
+die der Durchgang vom 2026-11-08 ausdrücklich ausgelassen hatte: die
+Schwellenkryptographie der Saat ganz, die Dateiwerkzeuge des Agenten, das
+Update des Klienten, die Signatur der Module, der Schlüsselspeicher des
+Wallets, die lokalen Endpunkte, dazu `cargo deny` über alle 32 Kisten gegen
+die RustSec-Datenbank vom 2026-11-17 (grün). Zwei Klassen sind am selben Tag
+geschlossen (A51, A52), eine ist gebaut und wird mit den Freigabeschlüsseln
+wirksam (A53). A44 ist seit dem 2026-11-15 geschlossen (gefaltete Belege).
 
 ⚑ **Nachtrag vom 2026-11-05: der rotierende Erzeuger, die Prüfpunkte und
 die Wege der Prüfung (A33 bis A40).** Seit die Kette einen Erzeuger je Slot
@@ -94,16 +104,23 @@ Kettenmigration.
 | A38 | **Zurückgehaltene Blöcke** | ✅ | Belegt im Netzlauf (2026-11-05): ein Erzeuger hielt jeden Block 3 s zurück; er verlor seine eigenen, kein Ehrlicher einen endgültigen |
 | A39 | **Eine falsche Uhr** | ✅ | Belegt im Netzlauf: Uhr +3 s, seine Blöcke wurden als künftig abgewiesen, bis ihr Slot begann; die Kette blieb einig. Die Uhr wirkt nur in der Annahmeregel, der Zustand rechnet nie mit ihr |
 | A40 | **Mehr als ein Drittel fällt aus** | ✅ | Belegt im Netzlauf: 12 von 28 still, die Finalität ruhte und kehrte nach fünf Epochen von selbst zurück, ohne Abzug am Einsatz (die Stillen ruhen über ihre Punkte) |
-| A41 | **Ein Pod wählt das Token nicht** | ✅ | Beim Lesen gefunden (2026-11-05): Die Spur band Aktivierungen und Tokens, nicht die Wahl; ein Pod, der an einer erzeugten Position nicht den Argmax nahm und danach ehrlich weiterrechnete, entging dem Nachrechnen, und nur ein ehrlicher Zwilling fand ihn. Geschlossen in NODE 0.113.0 (VERIFICATION 0.28.0): Die Kennung trägt die Prompt-Länge, gesetzt vom Koordinator der Tür; ab ihr prüfen Checker und Komitee die Wahl, belegt mit dem echten Modell. ⚠️ Tür und Pod zusammen können die Länge zu gross angeben |
+| A41 | **Ein Pod wählt das Token nicht** | ✅ | Beim Lesen gefunden (2026-11-05): Die Spur band Aktivierungen und Tokens, nicht die Wahl; ein Pod, der an einer erzeugten Position nicht den Argmax nahm und danach ehrlich weiterrechnete, entging dem Nachrechnen, und nur ein ehrlicher Zwilling fand ihn. Geschlossen in NODE 0.113.0 (VERIFICATION 0.28.0): Die Kennung trägt die Prompt-Länge, gesetzt vom Koordinator der Tür; ab ihr prüfen Checker und Komitee die Wahl, belegt mit dem echten Modell. ⚠️ Tür und Pod zusammen können die Länge zu gross angeben. ⚑ Eingeordnet (2026-11-18): Die Tür ist der eigene Knoten des Nutzers auf der Rückschleife (ein anderer Zuschnitt warnt beim Start); wer dort die Länge fälscht, betrügt den eigenen Nutzer. Was bleibt, ist Selbstzahlung in der Subventionsphase, und die ist durch A6 gedeckelt |
 | A42 | **Die Finalität ruht, und ein Knoten ohne Zustand kommt nie wieder hinein** | ✅ | Im Nachtlauf gefunden (2026-11-07): Ruht die Finalität zwei Epochen oder länger (ein Ausfall, oder mehr als ein Drittel des Einsatzes schweigt absichtlich), entsteht für sie kein Wechselbeleg, und der Satz danach ist nirgends gebunden. Ein zustandsloser Knoten und ein voller Einsteiger über ein Zertifikat nahmen danach keinen Anker mehr an, für immer. Geschlossen in NODE 0.115.0 durch eine Brücke: ein Zertifikat, das mehr als zwei Drittel des letzten bekannten Satzes tragen, alle Unterzeichner aus ihm, innerhalb der Vertrauensfrist; dieselbe Sicherheit wie ein Zertifikat dieses Satzes. Tests mit Gegenproben. ⛔️ Im Netz widerlegt für den Hauptfall (`kurz-verstummen`, 2026-11-07): Die Kette schliesst die Stillen während der Ruhe aus, der Satz schrumpft (28 auf 16 Mitglieder), und das erste Zertifikat danach tragen nur 57 % des Satzes vor der Lücke; die Brücke verlangt mehr als zwei Drittel. ⚑ Entschieden (2026-11-07): Eine niedrigere Schwelle wäre ein neuer Angriffsweg (eine Koalition mit mehr als einem Drittel unterschreibt auf einem eigenen Zweig, ohne doppelt zu stimmen); nach einer Ruhe mit Ausschluss ein Anker von außen (NODE 0.116.1, `--anker`; Tests mit Gegenproben; im Netz belegt in `kurz-anker`: Abzug am Anker 7 s nach dem Neustart, an der Spitze nach 18 s). ⚠️ Schwache Subjektivität: Der Anker muss aus einer vertrauenswürdigen Quelle kommen; ohne ihn bleibt ein solcher Knoten draußen |
 | A43 | **Langstreckenangriff auf den Einstieg über Wechselbelege** | ✅ | Beim Durchgang gefunden (2026-11-08): Der Einstieg über ein Zertifikat folgte den Belegen ab Genesis ohne Altersgrenze; mit den Schlüsseln von mehr als zwei Dritteln eines alten Satzes, deren Einsatz längst frei ist, ließe sich eine zweite Folge bauen. **Geschlossen** (NODE 0.117.0): Genesis und ein Anker tragen nur, solange sie nach der Uhr jünger als die Vertrauensfrist sind (Startzeit in der Stimmsatzdatei, Slot im Anker); danach hält ein Knoten ohne eigenen Stand mit einer klaren Meldung an. Mit einem Anker gibt es keinen Weg mehr ab Genesis, auch nicht, solange sein Beleg fehlt oder alle schweigen. Volle Knoten nennen einen frischen Anker unter `/anker`. ⚠️ Schwache Subjektivität bleibt: Der Anker muss aus vertrauenswürdiger Quelle kommen, am besten aus mehreren unabhängigen; eine falsch gehende Uhr beim Einsteiger verschiebt die Grenze. Das Alter ist in Proben belegt, ein Lauf über 112 Epochen wäre zu lang |
-| A44 | **Wechselbelege zu gross für eine Antwort** | ⚠️ | Beim Durchgang gefunden (2026-11-08): Ein Beleg trägt zwei ganze Sätze und zwei Zertifikate mit Unterzeichnerliste, rund 240 Byte je Stimmberechtigtem. **Das Wachstum ist geschlossen** (NODE 0.117.0): Belege fallen nach der Sperrfrist, mit A43 fragt niemand ältere nach; die eigene Folge beginnt beim ältesten eigenen, der Beleg eines Ankers bleibt. **Offen die Grösse des einzelnen Belegs:** ab rund 8 700 passt er nicht mehr in die halbe Antwort, ab rund 17 000 nicht mehr in eine ganze; dann kommt niemand mehr über Belege hinein. Für das Testnetz ohne Folge. Vor dem Hauptnetz zu entscheiden: Unterschied zum Vorgänger oder Belege in Stücken |
+| A44 | **Wechselbelege zu gross für eine Antwort** | ✅ | Beim Durchgang gefunden (2026-11-08): Ein Beleg trägt zwei ganze Sätze und zwei Zertifikate mit Unterzeichnerliste, rund 240 Byte je Stimmberechtigtem; ab rund 8 700 passte er nicht mehr in die halbe Antwort. Das Wachstum ist seit NODE 0.117.0 geschlossen (Belege fallen nach der Sperrfrist). **Geschlossen** (NODE 0.125.0, 2026-11-15): gefaltete Belegfolgen, jeder Satz als Verweis oder Änderung gegen einen Satz davor, Unterzeichner als Bitfeld; gemessen bei 10 000 Mitgliedern mit Änderung jedes Gewichts je Epoche unter einem Achtel; Deckel vor dem Entfalten (64 MiB). Im Netz belegt. Zur Wiedervorlage: Überspringen nach Tendermint (Lichtclient) |
 | A45 | **Ein gefälschter Beleg am Anker von außen** | ✅ | Beim Durchgang im eigenen Code des Vortags gefunden (2026-11-08, nie ausgeliefert): Der Anker legte nur Höhe und Block fest. Seine Unterschriften prüft niemand, und gerade sie binden die Sätze der nächsten Epochen an den Block; eine Gegenstelle konnte also einen Beleg mit richtigem Block und eigenen Sätzen liefern. Geschlossen in NODE 0.116.3: Der Anker nennt auch die Bindung. Gegenprobe im Test: mit dem alten Vergleich liegt die Fälschung, jetzt nicht |
 | A46 | **Eine erfundene Epoche hält einen Knoten an** | ✅ | Bei der Prüfung von A43 gefunden (2026-11-08): Die Vertrauensfrist las die Epoche aus dem Kopf eines noch ungeprüften Blocks aus dem Gossip, und ihr Anhalten ist endgültig. Eine einzige Nachricht beendete jeden vollen Knoten ausserhalb der Probekette; die Netzläufe fahren auf der Probekette, die von dieser Regel ausgenommen ist, und konnten es nicht zeigen. **Geschlossen** (NODE 0.117.0): Die Epoche des Netzes kommt aus der eigenen Höhenschranke und der Uhr, ohne fremde Angabe; dieselbe Regel gilt jetzt auch für den Knoten ohne Zustand. Tests mit Gegenproben |
 | A47 | **Falsches wird netzweit weitergereicht** | ✅ | Beim grossen Durchgang gefunden (2026-11-08): Die Netzschicht prüfte nur die Lesbarkeit und reichte jeden Block und jede Transaktion sofort weiter, auch ohne gültige Unterschrift; verworfene Nachrichten wurden nicht bewertet. Eine Flut traf jeden Knoten des Netzes, und der Puffer der Transaktionen wuchs ohne Grenze, je Stapel eine Rechenaufgabe bis zur Grenze der Laufzeit. **Geschlossen** (NETWORKING 0.25.0, NODE 0.118.0): Blöcke nach dem Beleg des Erzeugers, Transaktionen nach ihrer Unterschrift, Falsches zählt gegen den Absender, Puffer und Prüfungen gedeckelt. Tests mit Gegenproben |
 | A48 | **Anfragen ohne Drossel** | ✅ | Beim grossen Durchgang gefunden (2026-11-08): Nur Nachholen und Archiv gingen durch die Drossel. Eine Anfrage von wenigen Bytes konnte unbegrenzt oft zwei MiB Belege serialisieren, einen Verlauf von 64 MiB aufbauen oder Unterschriften prüfen lassen, in der Ereignisschleife. **Geschlossen** (NODE 0.118.0): eine eigene Art für alles, was Arbeit kostet; der Deckel einer Prüfpunktstimme steht vor ihrer Unterschrift, was je Gegenstelle gemerkt wird, geht mit ihr. Gemessen: die Zuteilung einer Epoche 2 ms bei 5 000 Minern |
 | A49 | **Eine Reserve hin und her schicken** | ✅ | Beim grossen Durchgang gefunden (2026-11-08): Eine Übernahme ist gegen die Kette geprüft, der Absender war nicht gebunden. Jede Gegenstelle konnte eine Reserve immer neu auf eine andere Position schicken und so das Einspringen verhindern. **Geschlossen** (NODE 0.119.0): höchstens ein Wechsel je Minute von eingetragenen Minern, alle zehn Minuten von anderen, und ein Miner verdrängt den Auftrag eines Fremden sofort (Probe `eine_uebernahme_haelt_ihre_pause`). Rest: Ein eingetragener Miner kann weiter stören; er zahlt den Mindesteinsatz je Kennung |
 | A50 | **Ein Beleg, an dem der Prüfer stirbt** | ✅ | Beim grossen Durchgang gefunden (2026-11-08): Der Beleg der Schiedsrunde kommt vom Angeklagten. Ein Pod, der sich auf einen Vektor falscher Länge festlegte, liess die Aufgabe jedes Prüfers an einer Panik sterben, niemand stimmte, und er entging dem Urteil. **Geschlossen** (VERIFICATION 0.29.0): bezeugt und in falscher Länge ist überführt. Probe gegen das echte Modell |
+| A51 | **Die Saat über zwei Zweige** | ✅ | Beim Durchgang gefunden (2026-11-18): Ein Austeiler leitete sein Polynom aus Netz, Epoche und Kennung ab, nicht aus der Sitzvergabe. Nach einem Zweigwechsel teilte ein ehrlicher Knoten dasselbe Polynom an andere Nummern aus; lässt ein Erzeuger auf einem Zweig eine Schlüsseleintragung weg, rutschen die Nummern, und ein Angreifer mit einem Viertel des Einsatzes (statt der Hälfte) bildet aus beiden Zweigen das Geheimnis jedes ehrlichen Austeilers, kennt also jede künftige Saat. **Geschlossen** (CONSENSUS 0.91.0, NODE 0.133.0, SHARED_TYPES 0.75.0): Ableitung aus dem Abdruck der Runde (wie RFC 6979: die Nonce bindet alle Eingaben), Chiffre aus dem Wert, Zwischenspeicher des Dienstes am Inhalt. Probe mit dem Angriff als Gegenprobe |
+| A52 | **Die Dateiwerkzeuge über einen getauschten Verweis** | ✅ | Beim Durchgang gefunden (2026-11-18): Die Dateiwerkzeuge des Agenten laufen ausserhalb der Sandbox, prüften den Pfad und öffneten danach mit `std::fs`. Ein Hintergrundprozess aus `run_command` tauscht im Fenster einen Ordner gegen einen Verweis nach draussen, und `read_file` oder `write_file` greift auf `~/.ssh` zu (CWE-367). **Geschlossen** (AGENT_LAYER 0.73.0): Öffnen Stück für Stück mit `openat` und `O_NOFOLLOW`, nur gewöhnliche Dateien. Harte Verweise nach draussen verweigert die Sandbox (geprobt). Unter Windows weiter `std::fs` |
+| A53 | **Ein Update aus einem übernommenen Repositorium** | ⚠️ | Beim Durchgang gefunden (2026-11-18): `--aktualisieren` bewegte den Klon auf den Stand von GitHub und baute ihn; wer den Zugang hatte, lieferte Code an jede Maschine. **Gebaut** (CLIENT 0.245.0): Die Spitze des neuen Stands muss eine Signatur eines Freigabeschlüssels tragen, aus der Liste des bisherigen Stands; Probe gegen echte Repositorien. ⚠️ **Wirksam erst mit dem ersten eingetragenen Schlüssel**; bis dahin prüft das Skript nicht und sagt es laut |
+| A54 | **Steuermarken im Inhalt** | ✅ | Gefunden 2026-11-17: Ein Werkzeugergebnis mit `<|im_end|>` und `<|im_start|>system` schrieb eine eigene Systemrunde in den Verlauf, an jedem Rahmen des Agenten vorbei. **Geschlossen** (SHARED_TYPES 0.74.0): jede Marke `<|Name|>` im Inhalt gebrochen; am echten Wortschatz geprüft |
+| A55 | **Ein Guthaben, mehrfach zugesagt** | ✅ | Gefunden 2026-11-17: Mehrere Sitzungen eines Inhabers bekamen an der Tür dasselbe Guthaben zugesagt; der Überhang war Rechenarbeit ohne Bezahlung. **Geschlossen** (GATEWAY 0.16.0): Vormerkung je Inhaber unter derselben Sperre, freigegeben beim Ende der Anfrage |
+| A56 | **Prüfvolumen ohne Deckel** | ✅ | Gefunden 2026-11-17: Ein Checker gab seine Positionen selbst an und nahm so den anderen ihren Anteil am Pool. **Geschlossen** (CONSENSUS 0.90.0): gedeckelt durch die Segmente des Bündels |
+| A57 | **Werkzeugaufrufe, die nicht angeboten wurden** | ✅ | Gefunden 2026-11-17: Die Tür gab jeden erkannten Werkzeugaufruf zurück, auch einen, den die Anfrage nicht angeboten hatte. **Geschlossen** (GATEWAY 0.16.0): nur angebotene Namen |
 | A25 | **Zwei Quoren ohne gemeinsamen Teilnehmer** | ✅ | **Fund 652** (2026-10-26) geschlossen: ein Gesamtgewicht über `u64` sättigte; Eigenschaftstest `quorumschnitt.rs` |
 
 ---
@@ -507,6 +524,24 @@ Angreifer mit einem großen Provider bekommt viele /24. Die Metadaten
 liegen in `myl-types/node_metadata.rs`; es fehlt eine vertrauenswürdige
 Quelle für die Zuordnung.
 
+⚑ **Nachgesehen am 2026-11-18, mit Blick auf die Literatur** (Heilman et
+al., USENIX Security 2015; Marcus et al., 2018, für Kademlia in Ethereum;
+Tran et al., IEEE S&P 2020, für Angreifer auf AS-Ebene). Zwei weitere
+Stellen gehören zur Restbedingung: **Die Routingtabelle nimmt jede
+Gegenstelle auf**, auch eine eingehende (Adressen aus `identify`, dazu
+Kademlia beim Verbinden), und aus ihr wählt der Knoten seine ausgehenden
+Verbindungen. **Die ausgehenden Verbindungen kennen keine Vielfalt** je
+Netzgruppe. Der Weg aus der Literatur: Aufnahme in die Tabelle erst nach
+einer eigenen, ausgehenden Verbindung (Fühler, wie Bitcoin `feeler` und
+Ethereum seit Marcus et al.), ausgehend höchstens wenige je /16 oder AS
+(Pod-Mitglieder ausgenommen), Anker über Neustarts, und eine AS-Zuordnung
+als Datei des Betreibers (wie `asmap` in Bitcoin Core). ⚠️ **Auf einer
+Maschine nicht zu belegen:** Alle Knoten der Netzläufe liegen in einem
+privaten Netz, das die Regel ausnehmen muss; gebaut wird es mit den
+Maschinen nach dem Miettag. Für ein Testnetz mit bekannten Betreibern und
+Ankern ist die Folge gering: Ein umzingelter Knoten sieht weniger, er
+nimmt aber keinen falschen endgültigen Block an (Finalität mit Zertifikat).
+
 ### A10 Latenzwerte fälschen (eingeordnet, siehe Tabelle)
 
 **War:** `myl_types::LatencyAttest` trug ein `signature`-Feld, das **im
@@ -798,7 +833,17 @@ Nach Schadenshebel, nicht nach Aufwand:
    für den Teil, an den alle gedacht hatten, und verdeckte den Teil, der
    schon heute messbar war. **Eine als offen abgelegte Frage wird nicht
    mehr gestellt**, und genau deshalb lag der Fund über Monate offen.
-4. **A13 externes Review.** Vor dem Mainnet, nicht danach.
+4. **A13 externes Review.** Vor dem Mainnet, nicht danach. Seit dem
+   2026-11-18 mit einem Beispiel dafür, warum: A51 lag in selbst
+   geschriebener Schwellenkryptographie, die nur stichprobenartig gelesen
+   war, und gerade eine Ableitung ohne alle Eingaben ist der Fehler, den
+   ein Review mit Erfahrung in DKG zuerst sucht.
+5. **A53 Freigabeschlüssel eintragen.** Gebaut ist die Prüfung; schützen
+   tut sie ab dem ersten Schlüssel in der Liste. Billig, und bis dahin
+   reicht der Zugang zu einem Konto bei GitHub, um Code auf jede
+   aktualisierende Maschine zu bringen.
+6. **A9 mit mehreren Maschinen** (Abschnitt 3): Fühler, Vielfalt der
+   ausgehenden Verbindungen, Anker, AS-Zuordnung. Vor einem offenen Netz.
 
 **Was ausdrücklich nicht auf dieser Liste steht:** ein weiterer
 Testdurchlauf derselben Art. Die neun abgewehrten Klassen sind belegt;

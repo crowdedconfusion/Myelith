@@ -1,0 +1,10 @@
+# Freigabeschluessel: wessen Signatur ein neuer Stand tragen muss, damit
+# `--aktualisieren` ihn einspielt (`freigabe.sh`, `installieren-windows.ps1`).
+#
+# Format von ssh-keygen (ALLOWED SIGNERS), eine Zeile je Schluessel:
+#   freigabe-a namespaces="git" ssh-ed25519 AAAA...
+#   freigabe-b namespaces="git" ssh-ed25519 AAAA...
+#
+# Gilt immer die Liste des Stands, der schon da ist; ein neuer Schluessel
+# kommt also nur mit der Signatur eines bisherigen herein. Solange hier
+# kein Schluessel steht, wird nicht geprueft, und das Skript sagt es.

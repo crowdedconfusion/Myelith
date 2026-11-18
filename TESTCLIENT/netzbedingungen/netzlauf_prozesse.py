@@ -397,7 +397,9 @@ zahl = {"verbunden": 0, "abgewiesen": 0, "muell": 0, "stoss": 0}
 def verbinde(z):
     s = socket.socket(); s.settimeout(1.5)
     try:
-        s.connect((z, port)); zahl["verbunden"] += 1; return s
+        # Ein Ziel ist eine Adresse (dann der feste Port) oder Adresse:Port.
+        h, _, p = z.partition(":")
+        s.connect((h, int(p) if p else port)); zahl["verbunden"] += 1; return s
     except OSError:
         zahl["abgewiesen"] += 1; s.close(); return None
 print("gestartet gegen " + " ".join(ziele), flush=True)

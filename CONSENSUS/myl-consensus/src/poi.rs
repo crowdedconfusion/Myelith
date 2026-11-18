@@ -540,6 +540,7 @@ mod tests {
             segmente: 1,
             ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         }
     }
 
@@ -852,6 +853,7 @@ mod tests {
             segmente: 1,
             ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         };
         reg.submit(&b2, &m2, &miner(10), EpochId(3)).expect("pod 2");
 
@@ -900,6 +902,7 @@ mod tests {
                     segmente: 1,
                     ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
                     vertreter: Vec::new(),
+                    sitzungen: Vec::new(),
                 };
                 reg.submit(&b, &m, &miner(0), EpochId(3)).expect("submit");
             }
@@ -936,6 +939,7 @@ mod tests {
                 segmente: 1,
                 ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
                 vertreter: Vec::new(),
+                sitzungen: Vec::new(),
             };
             reg.submit(&b, &m, &miner(0), EpochId(3)).expect("submit");
         }

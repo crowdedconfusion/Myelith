@@ -138,6 +138,7 @@ fn der_weg_einer_anfrage_raeumt_hinter_sich_auf() {
             prompt_versiegelt: Vec::new(),
             max_token: 2,
             pipeline,
+            hoechstens: u64::MAX,
         };
         // ⚑ **`Klartextwerk::rechne` und nicht der Koordinator.** Das
         // ist der Weg, den der Shard-Dienst nimmt, nachdem er

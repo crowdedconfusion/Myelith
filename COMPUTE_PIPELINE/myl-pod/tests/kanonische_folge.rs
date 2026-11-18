@@ -92,4 +92,28 @@ fn die_buendelwurzel_haengt_nicht_an_der_reihenfolge_der_sitzungen() {
     sortiert.sort_unstable();
     assert_eq!(folge, sortiert);
     assert_eq!(folge.first().map(|f| f.0), Some(7));
+
+    // ⚑ **Je Sitzung ein Eintrag** (Stufe 1 je Sitzung): gueltig, in beiden
+    //   gleich, und zusammen so viele Segmente wie das Buendel.
+    assert_eq!(ba.sitzungen.iter().map(|s| s.sitzung).collect::<Vec<_>>(), vec![7, 300]);
+    assert_eq!(myl_types::sitzungsliste_pruefen(&ba.sitzungen, ba.segmente), Ok(()));
+    assert_eq!(ba.sitzungen, bb.sitzungen, "die Liste haengt an der Reihenfolge");
+    let gleich = myl_types::sitzungen_abgleichen(&ba.sitzungen, &bb.sitzungen);
+    assert_eq!((gleich.gleich, gleich.abweichend), (ba.segmente, (0, 0)));
+    assert!(gleich.nur_a.is_empty() && gleich.nur_b.is_empty());
+    // Eine dritte Sitzung nur bei a: Die beiden ersten bleiben gleich, die
+    // dritte fehlt b, und ihre Stelle ist das letzte Segment der Folge.
+    let _ = a.run_prompt(9, &ids, 2);
+    let bc = a.build_poi_bundle().expect("Buendel a mit drei Sitzungen");
+    assert_ne!(bc.ausgabenwurzel, bb.ausgabenwurzel, "als Ganzes verschieden");
+    let teils = myl_types::sitzungen_abgleichen(&bc.sitzungen, &bb.sitzungen);
+    assert_eq!(teils.gleich, bb.segmente);
+    assert!(teils.nur_b.is_empty());
+    let je = bc.segmente - bb.segmente;
+    let neun = bc.sitzungen.iter().position(|s| s.sitzung == 9).expect("Sitzung 9");
+    let davor: u32 = bc.sitzungen[..neun].iter().map(|s| s.segmente).sum();
+    assert_eq!(teils.nur_a, vec![myl_types::FehlendeSitzung { sitzung: 9, segmente: je, stelle: davor + je - 1 }]);
+    // Die Stelle zeigt in der kanonischen Folge auf ein Segment der Sitzung 9.
+    let kc: Vec<_> = a.kanonisch().iter().map(|c| c.id).collect();
+    assert_eq!(myl_types::sitzung_und_position(&kc[(davor + je - 1) as usize]).0, 9);
 }

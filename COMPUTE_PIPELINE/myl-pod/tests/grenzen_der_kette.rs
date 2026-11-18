@@ -63,6 +63,7 @@ fn die_inferenz_rechnet_mit_den_grenzen_der_kette_dasselbe() {
         prompt_versiegelt: Vec::new(),
         max_token: 4,
         pipeline,
+        hoechstens: u64::MAX,
     };
     let token = |a: Inferenzantwort| match a {
         Inferenzantwort::Ergebnis { token, .. } => token,
@@ -100,6 +101,7 @@ fn zwillinge_mit_verschiedenem_schnitt_haben_dieselbe_ausgabenwurzel() {
             prompt_versiegelt: Vec::new(),
             max_token: 3,
             pipeline,
+            hoechstens: u64::MAX,
         };
         assert!(matches!(werk.rechne(&auftrag, prompt), Inferenzantwort::Ergebnis { .. }));
         werk.buendelinhalt().expect("Bündel")
@@ -178,4 +180,52 @@ fn die_zeitprobe_rechnet_und_laesst_nichts_zurueck() {
         faden.join().expect("Faden").expect("bedient");
         assert_eq!(ueber_die_tuer, a, "die Tür rechnet dieselbe Probe");
     });
+}
+
+/// ⚑ **Der Pod haelt den Hoechstbetrag des Auftrags ein** (Fund 711): Er
+/// zaehlt die Prompt-Token, kuerzt die Ausgabe so weit, dass der Preis den
+/// Betrag nicht uebersteigt, und rechnet nicht, wenn schon der Prompt mehr
+/// kostet. Gegenproben im selben Lauf: ohne Grenze der volle Deckel, und
+/// der gekuerzte Lauf ist der Anfang des vollen.
+#[test]
+fn der_pod_haelt_den_hoechstbetrag_ein() {
+    use myl_types::inferenzauftrag::preis;
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let pipeline = Hash([7u8; 32]);
+    let prompt: &[u8] = b"Die Hauptstadt von Frankreich ist";
+    let werk = Pipelinewerk::laden_mit_grenzen(&dir, PodId::new([0xAA; 32]), EpochId(0), pipeline, 4, None).expect("laedt");
+    let auftrag = |hoechstens: u64| Inferenzauftrag {
+        sitzung: 1,
+        bindung: Anfragebindung::neu(1, prompt, EpochId(0)),
+        prompt_versiegelt: Vec::new(),
+        max_token: 4,
+        pipeline,
+        hoechstens,
+    };
+    let (voll, p) = match werk.rechne(&auftrag(u64::MAX), prompt) {
+        Inferenzantwort::Ergebnis { token, prompt_token, .. } => (token, prompt_token),
+        andere => panic!("keine Rechnung: {andere:?}"),
+    };
+    assert_eq!(voll.len(), 4, "Gegenprobe: ohne Grenze der volle Deckel");
+    assert!(p > 1);
+
+    // Genug fuer den Prompt und zwei Token.
+    let h = preis(p, 2);
+    match werk.rechne(&auftrag(h), prompt) {
+        Inferenzantwort::Ergebnis { token, prompt_token, .. } => {
+            assert_eq!(prompt_token, p);
+            assert_eq!(token, voll[..2].to_vec(), "gekuerzt, aber derselbe Anfang");
+            assert_eq!(preis(prompt_token, token.len() as u64), h, "genau der Betrag");
+        }
+        andere => panic!("gedeckt und nicht gerechnet: {andere:?}"),
+    }
+    // Ein Credit weniger als der Prompt mit einem Token.
+    assert_eq!(
+        werk.rechne(&auftrag(p - 1), prompt),
+        Inferenzantwort::Ungedeckt { sitzung: 1, prompt_token: p },
+        "schon der Prompt kostet mehr und wurde trotzdem gerechnet"
+    );
 }

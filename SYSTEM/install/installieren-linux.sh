@@ -228,6 +228,9 @@ if [ "$AKTUALISIEREN" = ja ]; then
     exit 1
   fi
   git fetch --quiet origin
+  # ⚑ Erst die Herkunft, dann das Einspielen (`freigabe.sh`).
+  . "$WURZEL/SYSTEM/install/freigabe.sh"
+  freigabe_pruefen FETCH_HEAD || exit 1
   if ! git merge --ff-only --quiet FETCH_HEAD 2>/dev/null; then
     echo "   Der Klon laesst sich nicht vorwaerts bewegen." >&2
     echo "   Wahrscheinlich liegen eigene Aenderungen darauf. Erst sichern, dann noch einmal." >&2

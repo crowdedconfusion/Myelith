@@ -173,6 +173,7 @@ fn auftrag() -> Inferenzauftrag {
         prompt_versiegelt: b"versiegelter prompt".to_vec(),
         max_token: 16,
         pipeline: Hash::sha256(b"kalter-pfad"),
+        hoechstens: u64::MAX,
     }
 }
 

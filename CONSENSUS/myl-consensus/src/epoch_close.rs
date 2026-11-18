@@ -395,6 +395,7 @@ mod tests {
                 segmente: 1,
                 ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
                 vertreter: Vec::new(),
+                sitzungen: Vec::new(),
             };
             reg.submit(&bundle, &m, &miner(0), EpochId(epoch))
                 .expect("submit");

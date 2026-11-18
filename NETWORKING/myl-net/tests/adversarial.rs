@@ -94,6 +94,7 @@ fn gueltiges_bundle() -> PoIBundle {
         segmente: 1,
         ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
         vertreter: Vec::new(),
+        sitzungen: Vec::new(),
     }
 }
 
@@ -237,13 +238,14 @@ fn vergiftete_atteste_werden_abgelehnt() {
 fn verstuemmelte_nachrichten_stuerzen_nicht_ab() {
     let mut rng = Rng::neu(0xC0FF_EE42);
     // Je Vorlage, wie viele Bytes am Ende unberührt bleiben: beim Bündel die
-    // Länge der Vertreterliste (vier Bytes, seit dem 2026-10-28 am Ende);
-    // überschrieben ergäbe sie fast nie eine passende Länge, und der Test
-    // käme an die Felder davor nicht heran.
+    // Längen der Vertreterliste (seit dem 2026-10-28) und der Liste der
+    // Sitzungen (seit dem 2026-11-16), je vier Bytes am Ende; überschrieben
+    // ergäben sie fast nie eine passende Länge, und der Test käme an die
+    // Felder davor nicht heran.
     let vorlagen: Vec<(GossipTopic, Vec<u8>, usize)> = vec![
         (GossipTopic::Challenges, borsh::to_vec(&gueltige_challenge()).unwrap(), 0),
         (GossipTopic::LatencyAttests, borsh::to_vec(&gueltiges_attest()).unwrap(), 0),
-        (GossipTopic::PoiBundles, borsh::to_vec(&gueltiges_bundle()).unwrap(), 4),
+        (GossipTopic::PoiBundles, borsh::to_vec(&gueltiges_bundle()).unwrap(), 8),
     ];
 
     // **Je Topic gezählt, nicht in einer Summe.** Eine Gesamtquote kann
@@ -278,10 +280,11 @@ fn verstuemmelte_nachrichten_stuerzen_nicht_ab() {
 ///
 /// Die Moduldoku von `validation.rs` nannte das eine „vollständige
 /// Borsh-Strukturprüfung gegen den `myl-types`-Typ". Das klingt nach
-/// einem Filter und ist keiner: `PoIBundle` besteht bis auf die
-/// Vertreterliste am Ende (seit dem 2026-10-28) aus Feldern fester Länge,
-/// und **jede** Bytefolge der richtigen Länge mit leerer Liste ist ein
-/// gültiges `PoIBundle`. Der Fuzzer bestätigt es mit 2 000 von 2 000.
+/// einem Filter und ist keiner: `PoIBundle` besteht bis auf die beiden
+/// Listen am Ende (Vertreter seit dem 2026-10-28, Sitzungen seit dem
+/// 2026-11-16) aus Feldern fester Länge, und **jede** Bytefolge der
+/// richtigen Länge mit leeren Listen ist ein gültiges `PoIBundle`. Der
+/// Fuzzer bestätigt es mit 2 000 von 2 000.
 ///
 /// Bei `Challenge` ist es dasselbe, nur mit zwei Ungleichungen davor,
 /// die zufällige Bytes praktisch immer erfüllen. Nur `LatencyAttest`
@@ -301,9 +304,9 @@ fn fuer_feste_typen_ist_die_borsh_pruefung_eine_laengenpruefung() {
 
     let mut angenommen = 0usize;
     for _ in 0..2_000 {
-        // Zufall bis auf die Länge der Vertreterliste, die null bleibt.
+        // Zufall bis auf die Längen der beiden Listen, die null bleiben.
         let mut roh = rng.bytes(laenge);
-        roh[laenge - 4..].fill(0);
+        roh[laenge - 8..].fill(0);
         if validate_payload(GossipTopic::PoiBundles, &roh).is_ok() {
             angenommen += 1;
         }

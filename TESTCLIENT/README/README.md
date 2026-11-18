@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.69.8
-> **Datum:** 2026-11-15
+> **Version:** 0.75.0
+> **Datum:** 2026-11-16
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,159 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.75.0 (2026-11-17): Der Auftragslauf mit Lügner und Störer
+
+- `auftragslauf.py --luegner`: Der letzte Miner sagt 1 µs je Ebene bei sechs
+  Ebenen zu; er rechnet richtig, aber weit langsamer als angesagt. Verlangt
+  ist, dass die Kette ihn sperrt, sobald er auf einer Position stand, und
+  keinen anderen; ist er am Ende der Aufträge noch nicht gesperrt, wartet der
+  Lauf bis zu drei Epochen. Sechs Ebenen, weil eine einzelne unter der
+  Zugabe der Zeitprobe bleibt (Fund 655).
+- `auftragslauf.py --stoerer`: der Störer des Netzlaufs gegen die Netzports
+  aller Knoten und die Tür. Dafür nimmt das Störerskript Ziele auch als
+  `Adresse:Port` (`netzlauf_prozesse.py`); der Netzlauf bleibt bei Adressen.
+- Der Bericht zählt je Auftrag die Aufrufe von `run_command` und nennt die
+  Sandbox-Zeile des Agenten; der Auftrag `rabatt` bittet am Ende, die Tests
+  mit `python3 test_rabatt.py` laufen zu lassen.
+
+### v0.74.1 (2026-11-17): Der Nachkauf über einen echten Knoten mit gemessener Runde
+
+- `bezahlen`: Der Nachkauf nennt eine gemessene Runde von 100 Credits, also
+  kauft er vier Runden Vorrat (400); vor der ersten gemessenen Runde kauft der
+  Klient seit `myl-client` 0.142.1 nur die eine.
+
+### v0.74.0 (2026-11-17): Prompt und Ausgabe werden abgebucht (Fund 711)
+
+- Die Abrechnungsproben (`gesamtlauf`, `zwei_prozesse`,
+  `tuer_bis_rechenwerk`) erwarten `myl_types::inferenzauftrag::preis`, Prompt
+  und Ausgabe; der Gesamtlauf prüft zusätzlich, dass der Prompt etwas kostet.
+- Das Spiegelwerk in `tuer_bis_rechenwerk` hält die Zusage der Tür ein wie
+  ein Pod. `einzellimit_und_restbudget_greifen_vor_dem_rechnen`: Kostet schon
+  der Prompt mehr als Einzellimit oder Restbudget, kommt 402 und nichts wird
+  gerechnet; Gegenprobe: Ein Rest, der den Prompt und ein Token deckt, wird
+  gerechnet und gekürzt.
+- Der Auftragslauf eröffnet Sitzungen mit 400 000 Credits (Einzellimit
+  40 000); ein Auftrag brauchte in den Läufen bis rund 38 000, eine Runde bis
+  rund 10 000.
+- 303 Proben grün.
+
+### v0.73.1 (2026-11-16): Das Bündel des Gesamtlaufs trägt das neue Feld (Fund 706)
+
+- `tests/gesamtlauf.rs` baut sein PoI-Bündel von Hand; es bekommt die leere
+  Liste der Sitzungen (SHARED_TYPES 0.72.0). Ein Bündel ohne Liste wird wie
+  zuvor als Ganzes verglichen, am Lauf ändert sich nichts.
+
+### v0.73.0 (2026-11-16): Nachkauf über einen echten Knoten, der Auftragslauf kauft je Runde nach (Fund 707)
+
+- **`tests/bezahlen.rs`**: Ein Wallet mit MYL und ohne Credits eröffnet eine
+  Sitzung; `Nachkaeufer::vor_der_runde` (CLIENT 0.240.0) fragt den Knoten nach
+  dem Stand, verbrennt für vier Runden zu 100 Credits und wartet, bis die
+  Kette sie gutschreibt (400 Credits, kein zweiter Kauf danach).
+  Gegenproben: Ein Wallet, das nicht Inhaber ist, bekommt keinen Nachkauf;
+  sind 950 von 1 000 Credits des Budgets über die Tür ausgegeben, wird nichts
+  verbrannt.
+- **`auftragslauf.py --vorrat`** (Vorgabe 4, `0` schaltet ab): Der Agent
+  läuft mit `--nachkauf zahler`, der Klient kauft vor jeder Runde selbst
+  nach. Je Auftrag stehen Zahl, Summe und Epochen der Nachkäufe im Verlauf.
+- 📌 **Fund 710, `tests/netzlauf.rs`: Der Lügner muss einen messbaren Bereich
+  haben, eine Position allein reicht nicht.** Er bekam den Bereich (0, 1);
+  fünf Mitglieder maßen seine 2 048 Positionen in 1,28 bis 1,71 s, unter der
+  Zugabe von 2 s, also bestanden, und der Lauf wartete bis Höhe 9 000 auf eine
+  Meldung, die nach der Regel nie kommt. An der Obergrenze der Zeitprobe ist
+  die Schranke absolut (rund 1 ms je Token über der Frist), und eine Ebene des
+  Probemodells rechnet im Testbau 0,37 ms je Token. Der Lauf geht jetzt Epoche
+  um Epoche weiter, bis der Bereich des Lügners fünf Ebenen fasst
+  (`LUEGNER_MESSBAR_AB`, rund das Doppelte der Schranke), höchstens bis
+  Epoche 6; sonst fällt Stolperstein 1 sichtbar aus. ⚠️ Das ändert nur die
+  Probe. Dass ein Miner mit sehr kleinem Bereich jede Zeit ansagen kann,
+  solange er unter rund 1 ms je Token rechnet, ist die bekannte Folge der
+  festen Zugabe (Fund 655) und bleibt vor dem Genesis nachzumessen.
+
+### v0.72.0 (2026-11-16): Die Tür rechnet in der Vorlage
+
+- `tuer_bis_rechenwerk`: Das Rechenwerk sieht einen Chat jetzt in ChatML statt
+  als `user: …` (Fund 181, GATEWAY 0.13.0). Die Harness-Proben mit dem
+  echten 0,6B bleiben grün.
+
+### v0.71.0 (2026-11-16): Der Auftragslauf gibt nur die CPU frei
+
+- **`auftragslauf.py --rechenwerke`** (Vorgabe `metal=aus,cuda=aus,rocm=aus`),
+  an jeden Miner weitergegeben (NODE 0.126.0). Alle Shards des Laufs teilen
+  sich eine Maschine und eine GPU. Die Einmessung misst jeden allein und
+  wählte am 35B Metal ab 64 Eingaben; im Pod verlören dann alle, weil sich
+  die Stufen an der einen GPU anstellen (vier Shards in einem Prozess: CPU
+  61,5 s, Metal 80,6 s für 3 563 Prompt-Token). Der Lauf gibt deshalb nur die
+  CPU frei, wie es ein Besitzer dieser Maschine täte.
+- `Shardkonfig` in `tests/netzlauf.rs` und `tests/pod_ueber_knoten.rs` mit
+  dem neuen Feld `freigabe` (die Vorgabe: die ganze Maschine).
+
+### v0.70.0 (2026-11-15): Der Auftragslauf, bezahlte Agentenarbeit über Zwillingspods mit dem 35B
+
+- ⚑ **`netzbedingungen/auftragslauf.py`**: eine Kette im Testnetz mit dem
+  35B in vier Bit (`--netz test-int4`) auf einer Maschine, ohne
+  Namensräume und ohne root, jeder Knoten ein Prozess mit eigenen Ports:
+  ein Torknoten (Erzeuger, Tür, Relaisleitung, Ortsdienst) und dreizehn
+  Miner, also zwei Pods zu je vier Positionen als Zwillingspaar; vier
+  Validatoren zu gleichen Teilen im Stimmsatz. Ein Nutzer mit Wallet bekommt
+  Probegeld, kauft Credits und eröffnet je Auftrag eine Sitzung mit
+  Vollmacht; der Agent arbeitet mit `myl sitzung --tuer` (CLIENT 0.237.0)
+  in einem eigenen Ordner. Gemessen werden je Auftrag das Ergebnis, Runden,
+  Token und Dauer, je Epoche Zwillinge, Credit-Preis und Auszahlungen, am
+  Ende ein gemeinsamer Prüfpunkt aller Knoten. Befunde werden gesammelt.
+  `--kurz` fährt die Mechanik mit einem Auftrag, `--bis HH:MM` begrenzt den
+  langen Lauf.
+- ⚑ **`netzbedingungen/auftragsmappe.py`**: acht Aufträge aus dem Alltag
+  eines kleinen Betriebs, je mit Dateien, einer Aufgabe in Alltagssprache und
+  einer Prüfung in Merkmalen: Nebenkostenabrechnung prüfen (ein nicht
+  umlagefähiger Posten), Rechnungseingang erfassen (Doppel und Rechenfehler),
+  Störungsbericht aus einem Zugriffsprotokoll, Fehler im Staffelrabatt
+  beheben (Tests laufen danach), Aufgabenliste aus Besprechungsnotizen,
+  Dienstreise aus einer Liste von Zugverbindungen, Antwort auf eine Beschwerde nach Richtlinie,
+  Nachbestellung aus dem Lagerbestand. Die Sollwerte rechnet die Mappe aus
+  ihren eigenen Daten; die Selbstprobe verlangt, dass jede Prüfung einen
+  leeren Ordner verneint.
+- **`examples/probegeld.rs`**: Im Testnetz prägt die Kette nichts, und ein
+  Wallet ohne Miner kommt an kein Test-MYL; das Beispiel überweist aus den
+  Probekonten (Schlüssel öffentlich ableitbar) über die Relaisleitung, mit
+  einer Reserve je Konto für den Probehahn der Knoten. Nur für Probeläufe.
+  `probegeld <relais> <ausweis> <konto> stand` zeigt den Kontostand der
+  Relaisleitung samt Credits und Betreiber (die Beobachtung nennt nur MYL);
+  der Treiber liest damit die Credits des Zahlers vor und nach jedem Auftrag.
+- **Der erste lange Lauf** (Nacht zum 2026-11-16, Slot 800 ms, elf Epochen,
+  acht Aufträge in 3,7 h): zwei Aufträge ganz gelöst (Staffelrabatt,
+  Aufgabenliste), drei zum größeren Teil, drei gescheitert (Türfrist, Deckel
+  je Runde, Rechnung); 21 von 39 Merkmalen. Ein gemeinsamer Prüfpunkt aller
+  14 Knoten am Ende. Gefunden: Fund 706 (ehrliche Zwillinge am Wechsel
+  uneinig, sieben von acht Epochen), Fund 707 (Credits verfallen nach einer
+  Epoche, die Tür prüft das Guthaben nicht), Fund 708 (keine Abrechnung der
+  Tür kam je in die Kette, NODE 0.125.1), Fund 709 (Neurechnung auf altem
+  Zustand, vier echte Abweichungen zwischen Zwillingen, COMPUTE_PIPELINE
+  0.66.0); dazu tote Rechnung im Pod nach Aufgabe der Tür und „max
+  sub-streams reached“ an den Wechseln.
+- 📌 **Zwei Prüfungen der Mappe waren falsch** und werteten richtige Lösungen
+  als rot: Der Staffelrabatt startete die Tests mit `python3 -I`, das den
+  Ordner aus dem Suchpfad nimmt (jetzt isoliert mit dem Ordner ausdrücklich
+  im Pfad); die Aufgabenliste wertete „Kaffeemaschine“ unter „Nicht
+  übernommen“ als Aufgabe (jetzt nach Abschnitt und Verneinung). Gegenproben:
+  der ursprüngliche Code bleibt rot, eine Kaffeemaschine als Tabellenzeile
+  mit Aufgabe ebenso.
+- 📌 **`harness_bis_modell` erwartete `finish_reason: stop`**, auch wenn die
+  Antwort den Deckel von acht Token füllte; seit GATEWAY 0.12.0 meldet die
+  Tür dann richtig `length`. Beide Stellen (die Anfrage von Hand und das
+  Harness) erwarten jetzt `length`, die erste dazu acht Token.
+- 📌 **Drei Fehler des Treibers, im Lauf gefunden:** `--bis` als Text mit der
+  Uhrzeit verglichen (der erste lange Lauf ließ alle Aufträge liegen, jetzt
+  ein Zeitpunkt, eine Uhrzeit vor jetzt meint den nächsten Tag), die
+  Portprobe ohne `SO_REUSEADDR` (Nachlauf eines beendeten Laufs galt als
+  belegt), die Einigkeit über Aufnahmen statt über Prüfpunkte.
+- 📌 **Was die ersten kurzen Läufe fanden**, alle an Nähten, die mit vier
+  Token je Probefrage am 0,6B unsichtbar waren: Fund 702 (kein Halt an der
+  Endmarke, COMPUTE_PIPELINE 0.66.0), Fund 703 (16 Token je Antwort, NODE
+  0.125.1), Fund 704 (das 35B rechnete in keinem Pod, INTEGER_LLM 0.152.1),
+  Fund 705 (Shards und Prüfer mit dem Referenzweg, COMPUTE_PIPELINE 0.66.0,
+  NODE 0.125.1), dazu der Chatweg der Tür ohne Vorlage (Fund 181, offen;
+  neu `/v1/completions`, GATEWAY 0.12.0).
 
 ### v0.69.8 (2026-11-15): Der Koordinator ohne Sammelfenster
 

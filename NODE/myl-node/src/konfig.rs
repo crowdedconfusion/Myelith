@@ -309,6 +309,15 @@ pub struct KnotenKonfig {
     pub shard: Option<Shardkonfig>,
 }
 
+/// ⚑ **Der Name, den die Tür für das Netzmodell nennt** (2026-11-16): ohne
+/// `--modell` das Artefakt des Netzes. 📌 Bis hierher war die Vorgabe
+/// `sparrow-0.6b-int8`, gleich welches Netz: Im Testnetz mit dem 35B nannte
+/// `/v1/models` das 0,6B, und der Klient hätte nach diesem Namen die kleine
+/// Werkzeugkiste gewählt.
+pub fn modellname_fuer(netz: &crate::netz::Netz, angabe: Option<&str>) -> String {
+    angabe.map(str::to_string).unwrap_or_else(|| netz.artefakt.to_string())
+}
+
 /// Wie der Knoten seinen Shard aus der Kette startet (P7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shardkonfig {
@@ -318,6 +327,51 @@ pub struct Shardkonfig {
     pub artefakte: PathBuf,
     /// Mit Trainingshälfte.
     pub training: bool,
+    /// ⚑ **Was der Besitzer an Rechenwerk freigibt** (Fund 705).
+    pub freigabe: Rechenfreigabe,
+}
+
+/// ⚑ **Die Freigabe der Rechenwerke** (Fund 705, Festlegung des
+/// Projektinhabers vom 2026-11-16: das Programm wählt die beste
+/// Ressourcenverteilung selbst, je nach Hardwarefreigabe). Kerne und der
+/// Freigabeplan der Rechenwerke, wie der Klient sie aus der Mining-Freigabe
+/// übersetzt (`--kerne`, `--rechenwerke`). Der Knoten setzt beides für den
+/// eigenen Prozess (den Prüfer) und gibt es jedem Shard weiter. `None` heißt:
+/// die ganze Maschine.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rechenfreigabe {
+    /// Höchstens so viele Kerne.
+    pub kerne: Option<usize>,
+    /// Welche Rechenwege und Karten an oder aus sind.
+    pub rechenwerke: Option<integer_llm_runtime::rechenwege::Freigabeplan>,
+}
+
+impl Rechenfreigabe {
+    /// **Setzt die Freigabe für diesen Prozess** und sagt je Schalter, was
+    /// geschah.
+    pub fn anwenden(&self) -> Vec<String> {
+        let mut aus = Vec::new();
+        if let Some(n) = self.kerne {
+            integer_llm_runtime::kapazitaet::kerne_setzen(n);
+            aus.push(format!("höchstens {n} Kerne"));
+        }
+        if let Some(plan) = &self.rechenwerke {
+            aus.extend(plan.anwenden());
+        }
+        aus
+    }
+
+    /// Die Optionen, mit denen `myl-shard` dieselbe Freigabe bekommt.
+    pub fn als_optionen(&self) -> Vec<String> {
+        let mut aus = Vec::new();
+        if let Some(n) = self.kerne {
+            aus.extend(["--kerne".to_string(), n.to_string()]);
+        }
+        if let Some(plan) = &self.rechenwerke {
+            aus.extend(["--rechenwerke".to_string(), plan.als_text()]);
+        }
+        aus
+    }
 }
 
 /// Fehler der Konfiguration.
@@ -522,6 +576,17 @@ impl KnotenKonfig {
 
 #[cfg(test)]
 mod tests {
+
+    /// ⚑ **Ohne `--modell` nennt die Tür das Modell ihres Netzes**
+    /// (2026-11-16); eine Angabe gilt. Gegenprobe: Mit der alten Vorgabe
+    /// nannte das Testnetz das 0,6B.
+    #[test]
+    fn die_tuer_nennt_das_modell_ihres_netzes() {
+        assert_eq!(modellname_fuer(&crate::netz::TESTNETZ_INT4, None), "raven-35b-a3b-int4");
+        assert_eq!(modellname_fuer(&crate::netz::PROBEKETTE, None), "sparrow-0.6b-int8");
+        assert_eq!(modellname_fuer(&crate::netz::TESTNETZ_INT4, Some("eigenes")), "eigenes");
+    }
+
     /// ⚑ **Die Kette wird standardmäßig geschrieben** (Fund 122).
     ///
     /// Bis zum 2026-09-02 stand hier `None`, ein Knoten ohne

@@ -52,6 +52,14 @@ pub struct KVCache {
     index_bloecke: Vec<Vec<i16>>,
     index_breite: usize,
     index_verdichtung: usize,
+    /// **Bis zu welcher Position Token durch alle Ebenen dieses Speichers
+    /// gelaufen sind** (Fund 704), fortgeschrieben von
+    /// [`KVCache::durchgelaufen`].
+    ///
+    /// 📌 Eine Zustandsschicht legt nichts in `k` ab; ihr Kontext steht im
+    /// Zustand, und der zaehlt keine Positionen. Ein Bereich, dessen erste
+    /// Ebene eine Zustandsschicht ist, hatte deshalb die Laenge null.
+    durch: usize,
 }
 
 impl KVCache {
@@ -79,7 +87,15 @@ impl KVCache {
             index_bloecke: vec![Vec::new(); ebenen],
             index_breite: 0,
             index_verdichtung: 0,
+            durch: 0,
         }
+    }
+
+    /// **Die Position `position` ist durch alle Ebenen dieses Speichers
+    /// gelaufen.** Wer einen Bereich rechnet, ruft das nach der letzten
+    /// Ebene; die Laenge waechst nur.
+    pub fn durchgelaufen(&mut self, position: usize) {
+        self.durch = self.durch.max(position + 1);
     }
 
     /// Das Fach einer Ebene fuer die Indexschluessel.
@@ -270,6 +286,7 @@ impl KVCache {
             f.truncate(wirklich.saturating_mul(bv));
         }
         self.index_kuerzen(wirklich);
+        self.durch = self.durch.min(wirklich);
         wirklich
     }
 
@@ -304,6 +321,7 @@ impl KVCache {
             f.truncate(laenge.saturating_mul(bv));
         }
         self.index_kuerzen(laenge);
+        self.durch = laenge;
     }
 
     /// Ob ein rekurrenter Zustand mitgefuehrt wird.
@@ -336,9 +354,19 @@ impl KVCache {
         self.zustand.as_mut()
     }
 
-    /// Wie viele Positionen in der ersten Ebene und im ersten Kopf stehen.
+    /// **Wie viele Positionen im Speicher stehen**: die meisten in einem
+    /// Fach, mindestens so viele, wie durch alle Ebenen gelaufen sind.
+    ///
+    /// 📌 **Fund 704 (2026-11-15): Bis hierher zaehlte nur das erste Fach**,
+    /// also die erste Ebene des Bereichs. Beim hybriden 35B ist sie oft eine
+    /// Zustandsschicht, deren Fach leer bleibt: Die Laenge war null, und ein
+    /// Shard wies jede Position hinter dem ersten Stapel als „hinter dem Ende
+    /// des KV-Speichers“ ab. Das 35B rechnete so in keinem Pod; alle
+    /// Pod-Proben rechnen am 0,6B ohne Zustandsschichten. Gefunden im
+    /// Auftragslauf (TESTCLIENT 0.70.0).
     pub fn laenge(&self) -> usize {
-        if self.k.is_empty() { 0 } else { self.positionen(0) }
+        let faecher = (0..self.k.len()).map(|f| self.positionen(f)).max().unwrap_or(0);
+        faecher.max(self.durch)
     }
 
     /// Wie viele Bytes Keys und Values belegen.
@@ -371,6 +399,29 @@ mod tests {
     /// Die Vorbereitung ueberschreibt die Position hinter dem gemeinsamen
     /// Anfang ohnehin. Wer den Speicher anders kuerzt, etwa beim
     /// Verdichten eines Gespraechs, verlaesst sich aber auf die Grenze.
+    /// ⚑ **Fund 704: Ohne Fach zaehlt, was durchgelaufen ist.** Ein Bereich,
+    /// dessen erste Ebene nichts in `k` ablegt (eine Zustandsschicht), hat die
+    /// Laenge der Positionen, die durch ihn liefen, und auch die einer
+    /// spaeteren Ebene mit Fach. Gegenprobe: ohne `durchgelaufen` und ohne
+    /// beschriebenes Fach bleibt sie null.
+    #[test]
+    fn die_laenge_haengt_nicht_an_der_ersten_ebene() {
+        let mut cache = KVCache::for_range(0, 4, 2);
+        assert_eq!(cache.laenge(), 0);
+        for pos in 0..5 {
+            cache.durchgelaufen(pos);
+        }
+        assert_eq!(cache.laenge(), 5, "durchgelaufen, ohne Fach");
+        // Eine spaetere Ebene (3) mit Fach, die erste (0) leer.
+        let mut zweiter = KVCache::for_range(0, 4, 2);
+        for pos in 0..7 {
+            zweiter.write(3, 0, pos, &[1], &[1]);
+        }
+        assert_eq!(zweiter.laenge(), 7, "das laengste Fach zaehlt, nicht das erste");
+        assert_eq!(cache.kuerzen(2), 2);
+        assert_eq!(cache.laenge(), 2, "kuerzen zieht die Zaehlung mit");
+    }
+
     #[test]
     fn kuerzen_laesst_genau_die_vorderen_positionen_stehen() {
         let mut cache = KVCache::for_range(2, 4, 3);

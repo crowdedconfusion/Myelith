@@ -52,6 +52,7 @@ pub mod http;
 pub mod oai;
 pub mod takt;
 pub mod tuer;
+pub mod werkzeuge;
 // ⚑ **Die Vollmacht wohnt seit dem 2026-09-03 in `myl-types`**, weil die
 // Kette sie prüfen muss: Ein Harness hält einen Bearer und keinen
 // Schlüssel, also kann nur die Vollmacht eine Abbuchung autorisieren,

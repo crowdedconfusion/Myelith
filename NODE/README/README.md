@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.125.0
-> **Datum:** 2026-11-15
+> **Version:** 0.133.1
+> **Datum:** 2026-11-18
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,232 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.133.1 (2026-11-18): Die Proben von `kette.rs` und `knoten.rs` in eigenen Dateien
+
+- **Kein Verhalten geändert.** Das Probenmodul `tests` von `kette.rs`
+  (5 596 Zeilen, fast die Hälfte der Datei) liegt jetzt in `kette/tests.rs`,
+  die sieben Probenmodule am Ende von `knoten.rs` (810 Zeilen) unter
+  `knoten/`. Sie bleiben Kindmodule und sehen dieselben Namen. Verschoben
+  mit einem Skript, das nur außerhalb mehrzeiliger Zeichenketten ausrückt;
+  gegen das Original Zeile für Zeile verglichen (nur die Einrückung
+  anders, eine Zeile in einer Zeichenkette unverändert), dieselbe Zahl an
+  Proben. `kette.rs` hat damit 6 253 statt 11 848 Zeilen, `knoten.rs` 9 200
+  statt 10 003. In den verschobenen Kommentaren sind vier Gedankenstriche
+  durch Doppelpunkt, Punkt, Klammer und Komma ersetzt.
+
+### v0.133.0 (2026-11-18): Der Saatdienst teilt je Runde aus (Fund A51)
+
+- ⛔️ **Das Polynom kommt aus `saat::ableitungskontext`** (CONSENSUS 0.91.0),
+  nicht mehr aus dem öffentlichen Kontext allein. Nach einem Zweigwechsel
+  mit anderer Sitzvergabe ist es ein unabhängiges Polynom.
+- **Die Zwischenspeicher des Dienstes hängen am Inhalt.** Die Prüfung einer
+  Austeilung gilt je (Epoche, Austeiler, Abdruck aus Bindung, Chiffren an
+  den eigenen Sitzen und deren Nummern); 📌 vorher je (Epoche, Austeiler),
+  und nach einem Zweigwechsel galt ein Ergebnis vom anderen Zweig. Das
+  hätte eine unnötige Beschwerde auslösen können, und auf die hin legt ein
+  ehrlicher Austeiler einen Wert offen. Die eigenen Anteile gelten nur für
+  den Schlüssel, aus dem sie gebildet sind (Abdruck des Saatschlüssels).
+- Probe `nach_einem_zweigwechsel_wird_neu_geprueft`; Gegenprobe am Code: mit
+  dem Schlüssel (Epoche, Austeiler) allein bleibt die Beschwerde aus.
+
+### v0.132.0 (2026-11-17): Der Credit-Preis sieht die gekauften Credits als vTFE (Fund 714)
+
+- 📌 **Fund 714:** `preis_auslastung` verglich die in der Epoche gekauften
+  Credits mit der Pod-Kapazität in vTFE-Einheiten (3,6 Mrd. je Epoche, rund
+  eine Million Einheiten je Segment). Ein Credit ist ein Vorwärtspass, also
+  ein TFE; die Nachfrage aus Käufen erschien eine Million Mal zu klein, und
+  der Preis folgte nur der bestätigten Arbeit.
+- ⚑ **`nachgefragte_vtfe`** rechnet die Käufe in vTFE-Einheiten um
+  (`myl_tokenomics::VTFE_UNITS_PER_TFE`). Entscheidung des Projektinhabers vom
+  2026-11-17: Umgerechnet wird beim Vergleich und nicht am Credit, damit ein
+  Credit ein Pass bleibt und sein Preis ein ganzer Kleinstbetrag. Whitepaper
+  5.4 (nachgefragte vTFE durch Kapazität) stimmt damit.
+- ⚠️ **Konsensregel.** Der Credit-Preis einer Epoche folgt jetzt auch den
+  Käufen; wer in einer Epoche mehr Pässe kauft, als die Pods rechnen, hebt
+  ihn um bis zu rund 22 Prozent.
+- Proben: `die_gekauften_credits_heben_den_preis` kauft jetzt die volle
+  Kapazität in Pässen (Preis steigt) und als Gegenprobe die halbe und keine
+  (Preis fällt); mit der alten Zeile wird sie rot.
+  `ein_gekaufter_credit_sind_eine_million_vtfe_einheiten` neu. 526 Proben
+  grün, dazu die 303 des Testklienten.
+
+### v0.131.0 (2026-11-17): Der Knoten bucht Prompt und Ausgabe ab (Fund 711)
+
+- ⚑ **Ein Vorwärtspass, ein Credit** (Entscheidung des Projektinhabers vom
+  2026-11-17): Der Rechenweg bucht `myl_types::inferenzauftrag::preis` ab,
+  Prompt und Ausgabe, so wie der Pod sie als vTFE beansprucht. Bis hierher
+  stand dort `neue_token.max(1)`: Ein Agent mit langem Kontext zahlte rund
+  ein Fünfundzwanzigstel seiner Rechenarbeit.
+- **Nie über der Zusage der Tür.** Der Rechenweg gibt sie dem Shard im
+  Auftrag mit (`Inferenzauftrag.hoechstens`), und die Abbuchung wird darauf
+  geklammert: Ein Shard, der falsch zählt, geht zu Lasten des Betreibers,
+  nicht des Nutzers.
+- Antwortet der Shard **`Ungedeckt`**, gibt der Rechenweg
+  `Rechenfehler::Ungedeckt` weiter und bucht nichts ab; die Protokollzeile
+  einer Inferenzantwort nennt den Fall.
+- Belege: alle 525 Proben grün, darunter die Abrechnungsproben des
+  Testklienten mit dem neuen Preis.
+
+### v0.130.0 (2026-11-16): Ein Zwillingspaar wird je Sitzung abgerechnet (Fund 706)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-16** (Whitepaper 6.4,
+  Stufe 1): Was beide Zwillinge gleich bezeugen, wird am Epochenwechsel
+  sofort vergütet; was abweicht, wird über den Differenzbeweis angefochten;
+  was einem der beiden fehlt, wird nachgerechnet und dann bezahlt.
+  📌 Vorher zahlte eine einzige Anfrage, die ein Zwilling nicht mehr in sein
+  Bündel bekam, beiden Pods für die ganze Epoche nichts. ⚑ Zwei Abweichungen
+  vom Whitepaper: Die Einheit des Vergleichs ist die Sitzung (eine Runde
+  einer Anfrage), nicht das Segment, und Stufe 2 zieht Fehlendes immer,
+  nicht nur per Los.
+- **Die Regel in `nach_zwillingen`:** Sind zwei Bündel eines Paars als
+  Ganzes einig, bleibt alles wie zuvor. Sonst, wenn beide eine gültige Liste
+  ihrer Sitzungen tragen (SHARED_TYPES 0.72.0), wird je Sitzung verglichen:
+  - gleich (Länge und Wurzel): jedem Pod sofort sein Anteil nach
+    `anteil_je_paar`, die bezeugten vTFE im Verhältnis der Segmente, halbiert
+    wie bei jedem Paar;
+  - abweichend: beiden Pods als Vorbehalt bis zum Schiedsurteil, der Weg des
+    Differenzbeweises bleibt unverändert;
+  - fehlt sie dem Zwilling: als Vorbehalt mit einem Pflichtauftrag
+    (CONSENSUS 0.89.0), höchstens `PFLICHTAUFTRAEGE_JE_PAAR` je Paar und
+    Epoche, die größten zuerst, abwechselnd je Seite (`pflicht_waehlen`);
+    was darüber hinaus fehlt, bleibt unvergütet.
+  Fehlt das Bündel des Zwillings ganz, gilt jede Sitzung des anderen als
+  fehlend. Gleiche Listen bei verschiedener Wurzel über alles werden als
+  Ganzes behandelt, also als uneinig.
+- **Die Ziehung nimmt Pflichtstellen immer mit:** `stichproben_ziehen` legt
+  zu den gelosten Stellen das letzte Segment jeder Pflichtsitzung, und der
+  Auftrag trägt Sitzung und Länge. Ein Checker rechnet einen solchen Auftrag
+  nur nach, wenn der Verlauf genau diese Sitzung in ihrer ganzen Länge ist
+  (`verlauf_erhalten`); sonst legt er nichts fest, der Auftrag bleibt
+  unvollständig und gibt den Vorbehalt nicht frei.
+- **Am nächsten Wechsel** gehen freigegebene Vorbehalte als vTFE in die
+  Zuschreibung ihrer Miner ein (`vorbehalte_faellig`); gesperrte bleiben bis
+  zur Sperrfrist stehen und verfallen dann.
+- ⚠️ **Was bleibt:**
+  - Ein Netz aus einem einzigen Paar, in dem jeder Miner in einem Pod sitzt
+    (zwölf Miner), hat keinen Checker: Kein Pflichtauftrag entsteht, und was
+    einem Zwilling fehlt, verfällt. Die Probe braucht deshalb vierzehn Miner.
+  - Ein Zwilling kann Wurzeln oder Liste des anderen aus der Kette
+    abschreiben; das fängt weiter nur die geloste Stichprobe der Stufe 2.
+  - Die Zahl der nachgerechneten Positionen nennt der Checker selbst; zwei
+    Checker müssen darin einig sein, mehr bindet sie nicht.
+  - Ein Pod ohne Antwort seines Zwillings bekommt Arbeit, die niemand
+    bestellt hat, zum halben Satz bezahlt, wenn sie wirklich gerechnet ist
+    und die Nachrechnung trägt: höchstens vier Sitzungen je Epoche.
+- Proben `ein_paar_wird_je_sitzung_abgerechnet` (gleich, abweichend,
+  fehlend, ohne Zwilling, ohne Liste),
+  `pflichtauftraege_werden_immer_gezogen_und_gebunden` und über die ganze
+  Kette `eine_fehlende_sitzung_wird_nachgerechnet_und_dann_bezahlt`: zwei
+  Pods, dem einen fehlt eine Sitzung; das Gleiche wird am ersten Wechsel
+  bezahlt, die Checker decken die fehlende einig und ganz auf, der zweite
+  Wechsel zahlt den Vorbehalt, ein Folger kommt auf dieselbe Wurzel.
+  ⛔️ Gegenprobe: Decken sie zwei von drei Positionen auf, bleibt der
+  Vorbehalt gesperrt, und kein Miner bekommt mehr als die Probeprägung.
+
+### v0.129.0 (2026-11-16): Der Knoten beantwortet die Frage nach einer Sitzung (Fund 707)
+
+- **`Relaisfrage::Sitzung`** (SHARED_TYPES 0.71.0): Der Knoten antwortet aus
+  seiner Kette mit `knoten::sitzungsstand`, eine unbekannte Sitzung bekommt
+  „Sitzung unbekannt“. Der Klient kauft danach vor einer Runde Credits nach
+  (CLIENT 0.240.0).
+- ⚑ **Zwei Zahlen für die Credits**: die geltenden (Verfall nicht vor dieser
+  Epoche) und die **haltbaren** (Verfall nicht vor der nächsten). Eine Runde
+  wird abgerechnet, wenn sie fertig ist; fällt der Wechsel in sie, zählt nur,
+  was ihn überlebt. Dazu die Blöcke bis zum Wechsel, damit der Klient weiß,
+  wie nah er ist.
+- Probe `der_sitzungsstand_trennt_geltende_und_haltbare_credits` (Credits mit
+  Verfall vor, in und nach der Epoche; Abstand zum Wechsel am ersten und
+  letzten Block; unbekannte Sitzung).
+
+### v0.128.1 (2026-11-16): Die Tür nennt das Modell ihres Netzes
+
+- 📌 **Ohne `--modell` nannte die Tür `sparrow-0.6b-int8`**, gleich welches
+  Netz: Im Testnetz mit dem 35B stand in `/v1/models` das 0,6B, ein Harness
+  sah den falschen Namen, und der Klient hätte nach ihm die kleine
+  Werkzeugkiste gewählt (AGENT_LAYER 0.69.0). Gefunden beim Nachtrag zum
+  Auftragslauf, der `--modell` nicht setzt. Jetzt ist die Vorgabe das Artefakt
+  des Netzes (`konfig::modellname_fuer`, `netz.artefakt`); eine Angabe gilt.
+- Probe `die_tuer_nennt_das_modell_ihres_netzes` (Testnetz, Probekette,
+  Angabe).
+
+### v0.128.0 (2026-11-16): Die Abschrift der Tür kennt Guthaben und offene Abrechnungen (Fund 707)
+
+- **`Kontraktabschrift`** führt mit jedem Stand der Kette die nicht
+  verfallenen Credits je Inhaber einer Sitzung und die **Vormerkungen**: jede
+  Abrechnung dieser Tür (Sitzung, Nummer, Betrag, Epoche), bis die Kette eine
+  Nummer dieser Sitzung gleich oder höher kennt (angenommen oder überholt)
+  oder bis sie älter ist als die Gültigkeit der Credits. `guthaben` gibt der
+  Tür das Guthaben laut Kette abzüglich der Vormerkungen (GATEWAY 0.14.0).
+- **`Ortsweg::mit_abschrift`**: Der Rechenweg merkt jede Abrechnung vor, bevor
+  er sie verbreitet; `main.rs` verdrahtet es.
+- Probe `das_guthaben_rechnet_vorgemerkte_abrechnungen_ab` (verfallene Credits
+  zählen nicht, eine Vormerkung zieht ab, eine erledigte nicht doppelt;
+  Gegenprobe: ohne den Abzug rot). Die Vorrichtung `zwei_kontrakte` gibt
+  ihren Inhabern Guthaben.
+- 📌 **Eine Probe hing 40 Minuten**: `eine_lange_anfrage_haelt_die_tuer_nicht_auf`
+  wartete ohne Frist darauf, dass gerechnet wird; die Tür lehnte aber richtig
+  ab, weil der Inhaber in der Probekette keine Credits hatte. Die Probe wartet
+  jetzt höchstens 30 s und sagt dann, warum.
+
+### v0.127.0 (2026-11-16): Jedes Netz nennt die Vorlage seines Modells
+
+- ⚑ **Fund 181** (Festlegung des Projektinhabers vom 2026-11-16): `Netz`
+  trägt `vorlage` als Protokollgröße (`probe`: ChatML; `test-int4`: ChatML
+  mit Denkblock, Familie `qwen3_5-moe-hybrid`). `Ortsweg::mit_vorlage` gibt
+  sie der Tür, die Chats darin setzt (GATEWAY 0.13.0). Zwei Türen desselben
+  Netzes setzen damit denselben Prompt, und ein Klient kann ihn aus seinen
+  Nachrichten nachrechnen.
+
+### v0.126.0 (2026-11-16): Der Knoten gibt die Freigabe des Besitzers an Prüfer und Shard weiter
+
+- ⚑ **Fund 705 weitergeführt** (Festlegung des Projektinhabers vom
+  2026-11-16: die beste Ressourcenverteilung je nach Hardwarefreigabe).
+- **`--kerne <n>` und `--rechenwerke <plan>`**, gelesen in
+  `konfig::Rechenfreigabe` (Feld `freigabe` der `Shardkonfig`). Der Knoten
+  wendet die Freigabe für seinen eigenen Prozess an, denn dort rechnet der
+  Prüfer, und gibt sie jedem `myl-shard` als Optionen mit. 📌 Bis hierher
+  bekam der Shard weder Kerne noch Rechenwerke und nahm die ganze Maschine,
+  gleich was die Mining-Seite freigab; `myl-shard --kerne` gab es, aber
+  niemand rief es.
+- **Merkmale wie bei den Shards**: `default = ["cpu-simd", "cuda", "rocm"]`,
+  auf macOS `metal`.
+- Proben: `die_freigabe_erreicht_den_shard` (ein Stellvertreter schreibt
+  seine Optionen mit; Gegenprobe: ohne die Weitergabe rot) und
+  `ohne_freigabe_keine_optionen`.
+
+### v0.125.1 (2026-11-15): Der Shard bekommt die Grenze des Protokolls
+
+- 📌 **Fund 703: Jede Antwort im Netz endete nach 16 Token.**
+  `shardfuehrung` startete `myl-shard` ohne `--deckel`, und der setzt dann 16
+  Token je Sitzung; der End-Shard gab danach kein Token mehr weiter, gleich
+  was Tür und Ortsdienst erlaubten. Mit vier Token je Probefrage im Podlauf
+  fiel das nicht auf. Jetzt startet der Knoten jeden Shard mit
+  `--deckel` gleich `MAX_NEUE_TOKEN` (4 096): Wie viele Token ein Auftrag
+  bekommt, entscheidet der Koordinator, der Shard hält nur die Obergrenze.
+  Gefunden beim Aufbau des Auftragslaufs (TESTCLIENT 0.70.0).
+- ⛔️ **Fund 708: Keine Abrechnung der Tür kam je in die Kette.** Die Tür
+  legt je gerechneter Anfrage eine Abrechnung (`SitzungAusgeben`) ab, der
+  Knoten unterschrieb sie mit einer Nonce ab 1 000 000 („getrennt vom
+  Testverkehrszähler“). Die Kette verlangt genau die nächste Nonce des Kontos
+  (`nonce_verbrauchen`), sonst überspringt der Block die Transaktion ganz; das
+  Konto des Torknotens stand bei 3. Folgen: Der Nutzer zahlte nur über den
+  Burn beim Kauf, nie je Token, und das Budget eines Sitzungskontrakts griff
+  nie, weil der Verbrauch in der Kette null blieb. Unsichtbar, weil der
+  Podlauf verbreitete Abrechnungen zählte und die Probe der Abbuchung die
+  Abrechnung direkt auf den Ledger anwendet. Jetzt nehmen Abrechnungen ihre
+  Nonce aus dem Zustand wie der Testverkehr seit Fund 593
+  (`testverkehr_nonce`): fortgezählt, solange Gesendetes unterwegs ist, nach
+  32 Blöcken ohne Ankunft wieder ab dem Zustand; ohne eigenen
+  Kontoschlüssel mit demselben Zähler wie der Testverkehr, denn es ist
+  dasselbe Konto. **Belegt im Auftragslauf** (TESTCLIENT 0.70.0): nach einer
+  Runde mit 24 Token sanken die Credits des Zahlers von 113 636 auf
+  113 612; im langen Lauf davor blieben sie über alle Aufträge gleich.
+- 📌 **Fund 705: Der Prüfer rechnete mit dem Referenzweg.** Der Knoten
+  bindet die Laufzeit für das Nachrechnen ohne Merkmal ein, also `reference`
+  (skalar). Jetzt `default = ["cpu-simd"]`, wie bei den Shards
+  (COMPUTE_PIPELINE 0.66.0) und im Klienten; dieselben Zahlen, beim 35B rund
+  viermal schneller.
 
 ### v0.125.0 (2026-11-15): Wechselbelege gefaltet (A44), Miner bauen auf der Probekette erst nach dem Lernen, abgelehnte Blöcke mit Herkunft
 

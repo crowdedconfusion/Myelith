@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.88.0 (`myl-consensus` 0.52.0, `myl-scheduler` 0.19.2,
-> `myl-ledger` 0.58.0)
-> **Datum:** 2026-11-15
+> **Version:** 0.91.0 (`myl-consensus` 0.52.1, `myl-scheduler` 0.19.2,
+> `myl-ledger` 0.61.0)
+> **Datum:** 2026-11-18
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,89 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.91.0 (2026-11-18): Ein Polynom je Runde, nicht je Epoche (Fund A51, `myl-ledger` 0.61.0)
+
+- ⛔️ **`saat::ableitungskontext` und `saat::rundenabdruck`.** Ein Austeiler
+  leitete sein Polynom aus Netz, Epoche und eigener Kennung ab; wem welche
+  Sitznummer gehört, stand nicht darin. 📌 Nach einem Zweigwechsel teilte ein
+  ehrlicher Knoten dasselbe Polynom noch einmal aus, an die Nummern des
+  anderen Zweigs. Lässt ein Erzeuger auf einem Zweig die
+  Schlüsseleintragung eines Mitglieds weg, rutschen alle Nummern dahinter,
+  und ein Angreifer sammelt auf beiden Zweigen Werte an verschiedenen
+  Nummern desselben Polynoms. Mit einem Viertel des Einsatzes (statt der
+  Hälfte) bildet er so das Geheimnis jedes ehrlichen Austeilers und kennt
+  jede künftige Saat. Jetzt bindet die Ableitung den Abdruck der Runde
+  (Mitglieder mit Gewicht, Schlüssel und Nummern, Gesamtgewicht, Schwelle,
+  Sitze): Eine andere Runde ergibt ein unabhängiges Polynom, dieselbe nach
+  einem Neustart dasselbe. Kenntnisnachweis und Chiffren bleiben am
+  öffentlichen Kontext, die Kette prüft unverändert.
+- Probe `zwei_zweige_geben_keine_punkte_dazu` mit Gegenprobe im selben Test
+  (mit dem alten Kontext rechnet der Angreifer das Geheimnis aus).
+  Whitepaper: Die Saat aus dem Stimmsatz ist eine Ergänzung (Fund vom
+  2026-11-03); die Abhilfe ändert an ihrer Zusage nichts.
+
+### v0.90.0 (2026-11-17): Das Prüfvolumen ist durch das Bündel gedeckelt (`myl-ledger` 0.60.0)
+
+- ⚑ **Ein Checker bekommt höchstens so viele Positionen gutgeschrieben, wie
+  das Bündel Segmente hat** (`faellige_abschliessen`). `positionen` gibt der
+  Checker selbst an, und der Checker-Pool zahlt nach Volumen (Anhang B.3);
+  📌 bis hierher galt jede Zahl, und ein Checker allein (nur ein Kandidat)
+  oder zwei, die sich absprechen, nahmen so den anderen ihren Anteil. Ein
+  Verlauf ist nie länger als das Bündel. Eine Regel im Zustandsübergang,
+  vor dem Genesis; Pflichtaufträge verlangten schon genau die Zahl ihrer
+  Sitzung. Probe `das_volumen_ist_durch_das_buendel_gedeckelt` (`u32::MAX`
+  wird zehn; Gegenprobe: sieben bleibt sieben).
+
+### v0.89.0 (2026-11-16): Pflichtaufträge für Sitzungen, die dem Zwilling fehlen (Fund 706, `myl-ledger` 0.59.0, `myl-consensus` 0.52.1)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-16** (Whitepaper 6.4):
+  Stufe 1 rechnet je Sitzung ab. Was beide Zwillinge gleich bezeugen, wird
+  vergütet; was abweicht, wird über den Differenzbeweis angefochten; was
+  einem fehlt, bekommt einen Pflichtauftrag der Stufe 2 und wird bezahlt,
+  wenn die Nachrechnung es bestätigt. ⚑ Abweichung vom Whitepaper: Stufe 2
+  zieht Fehlendes immer, nicht nur per Los. Die Abrechnung selbst steht im
+  Knoten (NODE 0.130.0), hier stehen ihre Bausteine im Zustand.
+- ⚑ **Neue Konsensregel in `buendel_einreichen`:** Die Liste der Sitzungen
+  eines Bündels (SHARED_TYPES 0.72.0) muss gelten, sonst
+  `TransitionError::SitzungslisteUngueltig`, geprüft vor der Signatur. Eine
+  leere Liste gilt; ein solches Bündel wird wie zuvor als Ganzes verglichen.
+  Die Liste ist mitunterschrieben: Wer sie nach dem Unterschreiben ändert
+  oder streicht, scheitert am Aggregat.
+- **`OffeneStichprobe.pflicht`**: je Pflichtauftrag Pod, Stelle im Bündel,
+  Sitzung und Zahl ihrer Segmente. `auftraege_anlegen` trägt daraus
+  **`Pruefauftrag.gebunden`** ein. Die Kette kennt die Folge unter
+  `segments_root` nicht; deshalb nimmt ein Checker nur einen Verlauf an, der
+  genau diese Sitzung in dieser Länge ist (`Pruefauftrag::bindung_traegt`).
+  Passt die Stelle nicht zur Sitzung, bleibt der Auftrag unvollständig.
+- **`Vorbehalt.pflicht`**: der Vorbehalt einer Sitzung, die dem Zwilling
+  fehlt, mit der Stelle seines Auftrags. `faellige_abschliessen` gibt ihn
+  nur frei, wenn der Auftrag einig schließt, kein Checker eine Abweichung
+  aufdeckt und jeder so viele Positionen nachgerechnet hat, wie die Sitzung
+  Segmente hat. Uneinig, unvollständig oder mit Abweichung bleibt er zurück
+  und verfällt mit der Sperrfrist. Ein Urteil gegen den Zwilling gibt ihn
+  nicht frei (der Zwilling hat die Sitzung gar nicht bezeugt); ein Urteil
+  gegen den Pod selbst lässt alle seine Vorbehalte der Epoche verfallen.
+- **`PFLICHTAUFTRAEGE_JE_PAAR` = 4**: so viele Sitzungen je Paar und Epoche
+  werden höchstens nachgerechnet, die größten zuerst, abwechselnd je Seite;
+  was darüber hinaus fehlt, bleibt unvergütet. Die Grenze hält die Prüflast
+  fest, die ein Paar auslösen kann, wie `DIFFERENZEN_JE_GRUPPE` es für
+  Differenzbeweise tut.
+- ⚠️ **Der Zustand ändert seine Form:** `Pruefauftrag`, `Vorbehalt` und
+  `OffeneStichprobe` tragen je ein angehängtes Feld. Ein gespeicherter
+  Zustand der vorigen Fassung mit offenen Aufträgen oder Vorbehalten lässt
+  sich mit dieser nicht weiterlesen.
+- ⚠️ **Was bleibt:** Ohne Checker entsteht kein Auftrag (ein Netz aus einem
+  einzigen Paar ohne Miner außerhalb der Pods), und der Vorbehalt verfällt.
+  Bleiben die Checker eines Pflichtauftrags aus, trägt der ehrliche Pod den
+  Ausfall dieser Sitzung.
+- Proben `die_liste_der_sitzungen_muss_gelten_und_unterschrieben_sein`
+  (falsche Summe, nicht aufsteigend, leere Sitzung, nach dem Unterschreiben
+  verschoben oder gestrichen) und
+  `ein_pflichtauftrag_gibt_nur_einig_und_ganz_den_vorbehalt_frei`
+  (Gegenproben: nicht die ganze Sitzung, einer deckt nicht auf, beide decken
+  eine Abweichung auf; die Bindung an Sitzung und Länge). `myl-consensus`
+  zieht nur das neue Feld in seinen Bündeln nach.
 
 ### v0.88.0 (2026-11-15): Die Anmeldung verlangt eine Netzadresse, die ein Schlüssel ist (Fund 701, `myl-ledger` 0.58.0)
 

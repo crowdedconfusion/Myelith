@@ -263,6 +263,10 @@ grosse_proben() {
   echo "CLIENT/myl-senses stimmabdruck"
   echo "CLIENT/myl-senses klonen"
   echo "CLIENT/myl-senses eigensprecher"
+  # Fund 655 nachgemessen: was ein kleiner Bereich unter der Zugabe der
+  # Zeitprobe versteckt; braucht ein Modellartefakt (MYL_POD_MODELL) und eine
+  # ruhige Maschine, ohne Artefakt meldet sie das und kehrt zurueck.
+  echo "COMPUTE_PIPELINE/myl-pod zeitprobe_messung"
 }
 
 # Die Proben mit `#[ignore]`, die nicht am Speicher haengen, sondern an der

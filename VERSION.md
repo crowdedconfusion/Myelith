@@ -1,4 +1,4 @@
-0.10.0
+0.11.0
 
 # Myelith: die aktuelle Fassung und was sie ändert
 
@@ -12,28 +12,29 @@ Darunter steht ein einziger Abschnitt: was sich mit der aktuellen Fassung
 ändert. Er wird mit jeder neuen Fassung ersetzt, ältere Fassungen stehen
 hier nicht. Das Programm zeigt ihn vor dem Update.
 
-## 0.10.0 (2026-11-14)
+## 0.11.0 (2026-11-18)
 
-⚠️ **Seit 0.9.0 gelten neue Regeln für die Ausschüttung.** Wer von einer
-älteren Fassung kommt: Eine Kette von dort lässt sich nicht weiterführen;
-ein Knoten beginnt sie neu.
+⚠️ **Seit 0.11.0 gelten neue Regeln für die Abrechnung der Pods und für die
+Saat.** Eine Kette von 0.10.0 lässt sich nicht weiterführen; ein Knoten
+beginnt sie neu.
 
-- **Texte, die der Agent schreibt, tragen eine unsichtbare Herkunftsangabe**
-  nach C2PA (Markdown und Text ab 800 Zeichen, beim Schreiben, Ändern und
-  Ersetzen). Beim Lesen und Suchen schneidet der Agent sie wieder ab.
-  Abschalten mit `agent.text_kennzeichnen`; nachprüfen mit
-  `myl kennzeichen`.
-- **Unter macOS folgt die Aufnahme dem Eingang, den das System gerade
-  nutzt**, statt fest auf das erste Gerät zu hören. Fehlt die Freigabe für den Bildschirm, sagt
-  Myelith das genau so, statt zu raten.
-- **GolemOS aktualisiert sich mit Rückfall:** `golem-aktualisieren`
-  schreibt ein neues System auf die zweite Seite und startet es einmal zur
-  Probe; kommt es nicht hoch, startet der Rechner wieder das alte. Jede
-  Seite hat ihren eigenen Kern.
-- **GolemOS-Sticks haben einen exFAT-Datenteil**, an jedem Rechner les- und
-  beschreibbar, ohne Grenze von 4 GB je Datei; GolemOS liest auch fremde
-  Laufwerke mit exFAT. Ältere Sticks behalten ihren FAT32-Datenteil.
-- **GolemOS bringt die Lizenztexte aller Pakete mit**, unter
-  `/usr/share/licenses/`, dazu eine Übersicht in
-  `/usr/share/golemos/LIZENZEN.txt`. Der erste Start eines frischen Sticks
-  dauert einmalig bis zu einer Minute länger.
+- **Befehle des Agenten laufen in einer Sandbox des Betriebssystems**
+  (Seatbelt unter macOS, Landlock unter Linux): schreiben nur im
+  Arbeitsordner, kein Netz, nicht lesen im übrigen Benutzerordner. Auch was
+  die Dateiwerkzeuge schreiben, geht durch sie. Abschalten mit
+  `agent.sandbox`; die Startzeile sagt, was gilt.
+- **Eine Runde kostet Prompt und Ausgabe**, und der Klient kauft vor jeder
+  Runde nur so viele Credits nach, wie sie braucht. Fällt eine Runde auf
+  einen Epochenwechsel, versucht er es selbst noch einmal.
+- **Updates werden geprüft:** Ein neuer Stand wird nur eingespielt, wenn er
+  die Signatur eines Freigabeschlüssels aus `SYSTEM/install/freigabeschluessel`
+  trägt. Solange dort keiner steht, sagt die Aktualisierung, dass sie nicht
+  prüft.
+- **Schneller auf Apple ab M2:** Die Vorbereitung eines Prompts rechnet mit
+  int8-Modellen bis zu 40 Prozent schneller, Token für Token dasselbe
+  Ergebnis.
+- **Mining nimmt, was freigegeben ist** (Kerne, Grafikkarten), und misst
+  beim Start, wo jede Matrix am schnellsten läuft.
+- **Sicherheit:** Steuerzeichen des Modells in gelesenen Texten oder
+  Webseiten schreiben keine eigene Runde mehr in den Verlauf, und die
+  Dateiwerkzeuge folgen keinem Verweis, der nach ihrer Prüfung entstand.

@@ -385,6 +385,7 @@ mod tests {
             prompt_versiegelt: b"versiegelt".to_vec(),
             max_token,
             pipeline: Hash::sha256(b"probe-pipeline"),
+            hoechstens: u64::MAX,
         }
     }
 

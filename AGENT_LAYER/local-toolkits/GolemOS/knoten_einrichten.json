@@ -9,5 +9,6 @@
     },
     "required": ["name", "rolle"]
   },
-  "befehl": "command -v golem-knoten >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; golem-knoten einrichten --name {name} --rolle {rolle}"
+  "befehl": "command -v golem-knoten >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; golem-knoten einrichten --name {name} --rolle {rolle}",
+  "sandbox": "frei"
 }

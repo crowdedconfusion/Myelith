@@ -220,10 +220,17 @@ impl Klartextwerk for Pipelinewerk {
         if eingabe.is_empty() {
             return Inferenzantwort::Abgelehnt { sitzung };
         }
+        // ⚑ **Der Hoechstbetrag des Auftrags** (Fund 711), wie im
+        // [`crate::podwerk::Podwerk`]: Kostet schon der Prompt mehr, wird
+        // nicht gerechnet; sonst wird die Ausgabe so gekuerzt, dass die
+        // Abrechnung ihn nicht uebersteigt.
+        let Some(im_rahmen) = auftrag.neue_token_im_rahmen(eingabe.len() as u64) else {
+            return Inferenzantwort::Ungedeckt { sitzung, prompt_token: eingabe.len() as u64 };
+        };
         // ⚑ **Der Deckel des Betreibers schlägt den des Auftrags**, und
         // beide sind Obergrenzen: Wer weniger bekommt, als er verlangt
         // hat, bekommt trotzdem eine Antwort.
-        let deckel = u64::from(auftrag.max_token.min(self.eigener_deckel));
+        let deckel = u64::from(im_rahmen.min(self.eigener_deckel));
 
         let koordinator = &self.koordinator;
         let lauf = koordinator.rechne(sitzung, &eingabe, deckel);

@@ -6,5 +6,6 @@
     "properties": { "aktion": { "type": "string", "enum": ["starten", "stoppen", "an", "aus"], "description": "starten, stoppen, an (beim Hochfahren mit) oder aus" } },
     "required": ["aktion"]
   },
-  "befehl": "command -v golem-knoten >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; case {aktion} in starten|stoppen|an|aus) ;; *) echo 'aktion: starten, stoppen, an oder aus'; exit 2 ;; esac; golem-knoten {aktion}"
+  "befehl": "command -v golem-knoten >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; case {aktion} in starten|stoppen|an|aus) ;; *) echo 'aktion: starten, stoppen, an oder aus'; exit 2 ;; esac; golem-knoten {aktion}",
+  "sandbox": "frei"
 }

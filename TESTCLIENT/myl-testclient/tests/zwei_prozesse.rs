@@ -168,7 +168,12 @@ async fn ein_aufruf_geht_durch_zwei_prozesse() {
     let Anweisung::SitzungAusgeben { vorhaben, vollmacht } = &anweisung else {
         panic!("die abgelegte Anweisung ist keine Ausgabe");
     };
-    assert_eq!(vorhaben.betrag, neue.max(1), "es wurde nicht die geleistete Arbeit gebucht");
+    // ⚑ Prompt und Ausgabe (Fund 711).
+    assert_eq!(
+        vorhaben.betrag,
+        myl_types::inferenzauftrag::preis(prompt_token, neue),
+        "es wurde nicht die geleistete Arbeit gebucht"
+    );
     assert!(vollmacht.is_some(), "ohne Vollmacht kann die Kette nicht autorisieren");
 
     eprintln!("\n  Frage:   Die Hauptstadt von Frankreich ist");

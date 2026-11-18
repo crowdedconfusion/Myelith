@@ -27,13 +27,13 @@
 //!
 //! | Topic | angenommen | warum |
 //! |---|---|---|
-//! | `PoiBundles` | **20 000 von 20 000** | Felder fester Länge (seit dem 2026-10-28 bis auf die Vertreterliste am Ende; gemessen mit unberührter Länge der Liste) |
+//! | `PoiBundles` | **20 000 von 20 000** | Felder fester Länge (bis auf zwei Listen am Ende: Vertreter seit dem 2026-10-28, Sitzungen seit dem 2026-11-16; gemessen mit unberührten Längen der Listen) |
 //! | `Challenges` | **20 000 von 20 000** | dito, plus zwei Ungleichungen, die Zufall erfüllt |
 //! | `LatencyAttests` | 9 081 von 20 000 | enthält einen Vektor, dessen Längenkopf passen muss |
 //!
 //! **Bei einem Typ aus lauter Feldern fester Länge ist ein Borsh-Parse
-//! eine Längenprüfung.** Jede Bytefolge der richtigen Länge mit leerer
-//! Vertreterliste ist ein gültiges `PoIBundle`; die Liste selbst prüft
+//! eine Längenprüfung.** Jede Bytefolge der richtigen Länge mit leeren
+//! Listen ist ein gültiges `PoIBundle`; die Listen selbst prüfen
 //! nur ihre Länge, ihren Inhalt erst die Kette. Das ist kein Fehler, sondern eine Eigenschaft
 //! des Formats, aber es verschiebt die Frage: Die Verteidigung für
 //! PoI-Bündel ist die Aggregatsignatur, und die kann L0 nicht prüfen.
@@ -216,7 +216,7 @@ pub fn validate_payload(topic: GossipTopic, data: &[u8]) -> Result<(), Validatio
     }
     match topic {
         // PoI-Bündel: Borsh-Parse gegen den myl-types-Typ (Anhang A.1).
-        // Da der Typ bis auf die Vertreterliste nur Felder fester Länge
+        // Da der Typ bis auf die beiden Listen am Ende nur Felder fester Länge
         // hat, ist das in der Sache eine Längenprüfung, siehe Fund 45 in
         // der Moduldoku. Die
         // inhaltliche Prüfung ist die Aggregatsignatur und gehört in
@@ -461,6 +461,7 @@ mod tests {
             segmente: 1,
             ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         };
         borsh::to_vec(&bundle).expect("Serialisierung")
     }

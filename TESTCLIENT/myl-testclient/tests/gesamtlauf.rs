@@ -492,11 +492,11 @@ async fn alle_kompartimente_verzahnt() {
     let Anweisung::SitzungAusgeben { vorhaben, vollmacht } = &anweisung else {
         panic!("die abgelegte Anweisung ist keine Ausgabe");
     };
-    assert_eq!(
-        vorhaben.betrag,
-        erst.neue_token.max(1),
-        "es wurde nicht die geleistete Arbeit gebucht"
-    );
+    // ⚑ Prompt und Ausgabe, so viele Vorwaertspaesse, wie der Pod rechnet
+    //   (Fund 711).
+    let preis = myl_types::inferenzauftrag::preis(erst.prompt_token, erst.neue_token);
+    assert!(preis > erst.neue_token, "der Prompt kostet nichts");
+    assert_eq!(vorhaben.betrag, preis, "es wurde nicht die geleistete Arbeit gebucht");
     assert_eq!(vorhaben.empfaenger, betreiber, "das Geld geht an den Falschen");
     myl_ledger::transitions::sitzung_ausgeben(
         kette.zustand_mut(),
@@ -517,7 +517,7 @@ async fn alle_kompartimente_verzahnt() {
         "dieselbe Abrechnung ging ein zweites Mal durch"
     );
     let verbraucht = kette.zustand().sitzung(&s_id).expect("Sitzung").zustand.verbraucht_credits;
-    assert_eq!(verbraucht, erst.neue_token.max(1), "im Kettenzustand steht kein Verbrauch");
+    assert_eq!(verbraucht, preis, "im Kettenzustand steht kein Verbrauch");
     b.schritt(
         "CONSENSUS",
         format!("{verbraucht} Credits abgebucht, Wiederholung abgewiesen"),
@@ -610,6 +610,7 @@ async fn alle_kompartimente_verzahnt() {
         segmente: 1_000,
         ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
         vertreter: Vec::new(),
+        sitzungen: Vec::new(),
     };
     // Echte Unterschriften der Positionen, zu einem Aggregat (Fund 645:
     // die Reserve rechnet nicht und unterschreibt nicht).

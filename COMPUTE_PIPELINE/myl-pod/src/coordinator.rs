@@ -309,6 +309,13 @@ fn kanonisch_ordnen(liste: &[CompletedSegment]) -> Vec<&CompletedSegment> {
     folge
 }
 
+/// Bleibt die Zahl der Sitzungen unter `deckel`, wenn `neu` zu `da` kommt?
+/// Eine Sitzung, die schon da ist, zählt nicht doppelt.
+fn sitzungen_passen(da: &[SegmentId], neu: &[SegmentId], deckel: usize) -> bool {
+    let sitzungen: std::collections::BTreeSet<u64> = da.iter().chain(neu).map(|k| myl_types::sitzung_und_position(k).0).collect();
+    sitzungen.len() <= deckel
+}
+
 /// Die Blätter des Bündels; siehe [`Coordinator::blaetter`].
 fn blaetter_aus(liste: &[CompletedSegment]) -> (Vec<myl_types::Ausgabenzeugnis>, Vec<myl_types::Segmentzeugnis>) {
     let folge = kanonisch_ordnen(liste);
@@ -351,6 +358,9 @@ pub struct Coordinator {
     /// Wer eine ausgefallene Position vertritt (Whitepaper 6.8); geht ins
     /// Bündel und wird mitunterschrieben.
     vertreter: Vec<(u32, MinerId)>,
+    /// Die Endmarken des Modells: Ist das gezogene Token eine davon, ist die
+    /// Antwort zu Ende. Leer heisst: bis zum Deckel, wie vor dem 2026-11-15.
+    haltemarken: Vec<u32>,
 }
 
 impl Coordinator {
@@ -386,7 +396,24 @@ impl Coordinator {
             tor,
             sammelstellen,
             vertreter: Vec::new(),
+            haltemarken: Vec::new(),
         })
+    }
+
+    /// **Bei diesen Token endet eine Antwort** (Fund 702, 2026-11-15).
+    ///
+    /// 📌 Bis hierher rechnete der Pod jede Anfrage bis zum Deckel, auch
+    /// nach der Endmarke: Das Modell schrieb seine Antwort, `<|im_end|>`,
+    /// und danach eine erfundene nächste Runde, bis die Zahl erreicht war.
+    /// Mit vier Token je Frage fiel das nicht auf; ein Agent bekommt so
+    /// Werkzeugaufrufe aus der erfundenen Fortsetzung und zahlt jedes Token
+    /// davon. Das Endtoken selbst bleibt in der Folge: Es ist gerechnet,
+    /// gespurt und unterschrieben wie jedes andere.
+    ///
+    /// ⚑ Beide Zwillinge halten an derselben Stelle, denn sie ziehen dieselben
+    /// Token; der Vergleich der Spuren bleibt, wie er war.
+    pub fn haltemarken_setzen(&mut self, marken: Vec<u32>) {
+        self.haltemarken = marken;
     }
 
     /// Anzahl der Shards in der Pipeline.
@@ -452,8 +479,21 @@ impl Coordinator {
     /// wüchse die Liste sonst ohne Grenze. Der Deckel ist grosszügig und
     /// der Zähler daneben sagt, dass er greift; ein stiller Verlust wäre
     /// schlimmer als ein sichtbarer.
+    ///
+    /// ⚑ **Der Deckel der Sitzungen** (Stufe 1 je Sitzung): Das Bündel
+    /// nennt jede Sitzung einzeln, und die Kette nimmt höchstens
+    /// [`myl_types::SITZUNGEN_JE_BUENDEL_HOECHSTENS`]. Ein Lauf, der eine
+    /// Sitzung darüber hinaus brächte, kommt ganz nicht hinein: Ein
+    /// Bündel mit zu langer Liste gälte gar nicht, und das kostete die
+    /// Arbeit der ganzen Epoche statt der einen Sitzung.
     fn anhaengen(&self, ablage: Vec<CompletedSegment>) {
         let mut liste = self.liste();
+        let kennungen = |l: &[CompletedSegment]| l.iter().map(|c| c.id).collect::<Vec<_>>();
+        if !sitzungen_passen(&kennungen(&liste), &kennungen(&ablage), myl_types::SITZUNGEN_JE_BUENDEL_HOECHSTENS) {
+            drop(liste);
+            self.verworfen.fetch_add(ablage.len() as u64, Ordering::Relaxed);
+            return;
+        }
         let frei = MAX_ABGESCHLOSSENE.saturating_sub(liste.len());
         let zuviel = ablage.len().saturating_sub(frei);
         liste.extend(ablage.into_iter().take(frei));
@@ -537,6 +577,9 @@ impl Coordinator {
                 pending_feedback = feedback_opt;
             }
         }
+        if generated.last().is_some_and(|t| self.haltemarken.contains(t)) {
+            pending_feedback = None;
+        }
 
         // 2) Autoregressive Feedback-Schleife: das vom End-Shard
         //    erzeugte Feedback wird durch die Pipeline geschickt, bis das
@@ -557,6 +600,9 @@ impl Coordinator {
             match token_opt {
                 Some(t) => generated.push(t),
                 None => break,
+            }
+            if generated.last().is_some_and(|t| self.haltemarken.contains(t)) {
+                break;
             }
             pending_feedback = feedback_opt;
         }
@@ -815,7 +861,20 @@ impl Coordinator {
     /// des Anhängens; sortiert wird beim Lesen. Eine Abschrift, denn die
     /// Liste steht unter einer Sperre.
     pub fn kanonisch(&self) -> Vec<CompletedSegment> {
-        kanonisch_ordnen(&self.liste()).into_iter().cloned().collect()
+        self.kanonisch_bis(usize::MAX)
+    }
+
+    /// **Dasselbe für die ersten `n` abgeschlossenen Segmente**, also für
+    /// den Stand eines Bündels mit `n` Segmenten.
+    ///
+    /// ⚑ Die Liste wächst nur, und ein Lauf hängt seine Segmente in einem
+    /// Zug an ([`Self::rechne`]); ein Bündel mit `n` Segmenten ist deshalb
+    /// genau der Anfang der Länge `n`, auch wenn danach weitere Läufe
+    /// angehängt haben.
+    pub fn kanonisch_bis(&self, n: usize) -> Vec<CompletedSegment> {
+        let liste = self.liste();
+        let n = n.min(liste.len());
+        kanonisch_ordnen(&liste[..n]).into_iter().cloned().collect()
     }
 
     /// **Die Blätter des Bündels**: je Segment das Ausgabenzeugnis (Stufe 1:
@@ -825,7 +884,14 @@ impl Coordinator {
     /// [`Self::kanonisch`], für `segments_root`). Daraus baut der Ortsdienst auch einen
     /// Differenzbeweis.
     pub fn blaetter(&self) -> (Vec<myl_types::Ausgabenzeugnis>, Vec<myl_types::Segmentzeugnis>) {
-        blaetter_aus(&self.liste())
+        self.blaetter_bis(usize::MAX)
+    }
+
+    /// Die Blätter der ersten `n` Segmente (siehe [`Self::kanonisch_bis`]).
+    pub fn blaetter_bis(&self, n: usize) -> (Vec<myl_types::Ausgabenzeugnis>, Vec<myl_types::Segmentzeugnis>) {
+        let liste = self.liste();
+        let n = n.min(liste.len());
+        blaetter_aus(&liste[..n])
     }
 
     /// Baut ein PoI-Bündel aus den abgeschlossenen Segmenten dieser
@@ -881,6 +947,10 @@ impl Coordinator {
         let (ausgaben, zeugnisse) = blaetter_aus(&liste);
         let root = segments_root(&zeugnisse).map_err(|e| e.to_string())?;
         let wurzel_der_ausgaben = myl_types::ausgabenwurzel(&ausgaben).map_err(|e| e.to_string())?;
+        // ⚑ **Je Sitzung ein Eintrag** (Stufe 1 je Sitzung): Die Kette
+        //   gleicht zwei Zwillinge daran ab und vergütet, was gleich ist,
+        //   auch wenn einem eine Sitzung fehlt.
+        let sitzungen = myl_types::sitzungszeugnisse(&ausgaben).map_err(|e| e.to_string())?;
         let vtfe = self.vtfe_fuer(liste.len() as u64)?;
         // Aggregat über die Übergangs-Signaturen (alle dieselbe Arbeit); eine
         // Summe, also gleich in jeder Folge.
@@ -913,6 +983,7 @@ impl Coordinator {
             segmente,
             ausgabenwurzel: wurzel_der_ausgaben,
             vertreter: self.vertreter.clone(),
+            sitzungen,
         })
     }
 
@@ -1029,12 +1100,6 @@ impl Coordinator {
         }
     }
 
-    /// Wie viele abgeschlossene Segmente verworfen wurden, weil der
-    /// Deckel erreicht war.
-    ///
-    /// ⚑ **Sichtbar und nicht still** (Fund 164). Verworfene Segmente
-    /// sind Arbeit, die niemand mehr bezeugen kann; wer sie stumm
-    /// wegwirft, verschenkt Vergütung, ohne dass es jemand merkt.
     /// ⚑ **Wer eine Position vertritt** (Whitepaper 6.8): Die Reserve hat
     /// eine ausgefallene Position übernommen; das Bündel nennt sie, und ihr
     /// Shard unterschreibt statt des Inhabers.
@@ -1042,6 +1107,53 @@ impl Coordinator {
         self.vertreter = vertreter;
     }
 
+    /// ⚑ **Die Segmente des Vorgängers derselben Epoche erben**
+    /// (2026-11-17, Restpunkt 9 zu Fund 706).
+    ///
+    /// Kommt mitten in der Epoche eine Runde leer zurück, besetzt der
+    /// Ortsdienst den Pod neu und baut dafür einen neuen Koordinator. 📌 Bis
+    /// hierher ging dabei alles verloren, was der alte in dieser Epoche schon
+    /// abgeschlossen hatte: gerechnet, ausgeliefert, nie vergütet, und dem
+    /// Zwilling fehlten danach diese Sitzungen im Vergleich.
+    ///
+    /// Geerbt wird nur von demselben Pod in derselben Epoche mit denselben
+    /// Zuschnitten, denn die beanspruchten vTFE rechnen die Shards aus den
+    /// Zuschnitten nach. Die geerbten Segmente stehen vorn, in ihrer alten
+    /// Folge; ein Bündel mit `n` Segmenten bleibt so der Anfang der Länge `n`
+    /// ([`Self::kanonisch_bis`]). Auch die Zahl der verworfenen Segmente geht
+    /// mit. Hat der Neue schon eigene, werden sie dahinter angehängt, unter
+    /// denselben Deckeln wie sonst.
+    ///
+    /// ⚠️ Vertritt im neuen Koordinator die Reserve eine Position, nennt das
+    /// Bündel sie für die ganze Epoche: Das Format kennt keinen Vertreter ab
+    /// einem Segment. Der Ausgefallene verliert damit, was er vorher
+    /// beigetragen hat; ohne das Erben verloren es alle Mitglieder.
+    pub fn segmente_erben(&mut self, vorgaenger: &Coordinator) -> Result<usize, String> {
+        if vorgaenger.pod_id != self.pod_id || vorgaenger.epoch != self.epoch {
+            return Err("der Vorgänger rechnete für einen anderen Pod oder eine andere Epoche".to_string());
+        }
+        if vorgaenger.besetzung != self.besetzung {
+            return Err("der Vorgänger rechnete mit anderen Zuschnitten".to_string());
+        }
+        let geerbt = vorgaenger.liste().clone();
+        let zahl = geerbt.len();
+        let eigene = std::mem::replace(
+            self.completed.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner),
+            geerbt,
+        );
+        self.verworfen.fetch_add(vorgaenger.verworfene_segmente(), Ordering::Relaxed);
+        if !eigene.is_empty() {
+            self.anhaengen(eigene);
+        }
+        Ok(zahl)
+    }
+
+    /// Wie viele abgeschlossene Segmente verworfen wurden, weil der
+    /// Deckel erreicht war.
+    ///
+    /// ⚑ **Sichtbar und nicht still** (Fund 164). Verworfene Segmente
+    /// sind Arbeit, die niemand mehr bezeugen kann; wer sie stumm
+    /// wegwirft, verschenkt Vergütung, ohne dass es jemand merkt.
     pub fn verworfene_segmente(&self) -> u64 {
         self.verworfen.load(Ordering::Relaxed)
     }
@@ -1145,6 +1257,19 @@ impl Coordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⚑ Der Deckel zählt Sitzungen, nicht Segmente: Eine Sitzung, die
+    /// schon in der Liste steht, passt immer; eine neue nur, solange Platz
+    /// ist.
+    #[test]
+    fn der_deckel_zaehlt_sitzungen() {
+        let k = |sitzung: u64, position: u64| segment_id_from(sitzung, position, 3);
+        let da = [k(1, 0), k(1, 1), k(2, 0)];
+        assert!(sitzungen_passen(&da, &[k(2, 1), k(2, 2)], 2), "dieselbe Sitzung noch einmal");
+        assert!(!sitzungen_passen(&da, &[k(3, 0)], 2), "eine dritte bei Deckel zwei");
+        assert!(sitzungen_passen(&da, &[k(3, 0)], 3));
+        assert!(sitzungen_passen(&[], &[], 0));
+    }
 
     /// Das Tor lässt höchstens so viele hinein, wie es Plätze hat, und gibt
     /// beim Verlassen einen frei. ⚑ Gegenprobe: Mit einem Tor ohne Grenze

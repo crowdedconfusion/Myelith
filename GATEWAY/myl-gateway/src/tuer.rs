@@ -423,8 +423,8 @@ impl Tuer {
         jetzt: EpochId,
         jetzt_ms: u64,
     ) -> io::Result<()> {
-        use crate::oai::{Chatanfrage, Chatantwort, Modelliste, WEG_CHAT, WEG_MODELLE};
-        const ERLAUBT: [(&str, &str); 2] = [("POST", WEG_CHAT), ("GET", WEG_MODELLE)];
+        use crate::oai::{Chatanfrage, Chatantwort, Modelliste, Textanfrage, Textantwort, WEG_CHAT, WEG_MODELLE, WEG_TEXT};
+        const ERLAUBT: [(&str, &str); 3] = [("POST", WEG_CHAT), ("GET", WEG_MODELLE), ("POST", WEG_TEXT)];
 
         let gelesen =
             Self::anfrage_lesen(&mut strom, frist, |d| crate::http::kopf_lesen_wege(d, &ERLAUBT)).await?;
@@ -484,7 +484,22 @@ impl Tuer {
             return strom.flush().await;
         }
 
-        let anfrage = match Chatanfrage::lesen(&rumpf) {
+        // ⚑ **Zwei Formen, ein Weg dahinter** (2026-11-15): Eine Unterhaltung
+        //   setzt die Tür zusammen, einen fertigen Prompt ([`WEG_TEXT`]) reicht
+        //   sie unverändert weiter. Ab hier gehen beide denselben Weg.
+        let als_text = kopf.weg == WEG_TEXT;
+        let gelesen = if als_text {
+            Textanfrage::lesen(&rumpf).map(|a| (a.prompt.clone(), a.token_deckel(256), a.model, Vec::new()))
+        } else {
+            // ⚑ **In der Vorlage des Netzmodells** (Fund 181), mit den
+            //   angebotenen Werkzeugen.
+            Chatanfrage::lesen(&rumpf).map(|a| {
+                let prompt = a.prompt_in(weg.vorlage());
+                let werkzeuge = a.angebotene_namen();
+                (prompt, a.token_deckel(256), a.model, werkzeuge)
+            })
+        };
+        let (prompt, deckel, gewuenscht, werkzeuge) = match gelesen {
             Ok(a) => a,
             Err(e) => {
                 return Self::v1_fehler(&mut strom, 400, &e.to_string()).await;
@@ -500,40 +515,37 @@ impl Tuer {
         // ⚑ **Erst annehmen, dann rechnen.** Der Beleg entsteht aus dem
         // Prompt und bindet ihn; wer erst rechnet, hat Arbeit ohne
         // Bindung und kann sie hinterher niemandem zuordnen.
-        let prompt = anfrage.prompt();
         let angenommen = gesperrt(annahme).annehmen_mit(prompt.as_bytes(), Some(crate::zugang::Ausweisweg::Vollmacht));
         let beleg = match angenommen {
             Ok(b) => b,
             Err(e) => return Self::v1_fehler(&mut strom, 400, &format!("{e:?}")).await,
         };
 
-        // ⚑ **Und jetzt, wo der Höchstbetrag feststeht, ein zweites Mal
-        // gegen die Vorbehalte.** Beim Eintreffen war er unbekannt; wer
-        // hier nicht nachprüft, lässt eine Anfrage rechnen, die er
-        // hinterher nicht abbuchen darf, und verschenkt die Arbeit.
+        // ⚑ **Und jetzt, wo der Prompt feststeht, ein zweites Mal gegen
+        // Vollmacht, Kontrakt und Guthaben** (Fund 711): nicht gegen einen
+        // geschätzten Preis, sondern als Frage, wie viel sie zusagen. Der
+        // Preis hängt an den Prompt-Token, und die zählt nur der Pod; er
+        // bekommt den Betrag mit und hält ihn ein. Beim Eintreffen war der
+        // Prompt unbekannt; wer hier nicht nachprüft, lässt eine Anfrage
+        // rechnen, die er hinterher nicht abbuchen darf, und verschenkt die
+        // Arbeit.
         //
         // **Nur die Vorbehalte, nicht die Kette:** Die Signaturen sind
         // oben geprüft, und sie ein zweites Mal zu prüfen verdoppelte
         // genau den Aufwand, den die Ratengrenze beschränkt.
-        let deckel = anfrage.token_deckel(256);
-        let hoechstens = crate::vollmacht::Anfragerahmen {
-            credits: u64::from(deckel),
-            ..rahmen
-        };
-        if !vollmacht.deckt(&hoechstens) {
-            return Self::v1_fehler(
-                &mut strom,
-                402,
-                "die Vollmacht deckt diesen Auftrag nicht",
-            )
-            .await;
-        }
-        // 📌 **Und der Kontrakt, mit demselben Höchstbetrag** (Fund 651):
-        // Einzellimit und Restbudget prüft sonst erst die Kette, nach dem
-        // Rechnen, und dann ist die Arbeit verschenkt.
-        let gedeckt = gesperrt(zugang).deckt_der_kontrakt(&vollmacht, &hoechstens);
-        if !gedeckt {
-            return Self::v1_fehler(&mut strom, 402, "der Kontrakt deckt diesen Auftrag nicht").await;
+        //
+        // 📌 **Fund 651:** Einzellimit und Restbudget des Kontrakts prüfte
+        // sonst erst die Kette, nach dem Rechnen. **Fund 707:** das Guthaben
+        // des Inhabers, abzüglich dessen, was noch nicht in der Kette steht.
+        let obergrenze = myl_types::inferenzauftrag::obergrenze(prompt.len() as u64, deckel);
+        // ⚑ Vorgemerkt, bis die Anfrage durch ist ([`crate::zugang::Zusage`]).
+        let vorgemerkt = crate::zugang::Zusage::geben(zugang, &vollmacht, &rahmen, obergrenze);
+        let zusage = vorgemerkt.betrag;
+        if zusage == 0 {
+            let grund = gesperrt(zugang)
+                .was_fehlt(&vollmacht, &crate::vollmacht::Anfragerahmen { credits: 1, ..rahmen })
+                .unwrap_or("dieser Auftrag ist nicht gedeckt");
+            return Self::v1_fehler(&mut strom, 402, grund).await;
         }
 
         let auftrag = crate::oai::Rechenauftrag {
@@ -542,29 +554,71 @@ impl Tuer {
             max_token: deckel,
             sitzung_id,
             vollmacht: vollmacht.clone(),
+            hoechstens: zusage,
         };
-        let Some(ergebnis) = weg.rechne(auftrag).await else {
+        let ergebnis = match weg.rechne(auftrag).await {
+            Ok(e) => e,
             // ⚑ **502 und kein 500.** „Ich habe niemanden gefunden, der
             // rechnet" ist eine Aussage über die Gegenseite, nicht über
             // diese Tür; ein Klient wiederholt bei 502 sinnvoll.
-            return Self::v1_fehler(&mut strom, 502, "kein Pod hat gerechnet").await;
+            Err(crate::oai::Rechenfehler::NichtGerechnet) => {
+                return Self::v1_fehler(&mut strom, 502, "kein Pod hat gerechnet").await;
+            }
+            // ⚑ **402 und kein 502** (Fund 711): Schon der Prompt kostet mehr
+            //   als zugesagt. Der Text sagt, was fehlt, und wie viel der
+            //   Prompt kostet; ein Klient wiederholt hier nicht, er kauft nach.
+            Err(crate::oai::Rechenfehler::Ungedeckt { prompt_token }) => {
+                let noetig = myl_types::inferenzauftrag::preis(prompt_token, 1);
+                // Die eigene Vormerkung verfälschte sonst den Grund.
+                drop(vorgemerkt);
+                let grund = gesperrt(zugang)
+                    .was_fehlt(&vollmacht, &crate::vollmacht::Anfragerahmen { credits: noetig, ..rahmen })
+                    .unwrap_or("dieser Auftrag ist nicht gedeckt");
+                let text = format!("{grund}: der Prompt kostet {noetig} Credits, zugesagt waren {zusage}");
+                return Self::v1_fehler(&mut strom, 402, &text).await;
+            }
         };
 
-        let modell = if anfrage.model.is_empty() {
-            stand.name.clone()
+        let modell = if gewuenscht.is_empty() { stand.name.clone() } else { gewuenscht };
+        // ⚑ **Am Betrag gekürzt heisst auch `length`** (Fund 711): Der Pod
+        //   hat die Ausgabe auf die Zusage gekürzt, und ein Klient soll sie
+        //   fortsetzen können wie eine am Deckel.
+        let abschluss = if myl_types::inferenzauftrag::preis(ergebnis.prompt_token, ergebnis.neue_token) >= zusage {
+            "length"
         } else {
-            anfrage.model.clone()
+            crate::oai::abschluss(ergebnis.neue_token, deckel)
         };
-        let a = Chatantwort::neu(
-            beleg.sitzung,
-            jetzt_ms / 1000,
-            &modell,
-            ergebnis.text,
-            ergebnis.prompt_token,
-            ergebnis.neue_token,
-            &ergebnis.segment,
-        );
-        let aus = antwort(200, "application/json", &a.als_json());
+        let rumpf_aus = if als_text {
+            Textantwort::neu(
+                beleg.sitzung,
+                jetzt_ms / 1000,
+                &modell,
+                ergebnis.text,
+                ergebnis.prompt_token,
+                ergebnis.neue_token,
+                &ergebnis.segment,
+                abschluss,
+            )
+            .als_json()
+        } else {
+            let mut a = Chatantwort::neu(
+                beleg.sitzung,
+                jetzt_ms / 1000,
+                &modell,
+                ergebnis.text,
+                ergebnis.prompt_token,
+                ergebnis.neue_token,
+                &ergebnis.segment,
+            );
+            if let Some(w) = a.choices.first_mut() {
+                w.finish_reason = abschluss.to_string();
+            }
+            if !werkzeuge.is_empty() {
+                a.werkzeugaufrufe_lesen(&werkzeuge);
+            }
+            a.als_json()
+        };
+        let aus = antwort(200, "application/json", &rumpf_aus);
         strom.write_all(&aus).await?;
         strom.flush().await
     }

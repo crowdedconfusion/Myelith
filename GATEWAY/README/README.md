@@ -1,7 +1,7 @@
 # gateway (`myl-gateway`)
 
-> **Version:** 0.11.0
-> **Datum:** 2026-11-08
+> **Version:** 0.16.0
+> **Datum:** 2026-11-17
 > **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
 > nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
 
@@ -83,6 +83,139 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.16.0 (2026-11-17): Zusagen werden vorgemerkt, Aufrufe nur angebotener Werkzeuge
+
+- ⚑ **`zugang::Zusage`: Eine Zusage mindert das Guthaben, solange ihre
+  Anfrage läuft.** 📌 Bis hierher zog das Guthaben nur ab, was abgerechnet
+  und noch nicht in der Kette war. Ein Inhaber mit mehreren Sitzungen (A23
+  lässt je Sitzung eine Anfrage zugleich zu) bekam dasselbe Guthaben jeder
+  zugesagt; die Kette nahm nur so viele Abrechnungen an, wie es deckte, und
+  der Rest war Rechenarbeit, die er nicht bezahlte. Jetzt ermittelt
+  `Zusage::geben` den Höchstbetrag und merkt ihn unter derselben Sperre für
+  den Inhaber vor; jeder Ausgang der Anfrage gibt ihn frei (`Drop`). Danach
+  steht der abgerechnete Betrag in der Liste der Quelle, kurz doppelt, nie
+  gar nicht. ⚠️ Je Tür; zwei Türen wissen nichts voneinander. Probe
+  `laufende_zusagen_mindern_das_guthaben` (80, dann 20, dann 0; frei nach
+  dem Fallen; Gegenprobe ohne Vormerkung zweimal 80). Im Zweig „Prompt
+  ungedeckt“ wird die eigene Vormerkung vor dem Grund freigegeben.
+- ⚑ **Nur Aufrufe angebotener Werkzeuge werden `tool_calls`**
+  (`werkzeuge::aufrufe_lesen` nimmt die Namen, `Chatanfrage::angebotene_namen`).
+  Ein anderer Name bleibt im Text, wie bei OpenAI. Ein Harness, das nach
+  Namen verteilt, bekäme sonst einen Aufruf eines Werkzeugs, das es für
+  diese Anfrage nicht angeboten hat, und eine eingeschleuste Anweisung
+  hätte dafür nur den Namen zu raten. Probe mit Gegenprobe in
+  `aufrufe_werden_gelesen_und_unlesbares_bleibt_stehen`.
+
+### v0.15.0 (2026-11-17): Die Tür sagt zu, was gedeckt ist (Fund 711)
+
+- ⚑ **Prompt und Ausgabe kosten** (Entscheidung des Projektinhabers vom
+  2026-11-17). Vor dem Rechnen kennt die Tür den Preis nicht, denn die
+  Prompt-Token zählt nur der Pod. Sie prüft deshalb nicht einen geschätzten
+  Preis, sondern ermittelt mit **`Zugangsstelle::hoechstbetrag`** das
+  Grösste, was Vollmacht, Kontrakt und Guthaben decken, höchstens die
+  Schranke aus Bytes und Deckel, und gibt es als
+  **`Rechenauftrag::hoechstens`** mit. Halbierend gesucht, weil jede der drei
+  Prüfungen monoton im Betrag ist. Eine Prüfung gegen eine Schätzung aus den
+  Bytes hätte gedeckte Anfragen abgewiesen: Die Bytes sind rund das
+  Dreifache der Token.
+- **`Rechenweg::rechne`** gibt `Result<Rechenergebnis, Rechenfehler>`
+  zurück. `Rechenfehler::NichtGerechnet` bleibt 502; **`Ungedeckt`** (schon
+  der Prompt kostet mehr als zugesagt) wird **402** mit dem Grund aus
+  **`Zugangsstelle::was_fehlt`** und dem Preis des Prompts, damit ein Klient
+  nachkauft statt neu anzulaufen. Ist nicht einmal ein Credit gedeckt, kommt
+  402 vor dem Rechnen.
+- Eine Antwort, die der Pod auf die Zusage gekürzt hat, endet mit
+  `finish_reason` `length`, wie eine am Deckel.
+- Proben `der_hoechstbetrag_ist_das_groesste_was_alle_decken` (Guthaben,
+  Einzellimit, Vorbehalt der Vollmacht und Schranke begrenzen je für sich;
+  ein Credit mehr ist nicht gedeckt) und
+  `die_tuer_sagt_zu_was_gedeckt_ist_und_ein_ungedeckter_prompt_bekommt_402`
+  über einen echten Socket.
+
+### v0.14.0 (2026-11-16): Die Tür prüft das Guthaben des Inhabers (Fund 707)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-16:** Credits bleiben kurz
+  gültig, die Tür prüft das Guthaben des Inhabers abzüglich offener
+  Abrechnungen, der Klient kauft je Epoche nach.
+- **`Kontraktquelle::guthaben`** (Vorgabe `None`): die nicht verfallenen
+  Credits des Inhabers laut Kette, abzüglich dessen, was diese Tür schon
+  abgerechnet hat und die Kette noch nicht kennt. Weiß die Quelle es nicht
+  (eine Probe ohne Kette), prüft die Tür es nicht.
+- **`Zugangsstelle::deckt_das_guthaben`**, in `bedienen_v1` nach Vollmacht und
+  Kontrakt: Reicht das Guthaben für den Höchstbetrag der Anfrage nicht, kommt
+  `402` mit „das Guthaben des Inhabers deckt diesen Auftrag nicht“, bevor
+  gerechnet wird. 📌 Die Kette bucht eine Abrechnung vom Konto des Inhabers
+  ab (`credit_spend`) und nimmt sie ohne Deckung nicht an; bis hierher
+  rechnete die Tür dann umsonst, und Credits verfallen nach einer Epoche.
+- Probe `das_guthaben_muss_den_hoechstbetrag_decken` mit Gegenproben im selben
+  Zug (genug Guthaben deckt, ohne Kenntnis wird nicht geprüft, ohne Kontrakt
+  deckt nichts).
+
+### v0.13.0 (2026-11-16): Die Tür setzt den Chat in der Vorlage des Netzmodells und kennt Werkzeuge (Fund 181)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-16**, nach kritischer
+  Prüfung: Es passt zum Konzept (AGENT_LAYER: „Die Tür des eigenen Knotens
+  spricht die OpenAI-Form … ein gewöhnlicher Klient und kein Sonderweg“).
+  Verworfen: ein lokaler Proxy im Klienten (die Tür bliebe für gewöhnliche
+  Klienten falsch) und eine Jinja-Vorlage im Artefakt (das Artefakt trägt
+  keine, sein Abdruck wäre berührt, fremder Vorlagencode liefe in der Tür).
+- **`Chatanfrage::prompt_in(vorlage)` statt `prompt()`**: Die Unterhaltung
+  steht in der Vorlage des Netzmodells (`myl_types::vorlage`) und nicht mehr
+  als `rolle: inhalt`, eine Form, auf der das Modell nie trainiert wurde.
+  Wie in der Vorlage der Qwen-Familie: die Werkzeugansage in der
+  Systemnachricht nach deren Text, ein Aufruf im Verlauf als
+  `<tool_call>`-Block, Werkzeugantworten hintereinander als
+  `<tool_response>`-Blöcke in einer Nutzerrunde, der Denkblock leer.
+- **`tools` und `tool_choice`**: höchstens 128 Werkzeuge, je `type: function`
+  mit Namen; `tool_choice` `auto` oder `none`. ⚑ `required` oder ein
+  bestimmtes Werkzeug lehnt die Tür ab, statt still `auto` daraus zu machen:
+  Erzwingen kann sie keinen Aufruf. `Nachricht` trägt `tool_calls` und
+  `tool_call_id`, `content: null` gilt als leer.
+- **`Chatantwort::werkzeugaufrufe_lesen`**: Die `<tool_call>`-Blöcke der
+  Antwort werden OpenAI-`tool_calls` (Kennung `call_<sitzung>_<n>`,
+  Argumente als JSON-Text in fester Form), `finish_reason` heißt
+  `tool_calls`, der Text ohne die Aufrufe wird `content`. Was sich nicht
+  lesen lässt, bleibt Text.
+- **`werkzeuge`** (neu): die Werkzeugansage mit sortierten Schlüsseln (die
+  Reihenfolge eines `serde_json::Value` hängt am Merkmal `preserve_order`,
+  das irgendeine Kiste im Baum einschalten kann), Aufruf und Antwort im
+  Verlauf, nachsichtiges Lesen der Aufrufe wie im Agenten.
+- **`Rechenweg::vorlage`**, Vorgabe ChatML; der Knoten nennt die seines Netzes.
+- Proben: Vorlage und Verlauf (Gegenprobe: `tool_choice: none` sagt nichts
+  an), Ablehnung von `required` und namenlosen Werkzeugen, Aufrufe werden
+  `tool_calls` (Gegenprobe: ohne Aufruf kein Feld), über einen echten Socket
+  `ein_harness_mit_werkzeugen_bekommt_tool_calls` (Gegenprobe: ohne die
+  Verdrahtung in der Tür rot). Zwei Proben erwarteten noch `rolle: inhalt`
+  und sind umgestellt.
+
+### v0.12.0 (2026-11-15): Ein fertiger Prompt über `/v1/completions`
+
+- ⚑ **Ein zweiter Weg der Tür, `WEG_TEXT`**: Ein Klient, der die Vorlage
+  seines Modells kennt, schickt den Prompt fertig (`Textanfrage`: `prompt`
+  als eine Zeichenkette, `max_tokens`), und die Tür reicht ihn unverändert
+  weiter. Ausweis, Deckel, Beleg, Kontrakt und Abrechnung sind dieselben wie
+  beim Chat; die Antwort (`Textantwort`) trägt `choices[0].text` und dieselben
+  Zusätze. Der Agent von Myelith nutzt das über die Tür (CLIENT 0.237.0).
+- ⚑ **Kein neues Recht:** Auch über `/v1/chat/completions` gehen
+  Sonderzeichen wie `<|im_start|>` im Inhalt unverändert zum Wortschatz; hier
+  fällt nur die Zusammensetzung weg. Eine Liste von Prompts oder Tokennummern
+  wird abgelehnt (mehrere Aufträge unter einem Beleg, ein Wortschatz beim
+  Klienten).
+- 📌 **`finish_reason` sagt jetzt, ob der Deckel griff** (`oai::abschluss`):
+  `length`, wenn so viele Token kamen, wie erlaubt waren, sonst `stop`. Bis
+  hierher stand immer `stop`, und ein Klient, der abgeschnittene Antworten
+  fortsetzt, hielt jede für vollständig. Seit Fund 702 (COMPUTE_PIPELINE
+  0.66.0) hält der Pod an der Endmarke, vorher kam jede Antwort bis zum Deckel.
+- ⚠️ **Fund 181 bleibt offen:** Über den Chatweg bekommt das Modell die
+  Unterhaltung weiter als `rolle: inhalt`.
+- Geprüft: vier neue Tests in `oai.rs` (Anfrage unverändert, Ablehnungen,
+  Antwortform, Abschluss) und `tests/tuer.rs::ein_fertiger_prompt_kommt_unveraendert_an`
+  (über einen echten Socket: ohne Rollen beim Rechenweg, Textform,
+  `length` bei einem Deckel von eins). Gegenproben je Zeile: `>` statt `>=`
+  im Abschluss, Strom erlaubt, leerer Prompt erlaubt, Deckel übergangen,
+  Textweg nie gewählt, Textweg nicht erlaubt; jeweils genau der passende Test
+  rot.
 
 ### v0.11.0 (2026-11-08): Mehrere Anfragen zugleich
 

@@ -91,6 +91,10 @@ pub enum TransitionError {
     PodOhneMitglieder,
     /// Die Aggregatsignatur gilt nicht unter den Mitgliedsschlüsseln.
     AggregatUngueltig,
+    /// Die Liste der Sitzungen im Bündel gilt nicht: zu lang, nicht
+    /// aufsteigend, eine leere Sitzung, oder ihre Summe ist nicht die
+    /// Segmentzahl des Bündels.
+    SitzungslisteUngueltig,
     /// Dieser Pod war in dieser Epoche nicht zum Training bestellt.
     ///
     /// ⚑ **Die Kernprüfung des Trainingsweges.** Ohne sie könnte jeder
@@ -286,6 +290,7 @@ impl std::fmt::Display for TransitionError {
             Self::BuendelExistiert => {
                 f.write_str("fuer diesen Pod liegt in dieser Epoche schon ein Buendel vor")
             }
+            Self::SitzungslisteUngueltig => f.write_str("die Liste der Sitzungen im Buendel gilt nicht"),
             Self::WurzelPasstNicht => write!(
                 f,
                 "das Manifest nennt eine andere Wurzel als die, unter der \
@@ -1312,6 +1317,13 @@ pub fn buendel_einreichen(
     // werden konnte.
     if mitglieder.is_empty() {
         return Err(TransitionError::PodOhneMitglieder);
+    }
+    // ⚑ **Die Liste der Sitzungen muss gelten** (Stufe 1 je Sitzung,
+    // 2026-11-16), vor der teuren Signaturprüfung: Nach ihr rechnet die
+    // Kette am Wechsel ab, und die Summe bindet sie an die Segmentzahl,
+    // aus der die Stichprobe zieht. Leer gilt (keine Liste).
+    if myl_types::sitzungsliste_pruefen(&buendel.sitzungen, buendel.segmente).is_err() {
+        return Err(TransitionError::SitzungslisteUngueltig);
     }
     let schluessel: Vec<myl_types::bls::BlsPublicKey> =
         mitglieder.iter().map(|(_, k)| *k).collect();
@@ -3513,6 +3525,7 @@ mod tests {
             segmente: 1,
             ausgabenwurzel: myl_types::MerkleRoot::new([0u8; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         }
     }
 
@@ -3615,6 +3628,52 @@ mod tests {
                 laufend: EpochId(4)
             })
         );
+    }
+
+    /// ⚑ **Stufe 1 je Sitzung:** Ein Bündel mit einer gültigen,
+    /// mitunterschriebenen Liste der Sitzungen wird aufgenommen; eine Liste,
+    /// deren Summe nicht die Segmentzahl ist, und eine nach dem
+    /// Unterschreiben veränderte werden abgewiesen.
+    #[test]
+    fn die_liste_der_sitzungen_muss_gelten_und_unterschrieben_sein() {
+        let z = |s: u64, n: u32| myl_types::Sitzungszeugnis { sitzung: s, segmente: n, wurzel: MerkleRoot::new([s as u8; 32]) };
+        let mit = |liste: Vec<myl_types::Sitzungszeugnis>, segmente: u32| {
+            let mut b = buendel(9, 4, 500);
+            b.segmente = segmente;
+            b.sitzungen = liste;
+            unterschreiben(&mut b, 1, 3);
+            b
+        };
+        let frisch = || {
+            let mut st = LedgerState::genesis(1);
+            st.epoch = EpochId(4);
+            for b in 1..4u8 {
+                angemeldet(&mut st, b);
+            }
+            st
+        };
+        let ein = |st: &mut LedgerState, b: PoIBundle| buendel_einreichen(st, &miner_adresse(1), b, &kennung(1), &besetzung(1, 3));
+        let mut st = frisch();
+        ein(&mut st, mit(vec![z(3, 2), z(8, 5)], 7)).expect("gültige Liste");
+        assert_eq!(st.buendel[&pod(9)].sitzungen.len(), 2);
+        // ⛔️ Gegenproben, jede richtig unterschrieben: falsche Summe,
+        //    nicht aufsteigend, leere Sitzung.
+        for (liste, segmente) in [(vec![z(3, 2), z(8, 5)], 8), (vec![z(8, 5), z(3, 2)], 7), (vec![z(3, 0), z(8, 7)], 7)] {
+            let mut st = frisch();
+            assert_eq!(ein(&mut st, mit(liste, segmente)), Err(TransitionError::SitzungslisteUngueltig));
+            assert!(st.buendel.is_empty());
+        }
+        // ⛔️ Nach dem Unterschreiben verändert (zwei Segmente von der
+        //    einen Sitzung zur anderen, die Summe stimmt weiter) oder
+        //    gestrichen: Das Aggregat trägt nicht mehr.
+        let mut verschoben = mit(vec![z(3, 2), z(8, 5)], 7);
+        verschoben.sitzungen = vec![z(3, 4), z(8, 3)];
+        let mut st = frisch();
+        assert_eq!(ein(&mut st, verschoben), Err(TransitionError::AggregatUngueltig));
+        let mut gestrichen = mit(vec![z(3, 2), z(8, 5)], 7);
+        gestrichen.sitzungen.clear();
+        assert_eq!(ein(&mut st, gestrichen), Err(TransitionError::AggregatUngueltig));
+        assert!(st.buendel.is_empty());
     }
 
     /// ⚑ Gegenprobe: Zweimal für denselben Pod geht nicht. Sonst

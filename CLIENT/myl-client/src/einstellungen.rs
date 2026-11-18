@@ -1042,7 +1042,7 @@ impl Schriftgroesse {
 /// ⚑ **Die Diagnose steht zuletzt** (Wunsch des Projektinhabers,
 /// 2026-10-17): Den Debug-Log schaltet man selten, und wer ihn sucht,
 /// sucht ihn ganz unten.
-pub const FELDER: [Feld; 34] = [
+pub const FELDER: [Feld; 35] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1310,6 +1310,16 @@ pub const FELDER: [Feld; 34] = [
         (
             "Lässt den Agenten im Arbeitsordner auch ändern und anlegen. Ohne Angabe darf er nur lesen.",
             "Lets the agent change and create inside the working folder. Unless set it may only read.",
+        ),
+    ),
+    feld(
+        "agent.sandbox",
+        Feldart::Schalter,
+        ("Agent", "Agent"),
+        myl_local_agent::agentenwahl::TITEL_SANDBOX,
+        (
+            "Lässt Befehle des Agenten (run_command und die Werkzeuge einer Kiste) in der Sandbox des Betriebssystems laufen: schreiben nur im Arbeitsordner, kein Lesen in der übrigen Heimat, kein Netz. Bei Bedarf abschalten; dann kann ein Befehl alles, was du kannst. Gibt das Betriebssystem keine Sandbox her (Windows, ein Linux vor Kern 6.2), läuft eingeschaltet kein Befehl.",
+            "Runs the agent's commands (run_command and the tools of a box) in the operating system's sandbox: writing only in the working folder, no reading in the rest of your home, no network. Switch it off when needed; then a command can do anything you can. Where the operating system has no sandbox (Windows, Linux before kernel 6.2), no command runs while this is on.",
         ),
     ),
     // ⚑ **Keine Hoechstzahl an Runden, keine Hoechstdauer und kein Halt
@@ -1593,6 +1603,7 @@ impl Einstellungen {
             "agent.web_recherche" => Feldwert::Schalter(self.agent.web_recherche),
             "agent.blick_kamera" => Feldwert::Schalter(self.agent.blick_kamera),
             "agent.text_kennzeichnen" => Feldwert::Schalter(self.agent.text_kennzeichnen),
+            "agent.sandbox" => Feldwert::Schalter(self.agent.sandkasten),
             "agent.schreiben" => Feldwert::Schalter(self.agent.schreiben),
             "agent.modus" => Feldwert::Text(self.agent.modus.kennung().to_string()),
             "kap.kerne" => self.kapazitaet.kerne.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
@@ -1718,6 +1729,7 @@ impl Einstellungen {
             "agent.web_recherche" => self.agent.web_recherche = ja(wert),
             "agent.blick_kamera" => self.agent.blick_kamera = ja(wert),
             "agent.text_kennzeichnen" => self.agent.text_kennzeichnen = ja(wert),
+            "agent.sandbox" => self.agent.sandkasten = ja(wert),
             "agent.schreiben" => self.agent.schreiben = ja(wert),
             "agent.modus" => self.agent.modus = Agentenmodus::aus(wert)?,
             "kap.kerne" => self.kapazitaet.kerne = opt(wert).map(|v| v as usize),
@@ -1785,6 +1797,28 @@ impl Einstellungen {
 
 #[cfg(test)]
 mod setzer {
+
+    /// ⚑ **Die Sandbox steht in Fenster und Konsole und laesst sich abschalten**
+    /// (Festlegung des Projektinhabers vom 2026-11-17). Vorgabe an; eine
+    /// Ablage mit dem frueheren Namen `sandkasten` gilt weiter.
+    #[test]
+    fn die_sandbox_steht_in_fenster_und_konsole_und_laesst_sich_abschalten() {
+        let f = FELDER.iter().find(|f| f.name == "agent.sandbox").expect("das Feld fehlt");
+        assert!(matches!(f.gilt, Gilt::Ueberall), "nicht in beiden Bedieninstrumenten");
+        assert_eq!((f.titel, f.titel_en), ("Sandbox", "Sandbox"));
+        let mut e = Einstellungen::default();
+        assert!(matches!(e.wert("agent.sandbox"), Ok(Feldwert::Schalter(true))), "Vorgabe ist an");
+        e.setzen("agent.sandbox", "aus").expect("abschalten");
+        assert!(matches!(e.wert("agent.sandbox"), Ok(Feldwert::Schalter(false))));
+        let gespeichert = serde_json::to_string(&e.agent).expect("speichern");
+        assert!(gespeichert.contains("\"sandbox\":false"), "{gespeichert}");
+        let alt: myl_local_agent::agentenwahl::Agenteneinstellung =
+            serde_json::from_str(r#"{"sandkasten":false}"#).expect("alter Name");
+        assert!(!alt.sandkasten, "der frühere Name gilt weiter");
+        let ohne: myl_local_agent::agentenwahl::Agenteneinstellung = serde_json::from_str("{}").expect("leer");
+        assert!(ohne.sandkasten, "eine Ablage aus der Zeit davor bedeutet an");
+    }
+
     use super::*;
 
     /// Die Sicherheitsmeldung vor `auto`: in beiden Sprachen vollstaendig,

@@ -485,6 +485,7 @@ async fn ein_inferenzauftrag_geht_ueber_das_netz() {
         prompt_versiegelt: b"versiegelter prompt".to_vec(),
         max_token: 64,
         pipeline: myl_types::hash::Hash::sha256(b"probe-pipeline"),
+        hoechstens: u64::MAX,
     };
     assert!(
         beta.inferenz_senden(alpha_id, auftrag).await,
@@ -551,6 +552,7 @@ async fn eine_flut_von_inferenzauftraegen_bindet_hoechstens_die_grenze() {
             prompt_versiegelt: b"versiegelt".to_vec(),
             max_token: 8,
             pipeline: myl_types::hash::Hash::sha256(b"probe-pipeline"),
+            hoechstens: u64::MAX,
         };
         assert!(beta.inferenz_senden(alpha_id, auftrag).await, "nicht abgeschickt");
     }
@@ -592,6 +594,7 @@ async fn ein_formwidriger_auftrag_wird_nicht_gesendet() {
         prompt_versiegelt: prompt,
         max_token,
         pipeline: myl_types::hash::Hash::sha256(b"p"),
+        hoechstens: u64::MAX,
     };
 
     assert!(

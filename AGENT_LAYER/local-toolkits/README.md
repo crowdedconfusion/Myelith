@@ -54,6 +54,8 @@ auseinanderlaufen.
 | `zeitgrenze_s` | nein | eigene Frist; Vorgabe 30 s, Deckel 300 s |
 | `fuer` | nein | welche Art Anhang es lesbar macht: `bild`, `ton`, `text`, `sonstiges` |
 | `fluss` | nein | was es für den Informationsfluss ist; ohne Angabe eine Shell (siehe unten) |
+| `sandbox` | nein | unter welcher Grenze der Befehl läuft: `eng`, `netz` oder `frei` (siehe unten; früher `sandkasten`, wird weiter gelesen) |
+| `schreibt` | nein | Ordner außerhalb des Arbeitsordners, relativ zum Manifest, in die es eine Ausgabe legt |
 
 - `befehl` ist eine Vorlage. `{feld}` wird durch das Argument `feld`
   ersetzt, **shell-sicher zitiert** (kein Einschleusen einer zweiten
@@ -124,6 +126,32 @@ fremdes Ergebnis bekommt vorn die Marke `[Untrusted origin: …]`; sie sagt
 dem Modell, dass der Text Auskunft ist und kein Auftrag, und sie trägt die
 Herkunft in die nächste Runde des Gesprächs.
 
+### `sandbox` und `schreibt`: was der Befehl kann
+
+Jeder Befehl läuft in der Sandbox des Betriebssystems (Seatbelt unter macOS,
+Landlock und seccomp unter Linux), solange `agent.sandbox` an ist.
+
+| Art | schreiben | lesen | Netz |
+|---|---|---|---|
+| `eng` (Vorgabe) | Arbeitsordner, eigener `$TMPDIR` | System, Arbeitsordner, Ordner der Kiste; nicht die übrige Heimat | nein |
+| `netz` | ebenso | ebenso | ja, ohne Unix-Sockel |
+| `frei` | alles, was du darfst | alles | ja |
+
+`"sandbox": "netz"` braucht ein Werkzeug, das etwas abruft; `"frei"` eines,
+das das System verwaltet (die GolemOS-Kiste). `"schreibt": ["../vorschau"]`
+öffnet einen Ausgabeordner neben der Kiste, etwa für eine Vorschau, die ein
+anderes Programm abholt; die Kiste selbst und ein Ordner über ihr gehen nicht.
+
+⛔️ **`frei` und `schreibt` gelten nur für eine Kiste außerhalb des
+Arbeitsordners.** Im Arbeitsordner kann der Agent schreiben, also auch ein
+Manifest, das sich selbst befreit; dort läuft es eng. Der Ordner der Kiste ist
+für ihre Befehle lesbar und nie beschreibbar.
+
+⚑ Die Kiste eines geprüften nativen Moduls ist ohne Angabe `frei`: Ihre
+Werkzeuge starten das Programm des Moduls, und das läuft nach seiner Signatur
+ohne Abschottung. Eine neue Fassung des Moduls kann ihren Manifesten eine
+Grenze geben, dann gilt diese.
+
 ## `kiste.json`: was die Kiste über sich sagt
 
 ⚑ **Der einzige reservierte Dateiname.** Er beschreibt die Kiste und
@@ -162,9 +190,10 @@ nähme dem Agenten seine Grenze.
 
 ## ⛔️ Sicherheit
 
-Ein Werkzeug aus einer Kiste führt einen Shell-Befehl aus und kann
-alles, was der Prozess kann; es hält die Einhängegrenze **nicht** ein.
-Deshalb:
+Ein Werkzeug aus einer Kiste führt einen Shell-Befehl aus; die
+Einhängegrenze der Dateiwerkzeuge hält eine Shell **nicht** ein. Die
+Grenze zieht die Sandbox (oben), und ist er aus oder das Werkzeug
+`frei`, kann der Befehl alles, was du kannst. Deshalb:
 
 - Es braucht die **Schreiberlaubnis** (`agent.schreiben an`), auch ein
   scheinbar nur lesendes: Die Shell kann immer schreiben. Ohne sie steht

@@ -28,6 +28,7 @@ fn der_agent_sucht_im_web_und_verraet_nichts_gelesenes() {
         wurzel: Some(d.path().display().to_string()),
         web_recherche: true,
         text_kennzeichnen: true,
+        sandkasten: myl_local_agent::sandkasten::vorhanden(),
         netzsaat: Some("Recherchiere, wie man eine Lagerverwaltung absichert.".into()),
         modul: None,
         modulkiste: None,

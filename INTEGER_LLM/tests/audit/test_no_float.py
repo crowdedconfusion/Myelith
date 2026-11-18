@@ -451,6 +451,8 @@ CONSENSUS_PATH = [
     # verschiedenen Kontostaenden.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "arbeitsverteilung.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "lib.rs",
+    # Die Vorlage des Netzmodells (Fund 181, 2026-11-16): Text, keine Zahl.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "vorlage.rs",
     # Der Generator der Konformitaetsvektoren gehoert dazu, obwohl er
     # nicht laeuft, wenn das Netz laeuft: Er **erzeugt die Referenz**,
     # gegen die sich fremde Implementierungen pruefen. Gleitkomma hier

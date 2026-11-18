@@ -104,3 +104,35 @@ fn der_stapel_rechnet_bitgleich_in_einer_runde_je_shard() {
     assert_eq!(weg_s.einzeln.load(Ordering::SeqCst), 3 * 4);
     assert_eq!(weg_e.einzeln.load(Ordering::SeqCst), (ids.len() + 3) * 4);
 }
+
+/// ⚑ **Auch mit gruppierten Experten** (2026-11-16): Ab 16 Token je Stapel
+/// rechnet ein Gemisch seine Experten gruppiert (`moe_gruppiert`), Token für
+/// Token einzeln (`moe_vorwaerts`); der kurze Prompt oben erreicht die
+/// Gruppierung nie. Im Auftragslauf mit dem 35B wichen Zwillinge nur dort
+/// voneinander ab, wo einer den Stapel und der andere die Wiederholung Token
+/// für Token gerechnet hatte. Ein Prompt über zwei volle Stapel.
+#[test]
+fn der_lange_stapel_rechnet_bitgleich_auch_mit_gruppierten_experten() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let tok = Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad")).expect("Wortschatz");
+    let text = "Die Abrechnung der Nebenkosten verteilt Grundsteuer, Wasser, Müllabfuhr, Hausreinigung, \
+                Gartenpflege, Allgemeinstrom, Gebäudeversicherung und Hauswart nach Fläche oder Personen. "
+        .repeat(8);
+    let ids: Vec<u32> = tok.encode(&text).iter().map(|t| *t as u32).collect();
+    assert!(ids.len() > 2 * myl_pod::shardweg::MAX_STAPEL, "der Prompt füllt keine zwei Stapel: {}", ids.len());
+
+    let (gestapelt, _) = koordinator(&dir, true);
+    let mit = gestapelt.run_prompt(9, &ids, 4);
+    let (einzeln, _) = koordinator(&dir, false);
+    let ohne = einzeln.run_prompt(9, &ids, 4);
+
+    assert_eq!(mit, ohne, "der Stapel rechnet andere Token");
+    let a = gestapelt.completed_segments();
+    let b = einzeln.completed_segments();
+    assert_eq!(a.len(), b.len(), "andere Zahl Segmente");
+    let abweichend = a.iter().zip(&b).position(|(x, y)| x.spurwurzel != y.spurwurzel);
+    assert_eq!(abweichend, None, "die Spur weicht ab, zuerst bei Segment {abweichend:?}");
+}

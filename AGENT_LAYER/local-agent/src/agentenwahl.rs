@@ -176,6 +176,22 @@ pub struct Agenteneinstellung {
     /// verneint ist.
     #[serde(default = "an")]
     pub text_kennzeichnen: bool,
+    /// **Ob Befehle im Sandkasten des Betriebssystems laufen**
+    /// (`crate::sandkasten`): `run_command` und jedes Manifest-Werkzeug, das
+    /// sich nicht selbst fuer frei erklaert.
+    ///
+    /// ⚑ **An, und eine Ablage aus der Zeit davor bedeutet an.** Aus ist
+    /// fuer zwei Lagen gedacht: eine Maschine, deren Betriebssystem keine
+    /// Grenze hergibt (dort laeuft sonst kein Befehl), und eine Arbeit,
+    /// die die Grenze nicht vertraegt. ⛔️ Aus heisst, ein Befehl kann
+    /// alles, was der Nutzer kann; die Ansage sagt es dem Modell nicht,
+    /// aber dem Menschen.
+    ///
+    /// ⚑ **Für Menschen heißt sie Sandbox** (Festlegung des Projektinhabers
+    /// vom 2026-11-17), gespeichert als `sandbox`; eine Ablage mit dem
+    /// früheren Namen `sandkasten` wird weiter gelesen.
+    #[serde(default = "an", rename = "sandbox", alias = "sandkasten")]
+    pub sandkasten: bool,
     /// **Die Saat des Zielkreises** für die Web-Werkzeuge: was der Mensch
     /// für diesen Lauf geschrieben hat, im Loop das Ziel des Tasks. Wird
     /// je Lauf gesetzt und nie gespeichert.
@@ -208,6 +224,7 @@ impl Default for Agenteneinstellung {
             blick_kamera: false,
             web_recherche: false,
             text_kennzeichnen: true,
+            sandkasten: true,
             netzsaat: None,
             modul: None,
             modulkiste: None,
@@ -578,9 +595,10 @@ pub const TITEL_BLICK_BILDSCHIRM: (&str, &str) = ("Bildschirm ansehen dürfen", 
 pub const TITEL_BLICK_KAMERA: (&str, &str) = ("Kamera ansehen dürfen", "May look through the camera");
 pub const TITEL_WEB_RECHERCHE: (&str, &str) = ("Im Web recherchieren dürfen", "May research on the web");
 pub const TITEL_TEXT_KENNZEICHNEN: (&str, &str) = ("Geschriebene Texte kennzeichnen", "Mark written texts");
+pub const TITEL_SANDBOX: (&str, &str) = ("Sandbox", "Sandbox");
 
 /// Die Felder, die [`feldtitel`] kennt.
-pub const BETITELTE_FELDER: [&str; 7] = [
+pub const BETITELTE_FELDER: [&str; 8] = [
     "agent.wurzel",
     "agent.schreiben",
     "agent.kistenordner",
@@ -588,6 +606,7 @@ pub const BETITELTE_FELDER: [&str; 7] = [
     "agent.blick_kamera",
     "agent.web_recherche",
     "agent.text_kennzeichnen",
+    "agent.sandbox",
 ];
 
 /// Die Beschriftung eines Agentenfeldes, oder `None` fuer ein anderes.
@@ -600,6 +619,7 @@ pub fn feldtitel(name: &str) -> Option<(&'static str, &'static str)> {
         "agent.blick_kamera" => Some(TITEL_BLICK_KAMERA),
         "agent.web_recherche" => Some(TITEL_WEB_RECHERCHE),
         "agent.text_kennzeichnen" => Some(TITEL_TEXT_KENNZEICHNEN),
+        "agent.sandbox" => Some(TITEL_SANDBOX),
         _ => None,
     }
 }

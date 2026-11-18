@@ -173,6 +173,45 @@ pub fn kontext(netz: &[u8; 32], e: u64, austeiler: &MinerId) -> Vec<u8> {
     k
 }
 
+/// Domaene des Abdrucks einer Runde.
+const DST_RUNDENABDRUCK: &[u8] = b"myl-dkg-rundenabdruck-v1";
+
+/// **Der Abdruck einer Runde**: Mitglieder mit Gewicht, Schluessel und
+/// Sitznummern, Gesamtgewicht, Schwelle und Zahl der Sitze. Alles, was beim
+/// Anlegen feststeht; Beschwerden, Offenlegungen und Anteile gehoeren nicht
+/// dazu.
+pub fn rundenabdruck(runde: &Saatrunde) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(DST_RUNDENABDRUCK);
+    h.update(borsh::to_vec(&runde.mitglieder).expect("borsh schreibt in einen Vec"));
+    h.update(runde.gesamtgewicht.to_le_bytes());
+    h.update(runde.schwelle.to_le_bytes());
+    h.update(runde.gesamt_sitze.to_le_bytes());
+    h.finalize().into()
+}
+
+/// **Der Kontext, aus dem ein Austeiler sein Polynom ableitet**: der
+/// oeffentliche [`kontext`] und der [`rundenabdruck`].
+///
+/// ⛔️ **Fund A51 (2026-11-18): nicht der oeffentliche Kontext allein.** Der
+/// nennt Netz, Epoche und Austeiler, aber nicht, wem welche Sitznummer
+/// gehoert. Nach einem Zweigwechsel teilte ein ehrlicher Knoten dasselbe
+/// Polynom noch einmal aus, an die Nummern des anderen Zweigs. Laesst ein
+/// Erzeuger auf einem Zweig die Schluesseleintragung eines Mitglieds weg,
+/// rutschen alle Nummern dahinter; ein Angreifer bekommt dann auf jedem Zweig
+/// Werte an anderen Nummern desselben Polynoms und kann aus beiden zusammen
+/// das Geheimnis des Austeilers bilden, schon mit rund einem Viertel der
+/// Sitze statt der Haelfte (Probe `zwei_zweige_geben_keine_punkte_dazu`).
+/// Dieselbe Regel wie bei einer deterministischen Nonce (RFC 6979, 3.2):
+/// Die Ableitung bindet alles, woran die Ausgabe haengt. Eine andere Runde
+/// ergibt ein unabhaengiges Polynom; dieselbe nach einem Neustart dasselbe.
+pub fn ableitungskontext(netz: &[u8; 32], e: u64, austeiler: &MinerId, runde: &Saatrunde) -> Vec<u8> {
+    let mut k = kontext(netz, e, austeiler);
+    k.extend_from_slice(&rundenabdruck(runde));
+    k
+}
+
 /// **Anlegen** der Runde fuer `e` aus dem Satz von `e`. Ohne Satz, ohne
 /// Sitze oder mit weniger Sitzen als der Schwelle keine Runde.
 pub fn runde_anlegen(state: &mut LedgerState, e: u64) {
@@ -693,6 +732,78 @@ mod tests {
         // Ohne Satz keine Runde.
         runde_anlegen(&mut s, 6);
         assert!(!s.saatrunden.contains_key(&6));
+    }
+
+    /// ⛔️ **Fund A51.** Zwei Zweige mit derselben Epoche und demselben Satz,
+    /// auf dem einen fehlt die Schluesseleintragung des ersten Mitglieds
+    /// (ein Erzeuger hat sie weggelassen). Der Angreifer `P` haelt auf jedem
+    /// Zweig weniger als die Schwelle, bekommt aber auf beiden Werte des
+    /// Austeilers `D` an verschiedenen Nummern.
+    ///
+    /// Gegenprobe mit dem alten Kontext: Beide Zweige teilen dasselbe
+    /// Polynom aus, und aus den Werten beider Zweige rechnet `P` das
+    /// Geheimnis von `D` aus. Mit dem Ableitungskontext sind es zwei
+    /// unabhaengige Polynome, und dieselbe Rechnung trifft keines.
+    #[test]
+    fn zwei_zweige_geben_keine_punkte_dazu() {
+        let zweig = |h_mit_schluessel: bool| {
+            let mut s = LedgerState::genesis(1);
+            // H und P je ein Viertel, sechs kleine ehrliche Mitglieder.
+            let satz: crate::stimmsatz::Satz = [3u64, 3, 1, 1, 1, 1, 1, 1]
+                .iter()
+                .enumerate()
+                .map(|(i, w)| (m(i as u8 + 1), myl_types::bls::BlsSecretKey::key_gen(&[i as u8 + 1; 32]).unwrap().public_key().unwrap(), *w))
+                .collect();
+            for i in 1..=8u8 {
+                if i != 1 || h_mit_schluessel {
+                    s.verschluesselung.insert(m(i), entschluessel(i).oeffentlich());
+                }
+            }
+            s.stimmsaetze.insert(5, satz);
+            runde_anlegen(&mut s, 5);
+            s.saatrunden.get(&5).unwrap().clone()
+        };
+        let (a, b) = (zweig(true), zweig(false));
+        let (p, d) = (m(2), m(3));
+        let nummern = |r: &Saatrunde| {
+            let x = r.mitglied(&p).unwrap();
+            x.erste_nummer..x.erste_nummer + x.sitze
+        };
+        assert_eq!(a.schwelle, b.schwelle, "derselbe Satz, dieselbe Schwelle");
+        let t = a.schwelle as usize;
+        assert!(nummern(&a).count() < t && nummern(&b).count() < t, "auf keinem Zweig allein genug");
+        let vereinigt: std::collections::BTreeSet<u64> = nummern(&a).chain(nummern(&b)).collect();
+        assert!(vereinigt.len() >= t, "zusammen genug Nummern: {vereinigt:?}, Schwelle {t}");
+
+        // Was P aus beiden Zweigen von D bekommt, und was daraus folgt.
+        let rekonstruiert = |pa: &Polynom, pb: &Polynom| {
+            let mut punkte: Vec<(u64, Skalar)> = nummern(&a).map(|n| (n, pa.anteil(n))).collect();
+            for n in nummern(&b) {
+                if !punkte.iter().any(|(x, _)| *x == n) {
+                    punkte.push((n, pb.anteil(n)));
+                }
+            }
+            punkte.truncate(t);
+            let xs: Vec<u64> = punkte.iter().map(|(n, _)| *n).collect();
+            let g = schwelle::lagrange_bei_null(&xs).unwrap();
+            punkte.iter().zip(&g).fold(Skalar::NULL, |s, ((_, w), l)| s.plus(&w.mal(l)))
+        };
+        let geheim = [3u8; 32];
+        // Alt: der oeffentliche Kontext allein.
+        let k = kontext(&NETZ, 5, &d);
+        let (alt_a, alt_b) = (Polynom::ableiten(&geheim, &k, a.schwelle).unwrap(), Polynom::ableiten(&geheim, &k, b.schwelle).unwrap());
+        assert_eq!(rekonstruiert(&alt_a, &alt_b), alt_a.anteil(0), "Gegenprobe: mit dem alten Kontext liegt das Geheimnis offen");
+        // Neu: je Runde ein eigenes Polynom.
+        let neu_a = Polynom::ableiten(&geheim, &ableitungskontext(&NETZ, 5, &d, &a), a.schwelle).unwrap();
+        let neu_b = Polynom::ableiten(&geheim, &ableitungskontext(&NETZ, 5, &d, &b), b.schwelle).unwrap();
+        assert_ne!(neu_a.bindung(), neu_b.bindung());
+        let r = rekonstruiert(&neu_a, &neu_b);
+        assert_ne!(r, neu_a.anteil(0));
+        assert_ne!(r, neu_b.anteil(0));
+        // Dieselbe Runde ergibt dasselbe Polynom (kein zweites nach einem Neustart).
+        assert_eq!(Polynom::ableiten(&geheim, &ableitungskontext(&NETZ, 5, &d, &a), a.schwelle).unwrap().bindung(), neu_a.bindung());
+        // Der Kenntnisnachweis bleibt am oeffentlichen Kontext.
+        assert!(schwelle::bindung_pruefen(&neu_a.bindung(), a.schwelle, &k, &neu_a.kenntnisnachweis(&k)));
     }
 
     #[test]

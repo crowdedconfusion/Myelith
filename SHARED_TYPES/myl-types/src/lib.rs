@@ -70,6 +70,7 @@ pub mod skalar;
 pub mod sitze;
 pub mod schwelle;
 pub mod anteilchiffre;
+pub mod vorlage;
 
 pub use erasure::{
     ErasureCoder, ErasureError, Fragment, DEFAULT_K, DEFAULT_M, GF_POLY,
@@ -84,6 +85,8 @@ pub use core_types::{
     ausgabenwurzel, differenz_pruefen, differenzseite, segments_root, Differenzbeweis, Differenzfehler, Differenzseite, spurwurzel, Ausgabenzeugnis, InferenceCredit, PoIBundle, Segment, Segmentzeugnis,
     Spuranfrage, Spurantwort, lieferung_pruefen, Lieferfehler, prompt_laenge, Spurablage, sitzung_und_position, token_aus_eingabe,
     eingabe_aus_bytes, verlauf_pruefen, Verlauffehler,
+    sitzungen_abgleichen, sitzungsliste_pruefen, sitzungszeugnisse, FehlendeSitzung, Sitzungsabgleich, Sitzungslistenfehler,
+    Sitzungszeugnis, SITZUNGEN_JE_BUENDEL_HOECHSTENS,
 };
 pub use hash::Hash;
 pub use ids::{

@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.125.0"
+version = "0.133.1"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -83,6 +83,20 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", 
 libp2p = { version = "0.57", features = ["tokio"] }
 
 [features]
+# ⚑ **Der Rechenweg des Pruefers: `cpu-simd` als Vorgabe** (Fund 705,
+# 2026-11-15), wie bei den Shards (`myl-pod`) und im Klienten: Ohne Merkmal
+# rechnet die Laufzeit mit `reference`, skalar, beim 35B rund viermal so lang,
+# mit denselben Zahlen.
+#
+# ⚑ **Und jeder Beschleuniger, der zur Laufzeit geladen wird** (Fund 705,
+# 2026-11-16), wie bei den Shards: `cuda` und `rocm` ohne Abhaengigkeit, auf
+# macOS `metal` ueber die Abhaengigkeit unten. Was davon der Pruefer nimmt,
+# sagt die Freigabe des Besitzers (`--kerne`, `--rechenwerke`), die der
+# Knoten auch an jeden Shard weitergibt.
+default = ["cpu-simd", "cuda", "rocm"]
+cpu-simd = ["integer-llm-runtime/cpu-simd"]
+cuda = ["integer-llm-runtime/cuda"]
+rocm = ["integer-llm-runtime/rocm"]
 # ⚑ Das 0,6B gilt als Netzmodell nur in den Netzproben (Pruefnetz,
 # `INTEGER_LLM/runtime/src/netzfreigabe.rs`); der Checker laedt dasselbe
 # Modell wie die Shards der Probe, also mit demselben Merkmal. Nie im
@@ -144,6 +158,11 @@ opt-level = 2
 
 [profile.dev.package.integer-llm-runtime]
 opt-level = 2
+
+# ⚑ Die GPU von Apple-Silizium auch fuer den Pruefer (Fund 705), wie im
+# Klienten und in den Shards.
+[target.'cfg(target_os = "macos")'.dependencies]
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["cpu-simd", "metal"] }
 
 [dev-dependencies]
 # ⚑ **Nur zum Prüfen und ausdrücklich nicht im Bau.** Der Knoten liest

@@ -207,3 +207,48 @@ fn stapel_ueber_sitzungen_rechnen_bitgleich() {
     assert!(mit_prefill > 0, "kein gemischter Stapel mit Prefill-Positionen");
     eprintln!("[nebenlaeufig] gemischte Stapel: {gemischt}, davon mit Prefill: {mit_prefill}");
 }
+
+/// ⚑ **Fund 713: Ein Bündel ist der Anfang der Liste**, auch wenn danach
+/// weiter gerechnet wird. Eingereicht wird unter der Lesesperre, neben
+/// laufenden Sitzungen; Spurablage und Blätter für den Differenzbeweis
+/// müssen dann aus genau den Segmenten des Bündels entstehen.
+/// Gegenprobe: die ganze Liste nach einem weiteren Lauf trägt eine andere
+/// Wurzel, so wie die Ablage vor dem Fix sie genommen hätte.
+#[test]
+fn das_buendel_ist_der_anfang_der_liste_auch_wenn_danach_gerechnet_wird() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let (k, tok) = koordinator(&dir);
+    let ids = |p: &str| -> Vec<u32> { tok.encode(p).iter().map(|t| *t as u32).collect() };
+    k.rechne(100, &ids(PROMPTS[0]), 4);
+    k.rechne(101, &ids(PROMPTS[1]), 4);
+    let vorher = k.kanonisch();
+    let buendel = k.build_signed_poi_bundle().expect("Bündel");
+    let n = buendel.segmente as usize;
+    assert_eq!(n, vorher.len());
+
+    // Ein Lauf nebenher, während schon das nächste Bündel gebaut wird: Es
+    // kommt zustande, und seine Segmentzahl ist ein Anfang der Liste.
+    let k = Arc::new(k);
+    let nebenher = {
+        let k = Arc::clone(&k);
+        let eingabe = ids(PROMPTS[2]);
+        std::thread::spawn(move || k.rechne(102, &eingabe, 4))
+    };
+    let zweites = k.build_signed_poi_bundle().expect("Bündel neben einem Lauf");
+    nebenher.join().expect("Lauf");
+    assert!(zweites.segmente as usize >= n && zweites.segmente as usize <= k.segmentzahl());
+
+    // Nach dem Lauf: der Anfang ist das erste Bündel, Folge und Wurzeln gleich.
+    let anfang = k.kanonisch_bis(n);
+    assert_eq!(anfang.iter().map(|c| c.id).collect::<Vec<_>>(), vorher.iter().map(|c| c.id).collect::<Vec<_>>());
+    let (ausgaben, zeugnisse) = k.blaetter_bis(n);
+    assert_eq!(myl_types::segments_root(&zeugnisse).expect("Wurzel"), buendel.segments_root);
+    assert_eq!(myl_types::ausgabenwurzel(&ausgaben).expect("Wurzel"), buendel.ausgabenwurzel);
+    // ⛔️ Gegenprobe: die ganze Liste gehört nicht mehr zu diesem Bündel.
+    let (_, alle) = k.blaetter();
+    assert!(alle.len() > n, "der dritte Lauf hat nicht angehängt");
+    assert_ne!(myl_types::segments_root(&alle).expect("Wurzel"), buendel.segments_root);
+}

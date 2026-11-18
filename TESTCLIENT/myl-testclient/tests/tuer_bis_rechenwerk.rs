@@ -87,20 +87,26 @@ impl Gegenstellen for JedeSitzung {
     }
 }
 
-/// Das Rechenwerk bezeugt, was es im Klartext bekommen hat.
+/// Das Rechenwerk bezeugt, was es im Klartext bekommen hat. Es zaehlt fuenf
+/// Prompt-Token und erzeugt bis zu vier, und es haelt die Zusage der Tuer
+/// ein wie ein echter Pod (Fund 711): Was nicht gedeckt ist, rechnet es
+/// nicht, und `laeufe` zaehlt nur, was gerechnet wurde.
 struct Spiegelwerk {
     gesehen: Arc<Mutex<Vec<String>>>,
     laeufe: Arc<AtomicUsize>,
 }
 impl Klartextwerk for Spiegelwerk {
     fn rechne(&self, auftrag: &Inferenzauftrag, prompt: &[u8]) -> Inferenzantwort {
+        let Some(n) = auftrag.neue_token_im_rahmen(5) else {
+            return Inferenzantwort::Ungedeckt { sitzung: auftrag.sitzung, prompt_token: 5 };
+        };
         self.laeufe.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut g) = self.gesehen.lock() {
             g.push(String::from_utf8_lossy(prompt).to_string());
         }
         Inferenzantwort::Ergebnis {
             sitzung: auftrag.sitzung,
-            token: vec![1, 2, 3, 4],
+            token: (1..=n.min(4)).collect(),
             segment: SegmentId::new([0xab; 32]),
             prompt_token: 5,
             text: "Paris".to_string(),
@@ -252,7 +258,13 @@ async fn ein_harness_erreicht_durch_alle_schichten_ein_rechenwerk() {
     // versiegelt über die lokale Leitung ging.
     assert_eq!(laeufe.load(Ordering::SeqCst), 1, "das Rechenwerk lief nicht genau einmal");
     let gesehen = gesehen.lock().expect("gesehen").clone();
-    assert_eq!(gesehen, vec!["user: hauptstadt von frankreich?\n".to_string()]);
+    // In der Vorlage des Netzmodells (Fund 181); dieser Ortsweg nennt keine,
+    // also die Vorgabe ChatML. 📌 Bis zum 2026-11-16 kam hier
+    // `user: hauptstadt von frankreich?` an.
+    assert_eq!(
+        gesehen,
+        vec![myl_types::vorlage::Vorlage::ChatMl.bauen(&[("user", "hauptstadt von frankreich?")], false)]
+    );
 
     let _ = std::fs::remove_dir_all(&verz);
 }
@@ -393,8 +405,9 @@ async fn eine_gerechnete_anfrage_bucht_credits_ab() {
     };
     assert_eq!(vorhaben.sitzung, s_id);
     assert_eq!(vorhaben.handelnder, agent, "es wurde ein fremder Agent genannt");
-    // Vier Token erzeugt das Spiegelwerk, also vier Credits.
-    assert_eq!(vorhaben.betrag, 4, "es wurde nicht die geleistete Arbeit gebucht");
+    // Fuenf Token hinein, vier heraus: acht Vorwaertspaesse, also acht
+    // Credits (Fund 711; vorher nur die vier heraus).
+    assert_eq!(vorhaben.betrag, 8, "es wurde nicht die geleistete Arbeit gebucht");
     assert!(vollmacht.is_some(), "ohne Vollmacht kann die Kette nicht autorisieren");
 
     // ⚑ **Und jetzt der Punkt: Der Betreiber reicht ein, nicht der
@@ -411,12 +424,12 @@ async fn eine_gerechnete_anfrage_bucht_credits_ab() {
 
     assert_eq!(
         kette.zustand().sitzung(&s_id).expect("da").zustand.verbraucht_credits,
-        4,
+        8,
         "im Kettenzustand steht kein Verbrauch"
     );
     assert_eq!(
         kette.zustand().account(&inhaber).credits[0].vtfe,
-        9_996,
+        9_992,
         "die Credits des Inhabers sind nicht gesunken"
     );
 
@@ -514,10 +527,10 @@ async fn v1_gegen(k: Sitzungskontrakt, zustand: Sitzungszustand, max_tokens: u32
 }
 
 /// ⚑ **Einzellimit und Restbudget des Kontrakts greifen vor dem Rechnen.**
-/// Was die Anfrage höchstens kostet (`max_tokens`), steht beim Eintreffen
-/// fest; liegt es über dem Einzellimit oder über dem, was vom Budget übrig
-/// ist, darf die Tür nicht rechnen, denn die Kette nähme die Abbuchung
-/// danach nicht an, und die Arbeit wäre verschenkt.
+/// Die Tür sagt dem Pod zu, was beide decken (Fund 711); kostet schon der
+/// Prompt mehr, rechnet er nicht, denn die Kette nähme die Abbuchung danach
+/// nicht an, und die Arbeit wäre verschenkt. Reicht die Zusage für den
+/// Prompt, wird gerechnet und die Ausgabe gekürzt.
 #[tokio::test]
 async fn einzellimit_und_restbudget_greifen_vor_dem_rechnen() {
     // Gegenprobe zuerst: innerhalb der Grenzen wird gerechnet.
@@ -525,17 +538,26 @@ async fn einzellimit_und_restbudget_greifen_vor_dem_rechnen() {
     assert!(kopf.starts_with("HTTP/1.1 200"), "innerhalb der Grenzen abgewiesen: {kopf}");
     assert_eq!(laeufe, 1);
 
-    // Über dem Einzellimit.
+    // Über dem Einzellimit: Der Prompt allein kostet fünf.
     let mut k = kontrakt(7);
-    k.credits.einzellimit = 2;
+    k.credits.einzellimit = 4;
     let (kopf, laeufe) = v1_gegen(k, Sitzungszustand::neu(), 16).await;
     assert_eq!(laeufe, 0, "über dem Einzellimit wurde gerechnet ({kopf})");
-    assert!(!kopf.starts_with("HTTP/1.1 200"), "über dem Einzellimit kam 200");
+    assert!(kopf.starts_with("HTTP/1.1 402"), "über dem Einzellimit kam kein 402: {kopf}");
 
-    // Über dem Restbudget: 10 000 Budget, 9 990 verbraucht, 16 verlangt.
+    // Über dem Restbudget: 10 000 Budget, 9 996 verbraucht, der Prompt
+    // kostet fünf.
     let mut zustand = Sitzungszustand::neu();
-    zustand.verbraucht_credits = 9_990;
+    zustand.verbraucht_credits = 9_996;
     let (kopf, laeufe) = v1_gegen(kontrakt(7), zustand, 16).await;
     assert_eq!(laeufe, 0, "über dem Restbudget wurde gerechnet ({kopf})");
-    assert!(!kopf.starts_with("HTTP/1.1 200"), "über dem Restbudget kam 200");
+    assert!(kopf.starts_with("HTTP/1.1 402"), "über dem Restbudget kam kein 402: {kopf}");
+
+    // Gegenprobe: Ein Rest von sechs deckt den Prompt und ein Token mehr;
+    // gerechnet wird, gekürzt.
+    let mut zustand = Sitzungszustand::neu();
+    zustand.verbraucht_credits = 9_994;
+    let (kopf, laeufe) = v1_gegen(kontrakt(7), zustand, 16).await;
+    assert!(kopf.starts_with("HTTP/1.1 200"), "ein gedeckter Prompt wurde abgewiesen: {kopf}");
+    assert_eq!(laeufe, 1);
 }

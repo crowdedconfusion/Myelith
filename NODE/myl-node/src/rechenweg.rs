@@ -64,6 +64,12 @@ pub struct Ortsweg {
     shard: Mutex<Option<(Endpunkt, Gegenpunkte)>>,
     /// Wie das Modell heisst, das dieser Knoten anbietet.
     modellname: String,
+    /// Die Vorlage des Netzmodells (Fund 181), in der die Tür eine
+    /// Unterhaltung zusammensetzt.
+    vorlage: myl_types::vorlage::Vorlage,
+    /// ⚑ Die Abschrift der Tür, in der jede Abrechnung vorgemerkt wird,
+    /// bis die Kette sie kennt (Fund 707).
+    abschrift: Option<crate::tuer::Kontraktabschrift>,
     /// Der Pipeline-Stand, sobald der Shard ihn genannt hat.
     pipeline: Mutex<Option<myl_types::hash::Hash>>,
     /// Die eigene Epochenankündigung als Bytes, oder `None`.
@@ -141,6 +147,8 @@ impl Ortsweg {
             sitzungen: Mutex::new(Sitzungen::neu(ich, eigener)),
             shard: Mutex::new(None),
             modellname: modellname.to_string(),
+            vorlage: myl_types::vorlage::Vorlage::ChatMl,
+            abschrift: None,
             pipeline: Mutex::new(None),
             ankuendigung: Mutex::new(None),
             angekuendigt: Mutex::new(None),
@@ -243,6 +251,20 @@ impl Ortsweg {
     /// ⚑ **Getrennt vom Konstruktor**, damit ein Weg ohne Abrechnung
     /// nicht heimlich entsteht: Wer ihn weglässt, tut es sichtbar, und
     /// der Knoten sagt es im Protokoll.
+    /// ⚑ **Die Vorlage des Netzes** (Fund 181): Ohne sie setzt die Tür
+    /// ChatML, die Form der Qwen3-Familie.
+    pub fn mit_vorlage(mut self, vorlage: myl_types::vorlage::Vorlage) -> Self {
+        self.vorlage = vorlage;
+        self
+    }
+
+    /// ⚑ **Die Abschrift der Tür** (Fund 707): Jede Abrechnung wird dort
+    /// vorgemerkt, damit die Tür das Guthaben des Inhabers ohne sie prüft.
+    pub fn mit_abschrift(mut self, abschrift: crate::tuer::Kontraktabschrift) -> Self {
+        self.abschrift = Some(abschrift);
+        self
+    }
+
     pub fn mit_abrechnung(
         mut self,
         an: tokio::sync::mpsc::UnboundedSender<myl_consensus::block::Anweisung>,
@@ -305,9 +327,9 @@ impl Ortsweg {
 }
 
 /// Sagt, wo der Rechenweg endete, und gibt nichts zurück.
-fn gescheitert<T>(grund: &str, epoche: EpochId) -> Option<T> {
+fn gescheitert<T>(grund: &str, epoche: EpochId) -> Result<T, myl_gateway::oai::Rechenfehler> {
     eprintln!("myl-node: Rechenweg in Epoche {}: {grund}", epoche.0);
-    None
+    Err(myl_gateway::oai::Rechenfehler::NichtGerechnet)
 }
 
 #[async_trait::async_trait]
@@ -315,7 +337,7 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
     async fn rechne(
         &self,
         auftrag: myl_gateway::oai::Rechenauftrag<'_>,
-    ) -> Option<myl_gateway::oai::Rechenergebnis> {
+    ) -> Result<myl_gateway::oai::Rechenergebnis, myl_gateway::oai::Rechenfehler> {
         // ⚑ **Zuerst sagen, wer hier redet.** Ohne das kennt der Shard
         // die Punkte dieses Knotens nicht und bekommt einen Umschlag,
         // den er nicht öffnen kann. Träge, also heilt es einen
@@ -358,6 +380,8 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
             // Versprechen.
             max_token: auftrag.max_token.clamp(1, MAX_NEUE_TOKEN),
             pipeline,
+            // ⚑ Die Zusage der Tuer (Fund 711); der Pod haelt sie ein.
+            hoechstens: auftrag.hoechstens,
         };
         if inferenz.pruefe_form().is_err() {
             return gescheitert("der Auftrag ist formwidrig", self.epoche());
@@ -372,7 +396,7 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
                 prompt_token,
                 text,
                 ..
-            }) => Some(myl_gateway::oai::Rechenergebnis {
+            }) => myl_gateway::oai::Rechenergebnis {
                 text,
                 // ⚑ **Gezählt vom Shard und nicht hier geschätzt**
                 // (Fund 160). Hier stand die Byte-Länge des Prompts, und
@@ -382,13 +406,21 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
                 prompt_token,
                 neue_token: token.len() as u64,
                 segment: hex::encode(segment.as_bytes()),
-            }),
-            andere => gescheitert(&format!("der Shard rechnete nicht: {andere:?}"), self.epoche()),
+            },
+            // ⚑ Schon der Prompt kostet mehr als die Zusage (Fund 711):
+            //   nichts gerechnet, nichts abgebucht.
+            Ortsantwort::Inferenz(Inferenzantwort::Ungedeckt { prompt_token, .. }) => {
+                return Err(myl_gateway::oai::Rechenfehler::Ungedeckt { prompt_token });
+            }
+            andere => {
+                return gescheitert(&format!("der Shard rechnete nicht: {andere:?}"), self.epoche());
+            }
         };
         // ⚑ **Erst wenn gerechnet wurde, wird abgebucht.** Wer vorher
         // bucht, kassiert für eine Anfrage, die scheitern kann; wer gar
         // nicht bucht, verschenkt jede.
-        if let (Some(e), Some(kanal)) = (&ergebnis, &self.abrechnung) {
+        if let Some(kanal) = &self.abrechnung {
+            let e = &ergebnis;
             let nummer = self
                 .abrechnungsnummer
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -396,11 +428,18 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
                 sitzung: auftrag.sitzung_id,
                 handelnder: myl_types::ids::Address::aus_schluessel(&auftrag.vollmacht.agent),
                 waehrung: myl_types::sitzung::Waehrung::Credits,
-                // ⚑ **Ein Token, ein Credit, und mindestens einer.**
-                // Eine Anfrage, die nichts erzeugt hat, hat trotzdem
-                // einen vollen Durchlauf gekostet; sie umsonst zu
-                // rechnen wäre eine Einladung, genau das zu tun.
-                betrag: e.neue_token.max(1),
+                // ⚑ **Ein Vorwärtspass, ein Credit** (Fund 711, Entscheidung
+                // des Projektinhabers vom 2026-11-17): Prompt und Ausgabe,
+                // so wie der Pod sie als vTFE beansprucht, und mindestens
+                // einer. **Nie über der Zusage der Tür:** Sie ist geprüft;
+                // was darüber ginge, nähme die Kette nicht an. Der Pod hält
+                // sie ein; die Klammer hier fängt einen Shard, der falsch
+                // zählt, auf Kosten des Betreibers und nicht des Nutzers.
+                //
+                // 📌 Bis zum 2026-11-17 stand hier `neue_token.max(1)`: Ein
+                // Agent mit langem Kontext zahlte rund ein
+                // Fünfundzwanzigstel seiner Rechenarbeit.
+                betrag: myl_types::inferenzauftrag::preis(e.prompt_token, e.neue_token).min(auftrag.hoechstens).max(1),
                 empfaenger: self.empfaenger,
                 // ⚑ Der Beweis, dass dieser Knoten auf der Liste steht,
                 //   kommt mit der Vollmacht vom Inhaber (J1); fehlt er,
@@ -409,12 +448,19 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
                 bestaetigt_ausgeliefert: false,
                 nummer,
             };
+            if let Some(a) = &self.abschrift {
+                a.vormerken(vorhaben.sitzung, vorhaben.nummer, vorhaben.betrag);
+            }
             let _ = kanal.send(myl_consensus::block::Anweisung::SitzungAusgeben {
                 vorhaben,
                 vollmacht: Some(auftrag.vollmacht.clone()),
             });
         }
-        ergebnis
+        Ok(ergebnis)
+    }
+
+    fn vorlage(&self) -> myl_types::vorlage::Vorlage {
+        self.vorlage
     }
 
     async fn modell(&self) -> Option<myl_gateway::oai::Modellstand> {

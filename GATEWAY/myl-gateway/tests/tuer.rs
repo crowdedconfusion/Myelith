@@ -516,7 +516,7 @@ async fn zwei_authorization_koepfe_werden_abgewiesen() {
 // --- Stufe 3: die Flaeche nach aussen in der OpenAI-Form -------------
 
 use myl_gateway::oai::{
-    Modellstand, Rechenauftrag, Rechenergebnis, Rechenweg, WEG_CHAT, WEG_MODELLE,
+    Modellstand, Rechenauftrag, Rechenergebnis, Rechenfehler, Rechenweg, WEG_CHAT, WEG_MODELLE,
 };
 
 /// Ein Rechenweg, der bezeugt, was er bekommen hat.
@@ -526,11 +526,11 @@ struct Spiegelwerk {
 
 #[async_trait::async_trait]
 impl Rechenweg for Spiegelwerk {
-    async fn rechne(&self, auftrag: Rechenauftrag<'_>) -> Option<Rechenergebnis> {
+    async fn rechne(&self, auftrag: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
         if let Ok(mut g) = self.gesehen.lock() {
             g.push(auftrag.prompt.to_string());
         }
-        Some(Rechenergebnis {
+        Ok(Rechenergebnis {
             text: "Paris".to_string(),
             prompt_token: 12,
             neue_token: 1,
@@ -550,8 +550,8 @@ struct Totwerk;
 
 #[async_trait::async_trait]
 impl Rechenweg for Totwerk {
-    async fn rechne(&self, _: Rechenauftrag<'_>) -> Option<Rechenergebnis> {
-        None
+    async fn rechne(&self, _: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
+        Err(Rechenfehler::NichtGerechnet)
     }
     async fn modell(&self) -> Option<Modellstand> {
         Some(Modellstand {
@@ -617,9 +617,121 @@ async fn ein_harness_bekommt_eine_openai_antwort() {
     assert!(rumpf.contains(r#""myelith_deterministisch":true"#), "{rumpf}");
     // Die Sitzungsnummer kommt aus der Annahme, nicht vom Klienten.
     assert!(rumpf.contains(r#""myelith_sitzung":41"#), "{rumpf}");
-    // Und der Prompt kam mit Rollen beim Rechenwerk an.
+    // Und der Prompt kam in der Vorlage beim Rechenwerk an (Fund 181): Der
+    // Spiegel nennt keine, also die Vorgabe ChatML. 📌 Bis zum 2026-11-16
+    // stand hier `user: hauptstadt von frankreich?`.
     let gesehen = werk.gesehen.lock().expect("gesehen").clone();
-    assert_eq!(gesehen, vec!["user: hauptstadt von frankreich?\n".to_string()]);
+    assert_eq!(
+        gesehen,
+        vec![myl_types::vorlage::Vorlage::ChatMl.bauen(&[("user", "hauptstadt von frankreich?")], false)]
+    );
+}
+
+/// Ein Rechenweg, der wie ein Modell einen Werkzeugaufruf schreibt und den
+/// Prompt mitschreibt, in der Vorlage des Netzes mit Denkblock.
+struct Aufrufwerk {
+    gesehen: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl Rechenweg for Aufrufwerk {
+    async fn rechne(&self, auftrag: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
+        if let Ok(mut g) = self.gesehen.lock() {
+            g.push(auftrag.prompt.to_string());
+        }
+        Ok(Rechenergebnis {
+            text: "<tool_call>\n{\"name\": \"wetter\", \"arguments\": {\"ort\": \"Berlin\"}}\n</tool_call>".to_string(),
+            prompt_token: 30,
+            neue_token: 20,
+            segment: "ab12cd".to_string(),
+        })
+    }
+    async fn modell(&self) -> Option<Modellstand> {
+        Some(Modellstand { name: "raven".to_string(), pipeline: "beef".to_string() })
+    }
+    fn vorlage(&self) -> myl_types::vorlage::Vorlage {
+        myl_types::vorlage::Vorlage::ChatMlDenkblock
+    }
+}
+
+/// ⚑ **Ein Harness mit Werkzeugen bekommt `tool_calls`** (Fund 181), über
+/// einen echten Socket: Die Werkzeuge stehen angesagt im Prompt, in der
+/// Vorlage, die der Rechenweg nennt, und der `<tool_call>`-Block des Modells
+/// kommt als OpenAI-Aufruf zurück. Gegenprobe im selben Zug: Ohne `tools`
+/// bleibt der Block Text.
+#[tokio::test]
+async fn ein_harness_mit_werkzeugen_bekommt_tool_calls() {
+    for (mit, nummer) in [(true, 51u64), (false, 52u64)] {
+        let k = kontrakt(7);
+        let s_id = k.adresse();
+        let token = bearer_fuer(7, s_id);
+        let tuer = Tuer::binden(0).await.expect("binden");
+        let port = tuer.port().expect("port");
+        let annahme = std::sync::Mutex::new(Annahme::neu(nummer, EpochId(5)));
+        let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
+        let werk = Aufrufwerk { gesehen: std::sync::Mutex::new(Vec::new()) };
+        let werkzeuge = if mit {
+            r#","tools":[{"type":"function","function":{"name":"wetter","description":"Wetter","parameters":{"type":"object"}}}]"#
+        } else {
+            ""
+        };
+        let koerper = format!(r#"{{"messages":[{{"role":"user","content":"Wetter in Berlin?"}}],"max_tokens":32{werkzeuge}}}"#);
+        let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
+        let dienst = async {
+            tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &werk, EpochId(5), 1_700_000_000_000)
+                .await
+                .expect("bedienen");
+        };
+        let (antwort, _) = tokio::join!(frage(port, &bytes), dienst);
+        assert_eq!(status_von(&antwort), 200, "{}", String::from_utf8_lossy(&antwort));
+        let v: serde_json::Value = serde_json::from_slice(rumpf_von(&antwort)).expect("JSON");
+        let gesehen = werk.gesehen.lock().expect("gesehen").clone();
+        assert!(gesehen[0].starts_with("<|im_start|>"), "nicht in der Vorlage: {}", gesehen[0]);
+        assert!(gesehen[0].ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"), "{}", gesehen[0]);
+        if mit {
+            assert!(gesehen[0].contains("<tools>\n{\"type\":\"function\",\"function\":{\"name\":\"wetter\""), "{}", gesehen[0]);
+            assert_eq!(v["choices"][0]["finish_reason"], "tool_calls", "{v}");
+            assert_eq!(v["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "wetter", "{v}");
+            assert_eq!(v["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"], r#"{"ort":"Berlin"}"#, "{v}");
+        } else {
+            assert!(!gesehen[0].contains("<tools>"), "{}", gesehen[0]);
+            assert!(v["choices"][0]["message"].get("tool_calls").is_none(), "{v}");
+            assert!(v["choices"][0]["message"]["content"].as_str().unwrap_or("").contains("<tool_call>"), "{v}");
+        }
+    }
+}
+
+/// ⚑ **Ein fertiger Prompt geht unverändert zum Rechenweg** (`/v1/completions`,
+/// 2026-11-15), und die Antwort kommt in der Textform. Der Spiegel liefert ein
+/// Token bei einem Deckel von eins, also `length`. Über den Chatweg käme
+/// derselbe Inhalt in der Vorlage an.
+#[tokio::test]
+async fn ein_fertiger_prompt_kommt_unveraendert_an() {
+    let k = kontrakt(7);
+    let s_id = k.adresse();
+    let token = bearer_fuer(7, s_id);
+    let tuer = Tuer::binden(0).await.expect("binden");
+    let port = tuer.port().expect("port");
+    let annahme = std::sync::Mutex::new(Annahme::neu(43, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
+    let werk = Spiegelwerk { gesehen: std::sync::Mutex::new(Vec::new()) };
+    let prompt = "<|im_start|>user\nhallo<|im_end|>\n<|im_start|>assistant\n";
+    let koerper = format!(r#"{{"model":"m","prompt":{},"max_tokens":1}}"#, serde_json::to_string(prompt).expect("json"));
+    let bytes = post_bearer(myl_gateway::oai::WEG_TEXT, &token, koerper.as_bytes());
+    let dienst = async {
+        tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &werk, EpochId(5), 1_700_000_000_000)
+            .await
+            .expect("bedienen");
+    };
+    let (antwort, _) = tokio::join!(frage(port, &bytes), dienst);
+    assert_eq!(status_von(&antwort), 200, "{}", String::from_utf8_lossy(&antwort));
+    let v: serde_json::Value = serde_json::from_slice(rumpf_von(&antwort)).expect("json");
+    assert_eq!(v["object"], "text_completion");
+    assert_eq!(v["choices"][0]["text"], "Paris");
+    assert_eq!(v["choices"][0]["finish_reason"], "length", "ein Token bei einem Deckel von eins");
+    assert_eq!(v["myelith_sitzung"], 43);
+    let gesehen = werk.gesehen.lock().expect("gesehen").clone();
+    assert_eq!(gesehen, vec![prompt.to_string()], "ohne Rollen und ohne Zusatz");
 }
 
 /// ⚑ **Auch die Modellliste verlangt einen Ausweis.** Wer sie frei
@@ -753,10 +865,10 @@ struct Wartewerk {
 
 #[async_trait::async_trait]
 impl Rechenweg for Wartewerk {
-    async fn rechne(&self, _: Rechenauftrag<'_>) -> Option<Rechenergebnis> {
+    async fn rechne(&self, _: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
         self.begonnen.notify_one();
         self.weiter.notified().await;
-        Some(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+        Ok(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
     }
     async fn modell(&self) -> Option<Modellstand> {
         Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
@@ -803,4 +915,87 @@ async fn eine_sitzung_rechnet_nur_einmal_zugleich() {
     c.expect("bedienen");
     assert_eq!(status_von(&dritte), 200, "die Sitzung blieb nach dem Ende besetzt");
     assert!(String::from_utf8_lossy(rumpf_von(&dritte)).contains(r#""myelith_sitzung":2"#), "die abgewiesene bekam eine Nummer");
+}
+
+/// Ein Rechenweg, der den zugesagten Betrag mitschreibt und sich verhaelt
+/// wie ein Pod an der Grenze: Bei „lang“ kostet schon der Prompt mehr als
+/// zugesagt, sonst rechnet er genau bis an die Zusage.
+struct Zusagewerk {
+    zusagen: std::sync::Mutex<Vec<u64>>,
+}
+
+#[async_trait::async_trait]
+impl Rechenweg for Zusagewerk {
+    async fn rechne(&self, auftrag: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
+        if let Ok(mut z) = self.zusagen.lock() {
+            z.push(auftrag.hoechstens);
+        }
+        if auftrag.prompt.contains("lang") {
+            return Err(Rechenfehler::Ungedeckt { prompt_token: auftrag.hoechstens + 5 });
+        }
+        Ok(Rechenergebnis { text: "ok".to_string(), prompt_token: auftrag.hoechstens - 1, neue_token: 2, segment: "ab".to_string() })
+    }
+    async fn modell(&self) -> Option<Modellstand> {
+        Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
+    }
+}
+
+/// ⚑ **Die Tuer sagt zu, was gedeckt ist, und ein ungedeckter Prompt
+/// bekommt 402** (Fund 711), ueber einen echten Socket.
+///
+/// - Reicht das Einzellimit, ist die Zusage die Schranke aus Bytes und
+///   Deckel; sonst das Einzellimit.
+/// - Am Betrag gekuerzt endet die Antwort mit `length`, obwohl weniger
+///   Token kamen als der Deckel (Gegenprobe zur alten Regel).
+/// - Kostet schon der Prompt mehr, kommt 402 mit dem Grund und dem Preis
+///   des Prompts, nicht 502, auf das ein Klient neu anliefe.
+#[tokio::test]
+async fn die_tuer_sagt_zu_was_gedeckt_ist_und_ein_ungedeckter_prompt_bekommt_402() {
+    let werk = Zusagewerk { zusagen: std::sync::Mutex::new(Vec::new()) };
+    let einmal = |k: Sitzungskontrakt, inhalt: &'static str| {
+        let werk = &werk;
+        async move {
+            let token = bearer_fuer(7, k.adresse());
+            let tuer = Tuer::binden(0).await.expect("binden");
+            let port = tuer.port().expect("port");
+            let annahme = std::sync::Mutex::new(Annahme::neu(1, EpochId(5)));
+            let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
+            let koerper = format!(r#"{{"messages":[{{"role":"user","content":"{inhalt}"}}],"max_tokens":16}}"#);
+            let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
+            let dienst = async {
+                tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), werk, EpochId(5), 1_000)
+                    .await
+                    .expect("bedienen");
+            };
+            let (antwort, _) = tokio::join!(frage(port, &bytes), dienst);
+            (status_von(&antwort), String::from_utf8_lossy(rumpf_von(&antwort)).to_string())
+        }
+    };
+    let prompt = myl_types::vorlage::Vorlage::ChatMl.bauen(&[("user", "kurz")], false);
+    let schranke = myl_types::inferenzauftrag::obergrenze(prompt.len() as u64, 16);
+    assert!(schranke < 1_000, "die Probe braucht ein Einzellimit ueber der Schranke");
+
+    let (status, rumpf) = einmal(kontrakt(7), "kurz").await;
+    assert_eq!(status, 200, "{rumpf}");
+    assert!(rumpf.contains(r#""finish_reason":"length""#), "am Betrag gekuerzt und nicht als length gemeldet: {rumpf}");
+    assert_eq!(werk.zusagen.lock().expect("z").last().copied(), Some(schranke), "die Schranke aus Bytes und Deckel");
+
+    let mut eng = kontrakt(7);
+    eng.credits.einzellimit = 50;
+    let (status, rumpf) = einmal(eng.clone(), "kurz").await;
+    assert_eq!(status, 200, "{rumpf}");
+    assert_eq!(werk.zusagen.lock().expect("z").last().copied(), Some(50), "das Einzellimit begrenzt die Zusage");
+
+    let (status, rumpf) = einmal(eng, "lang").await;
+    assert_eq!(status, 402, "ein ungedeckter Prompt ist keine Stoerung der Gegenseite: {rumpf}");
+    assert!(rumpf.contains("der Kontrakt deckt diesen Auftrag nicht"), "{rumpf}");
+    assert!(rumpf.contains("der Prompt kostet 55 Credits, zugesagt waren 50"), "{rumpf}");
+    assert!(rumpf.contains(r#""type":"invalid_request_error""#), "{rumpf}");
+
+    let mut leer = kontrakt(7);
+    leer.credits.einzellimit = 0;
+    let vorher = werk.zusagen.lock().expect("z").len();
+    let (status, rumpf) = einmal(leer, "kurz").await;
+    assert_eq!(status, 402, "{rumpf}");
+    assert_eq!(werk.zusagen.lock().expect("z").len(), vorher, "ohne Zusage wird nicht gerechnet");
 }

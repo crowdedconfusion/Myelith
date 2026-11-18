@@ -7,6 +7,7 @@
 //! führen.
 
 use myl_client::oertlich::Vorlage;
+use myl_client::oertlich::bauen;
 use myl_local_agent::Nachricht;
 
 #[test]
@@ -17,7 +18,7 @@ fn chatml_setzt_rollen_und_marken() {
         Nachricht::system("Du bist knapp."),
         Nachricht::nutzer("Wie spaet ist es?"),
     ];
-    let p = Vorlage::ChatMl.bauen(&n, true);
+    let p = bauen(Vorlage::ChatMl, &n, true);
     assert_eq!(
         p,
         "<|im_start|>system\nDu bist knapp.<|im_end|>\n\
@@ -33,7 +34,7 @@ fn chatml_setzt_rollen_und_marken() {
 /// wieder `role: content` einsetzte und die Marken danebenschriebe.
 #[test]
 fn die_alte_form_kommt_nicht_heraus() {
-    let p = Vorlage::ChatMl.bauen(&[Nachricht::nutzer("hallo")], false);
+    let p = bauen(Vorlage::ChatMl, &[Nachricht::nutzer("hallo")], false);
     assert!(!p.contains("user: hallo"), "das ist die Gateway-Form, nicht ChatML");
     assert!(p.contains("<|im_start|>user\nhallo<|im_end|>"));
 }
@@ -45,7 +46,7 @@ fn die_alte_form_kommt_nicht_heraus() {
 /// fort. Genau daran scheitert ein Harness lautlos.
 #[test]
 fn die_antwort_ist_angekuendigt() {
-    let p = Vorlage::ChatMl.bauen(&[Nachricht::nutzer("x")], true);
+    let p = bauen(Vorlage::ChatMl, &[Nachricht::nutzer("x")], true);
     assert!(p.ends_with("<|im_start|>assistant\n"));
 }
 
@@ -68,7 +69,7 @@ fn die_familie_bestimmt_die_vorlage() {
 /// Frage.
 #[test]
 fn die_fortsetzung_traegt_keine_marken() {
-    let p = Vorlage::Fortsetzung.bauen(&[
+    let p = bauen(Vorlage::Fortsetzung, &[
         Nachricht::system("Sei knapp."),
         Nachricht::nutzer("Wie heisst die Hauptstadt von Frankreich?"),
     ], false);
@@ -84,14 +85,14 @@ fn die_fortsetzung_traegt_keine_marken() {
 /// Ende-zu-Ende-Lauf gescheitert.
 #[test]
 fn ohne_denken_steht_ein_leerer_denkblock() {
-    let p = Vorlage::ChatMl.bauen(&[Nachricht::nutzer("x")], false);
+    let p = bauen(Vorlage::ChatMl, &[Nachricht::nutzer("x")], false);
     assert!(p.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"));
 }
 
 /// Und mit Denken bleibt er weg, sonst waere der Schalter wirkungslos.
 #[test]
 fn mit_denken_bleibt_der_block_weg() {
-    let p = Vorlage::ChatMl.bauen(&[Nachricht::nutzer("x")], true);
+    let p = bauen(Vorlage::ChatMl, &[Nachricht::nutzer("x")], true);
     assert!(!p.contains("<think>"));
     assert!(p.ends_with("<|im_start|>assistant\n"));
 }
@@ -130,17 +131,17 @@ fn der_denkblock_wird_nur_dort_vorgegeben_wo_er_hingehoert() {
     use myl_client::oertlich::Vorlage;
     let n = [Nachricht::nutzer("hallo")];
 
-    let mit = Vorlage::ChatMlDenkblock.bauen(&n, true);
+    let mit = bauen(Vorlage::ChatMlDenkblock, &n, true);
     assert!(mit.ends_with("<|im_start|>assistant\n<think>\n"), "{mit:?}");
 
     // ⛔️ Qwen3 schreibt die Marke selbst; hier darf sie nicht stehen.
-    let ohne = Vorlage::ChatMl.bauen(&n, true);
+    let ohne = bauen(Vorlage::ChatMl, &n, true);
     assert!(ohne.ends_with("<|im_start|>assistant\n"), "{ohne:?}");
     assert!(!ohne.contains("<think>"), "{ohne:?}");
 
     // Ohne Denkmodus bleibt es bei beiden der GESCHLOSSENE leere Block.
     for v in [Vorlage::ChatMl, Vorlage::ChatMlDenkblock] {
-        let s = v.bauen(&n, false);
+        let s = bauen(v, &n, false);
         assert!(s.ends_with("<think>\n\n</think>\n\n"), "{s:?}");
     }
 }
@@ -156,7 +157,7 @@ fn oeffnet_denkblock_stimmt_mit_der_gebauten_aufforderung_ueberein() {
     let n = [Nachricht::nutzer("Hallo")];
     for vorlage in [Vorlage::ChatMl, Vorlage::ChatMlDenkblock, Vorlage::Fortsetzung] {
         for denken in [true, false] {
-            let aufforderung = vorlage.bauen(&n, denken);
+            let aufforderung = bauen(vorlage, &n, denken);
             // Offen heisst: Die Aufforderung endet auf einem `<think>`,
             // das nicht wieder geschlossen wurde.
             let offen = aufforderung.ends_with("<think>\n")

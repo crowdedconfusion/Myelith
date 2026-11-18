@@ -95,6 +95,7 @@ pub mod netzwerkzeuge;
 pub mod notaus;
 pub mod ort;
 pub mod ruestung;
+pub mod sandkasten;
 pub mod schale;
 pub mod schlaf;
 pub mod bibliothek;
@@ -107,6 +108,7 @@ pub mod textstrom;
 pub mod uhr;
 pub mod verankert;
 pub mod verlauf;
+pub mod verweisfrei;
 pub mod vorhaben;
 pub mod werkzeuge;
 pub mod zwischenruf;
@@ -135,6 +137,11 @@ pub const VERBOTENE_KISTEN: [&str; 3] = ["myl-consensus", "myl-ledger", "myl-nod
 /// länger als die Grenze erlaubt. Ein Klient kennt eine URL, mehr
 /// nicht; genau das war der Zweck der Stufe 3.
 pub const WEG_CHAT: &str = "/v1/chat/completions";
+/// Der Weg der Tür für einen fertigen Prompt (2026-11-15), siehe
+/// [`Tuerklient::vervollstaendigen`].
+pub const WEG_TEXT: &str = "/v1/completions";
+/// Der Weg der Modellliste (2026-11-16), siehe [`Tuerklient::modelle`].
+pub const WEG_MODELLE: &str = "/v1/models";
 
 /// Der Vorgabeport der eigenen Tür eines Knotens.
 pub const TUER_PORT: u16 = 4160;
@@ -153,6 +160,7 @@ mod tests {
     #[test]
     fn die_wegangaben_sind_die_der_tuer() {
         assert_eq!(WEG_CHAT, "/v1/chat/completions");
+        assert_eq!(WEG_TEXT, "/v1/completions");
         assert_eq!(TUER_PORT, 4160);
     }
 

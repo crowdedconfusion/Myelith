@@ -58,11 +58,20 @@ pub struct Saatdienst {
     geheimnis: [u8; 32],
     entschluessel: Entschluesselungsschluessel,
     gesendet: BTreeMap<Vorgang, u64>,
-    /// Je (Epoche, Austeiler) einmal geprueft, und welche eigenen Sitze
-    /// dabei keinen passenden Wert hatten.
-    geprueft: BTreeMap<(u64, MinerId), Vec<u64>>,
-    /// Die eigenen Anteile je Schluesselquelle, nach Sitz.
-    anteile: BTreeMap<u64, Vec<(u64, Skalar)>>,
+    /// Je (Epoche, Austeiler, Abdruck) einmal geprueft, und welche eigenen
+    /// Sitze dabei keinen passenden Wert hatten.
+    ///
+    /// ⚑ **Der Abdruck gehoert zum Schluessel** (Fund A51, 2026-11-18): Er
+    /// fasst Bindung, die Chiffren an den eigenen Sitzen und deren Nummern.
+    /// Nach einem Zweigwechsel kann derselbe Austeiler in derselben Epoche
+    /// anders ausgeteilt haben; ein Ergebnis vom anderen Zweig loeste sonst
+    /// eine unnoetige Beschwerde aus, und auf die hin legt ein ehrlicher
+    /// Austeiler einen Wert des eigenen Sitzes offen.
+    geprueft: BTreeMap<(u64, MinerId, [u8; 32]), Vec<u64>>,
+    /// Die eigenen Anteile je Schluesselquelle, nach Sitz, mit dem Abdruck
+    /// des Schluessels, aus dem sie gebildet sind (nach einem Zweigwechsel
+    /// kann es unter derselben Quelle ein anderer sein).
+    anteile: BTreeMap<u64, ([u8; 32], Vec<(u64, Skalar)>)>,
     /// Nur im Pruefbau: teilt falsch aus ([`Saatdienst::falsch_austeilen`]).
     #[cfg(feature = "falscher_austeiler")]
     falsch: bool,
@@ -121,7 +130,7 @@ impl Saatdienst {
     pub fn handlungen(&mut self, z: &LedgerState, netz: &[u8; 32], ich: &MinerId, hoehe: u64) -> Vec<Anweisung> {
         let jetzt = hoehe / BLOECKE_JE_EPOCHE;
         self.gesendet.retain(|v, _| v.epoche().saturating_add(2) >= jetzt);
-        self.geprueft.retain(|(e, _), _| e.saturating_add(2) >= jetzt);
+        self.geprueft.retain(|(e, _, _), _| e.saturating_add(2) >= jetzt);
         let quellen: BTreeSet<u64> = z.saatrunden.values().filter_map(|r| r.schluessel.as_ref().map(|s| s.aus_epoche)).collect();
         self.anteile.retain(|e, _| quellen.contains(e));
 
@@ -148,8 +157,10 @@ impl Saatdienst {
         if runde.schluessel.is_some() || !runde.mitglieder.iter().any(|m| m.miner == *ich) {
             return;
         }
+        // Oeffentlich (Kenntnisnachweis, Chiffren) der Kontext, abgeleitet
+        // wird aus dem Kontext mit dem Abdruck der Runde (Fund A51).
         let kontext = saat::kontext(netz, e, ich);
-        let Some(polynom) = Polynom::ableiten(&self.geheimnis, &kontext, runde.schwelle) else { return };
+        let Some(polynom) = Polynom::ableiten(&self.geheimnis, &saat::ableitungskontext(netz, e, ich, runde), runde.schwelle) else { return };
         match p {
             Phase::Austeilen => {
                 if !z.austeilungen.contains_key(&(e, *ich)) && self.faellig(Vorgang::Austeilen(e), hoehe) {
@@ -163,8 +174,9 @@ impl Saatdienst {
                     let meine: Vec<u64> = runde.mitglieder.iter().filter(|m| m.miner == *ich).flat_map(|m| m.erste_nummer..m.erste_nummer + m.sitze).collect();
                     let austeiler: Vec<MinerId> = z.austeilungen.keys().filter(|(x, _)| *x == e).map(|(_, a)| *a).collect();
                     for a in austeiler {
-                        let falsch = self.geprueft.entry((e, a)).or_insert_with(|| {
-                            let au = z.austeilungen.get(&(e, a)).expect("eben gelesen");
+                        let au = z.austeilungen.get(&(e, a)).expect("eben gelesen");
+                        let abdruck = austeilungsabdruck(au, &meine);
+                        let falsch = self.geprueft.entry((e, a, abdruck)).or_insert_with(|| {
                             let k = saat::kontext(netz, e, &a);
                             meine
                                 .iter()
@@ -220,7 +232,8 @@ impl Saatdienst {
     /// entschluesselt. Ein Sitz ohne vollstaendige Summe faellt weg.
     fn eigene_anteile(&mut self, z: &LedgerState, netz: &[u8; 32], ich: &MinerId, schluessel: &saat::Saatschluessel) -> Vec<(u64, Skalar)> {
         let quelle = schluessel.aus_epoche;
-        if let Some(a) = self.anteile.get(&quelle) {
+        let abdruck = schluesselabdruck(schluessel);
+        if let Some((_, a)) = self.anteile.get(&quelle).filter(|(d, _)| *d == abdruck) {
             return a.clone();
         }
         let Some(runde) = z.saatrunden.get(&quelle) else { return Vec::new() };
@@ -242,7 +255,7 @@ impl Saatdienst {
                 ergebnis.push((n, schwelle::anteile_summieren(&werte)));
             }
         }
-        self.anteile.insert(quelle, ergebnis.clone());
+        self.anteile.insert(quelle, (abdruck, ergebnis.clone()));
         ergebnis
     }
 
@@ -274,6 +287,32 @@ impl Saatdienst {
             aus.push(Anweisung::SaatAnteile { epoche: e, teile });
         }
     }
+}
+
+/// Abdruck dessen, wovon die Pruefung einer Austeilung fuer die eigenen
+/// Sitze abhaengt: Bindung, die Chiffren an diesen Sitzen, ihre Nummern.
+fn austeilungsabdruck(au: &Austeilung, meine: &[u64]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(borsh::to_vec(&au.bindung).expect("borsh schreibt in einen Vec"));
+    for n in meine {
+        h.update(n.to_le_bytes());
+        match au.chiffren.get((*n).wrapping_sub(1) as usize) {
+            Some(c) => {
+                h.update([1]);
+                h.update(c.r);
+                h.update(c.c);
+            }
+            None => h.update([0]),
+        }
+    }
+    h.finalize().into()
+}
+
+/// Abdruck eines Saatschluessels (Gruppe, Anteile, Inhaber, Qualifizierte).
+fn schluesselabdruck(s: &saat::Saatschluessel) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(borsh::to_vec(s).expect("borsh schreibt in einen Vec")).into()
 }
 
 #[cfg(test)]
@@ -423,6 +462,37 @@ mod tests {
             beta = anwenden(&mut z, &w, a, h).or(beta);
         }
         assert!(beta.is_some());
+    }
+
+    /// ⛔️ Fund A51: Nach einem Zweigwechsel steht unter derselben Epoche und
+    /// demselben Austeiler eine andere Austeilung. Der Dienst prueft sie neu,
+    /// statt das Ergebnis vom anderen Zweig zu nehmen. Gegenprobe: mit dem
+    /// Schluessel (Epoche, Austeiler) allein bleibt die Beschwerde aus.
+    #[test]
+    fn nach_einem_zweigwechsel_wird_neu_geprueft() {
+        let (mut z, mut dienste) = aufbau();
+        for (w, a) in runde(&mut z, &mut dienste, 3 * B) {
+            anwenden(&mut z, &w, a, 3 * B);
+        }
+        saat::runde_anlegen(&mut z, 5);
+        let h = 4 * B + 10;
+        for (w, a) in runde(&mut z, &mut dienste, h) {
+            anwenden(&mut z, &w, a, h);
+        }
+        // Auf diesem Zweig passt alles: keine Beschwerde, das Ergebnis liegt
+        // im Zwischenspeicher.
+        let h = 4 * B + B / 2;
+        assert!(runde(&mut z, &mut dienste, h).is_empty());
+        // Der andere Zweig: Austeiler 4 hat dort dem Sitz 1 etwas anderes
+        // geschickt.
+        let mut anders = z.austeilungen.get(&(5, m(4))).unwrap().clone();
+        anders.chiffren[0].c = [0x22; 32];
+        z.austeilungen.insert((5, m(4)), anders);
+        let beschwerden = runde(&mut z, &mut dienste, h + 1);
+        assert!(
+            matches!(beschwerden[..], [(w, Anweisung::SaatBeschweren { nummer: 1, .. })] if w == m(1)),
+            "{beschwerden:?}"
+        );
     }
 
     /// ⚑ Der Schalter des Pruefbaus: In ungerader Epoche faellt der

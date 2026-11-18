@@ -77,6 +77,32 @@ pub struct Pruefauftrag {
     /// und Layerbereich `[von, bis)`. Daraus folgt, wen eine Abweichung
     /// trifft.
     pub besetzung: Besetzung,
+    /// ⚑ **Ein Pflichtauftrag ist an seine Sitzung gebunden** (Stufe 1 je
+    /// Sitzung, 2026-11-16): Nummer der Sitzung und Zahl ihrer Segmente,
+    /// wie der Pod sie in seinem Bündel bezeugt hat. Die Kette kennt die
+    /// Folge unter `segments_root` nicht; ein Checker nimmt deshalb nur
+    /// einen Verlauf an, der genau diese Sitzung in dieser Länge ist. Passt
+    /// die Stelle nicht zur Sitzung, bleibt der Auftrag unvollständig und
+    /// der Vorbehalt verfällt. `None`: eine gewöhnliche Ziehung. Angehängt.
+    pub gebunden: Option<(u64, u32)>,
+}
+
+impl Pruefauftrag {
+    /// **Trägt ein gelieferter Verlauf die Bindung dieses Auftrags?** Ein
+    /// gewöhnlicher Auftrag ist nicht gebunden. Ein Pflichtauftrag verlangt
+    /// genau die bezeugte Sitzung in ihrer ganzen Länge: jede Kennung des
+    /// Verlaufs aus dieser Sitzung, und so viele, wie der Pod für sie
+    /// bezeugt hat. Der Checker fragt das, bevor er nachrechnet; trägt es
+    /// nicht, legt er nichts fest, und der Auftrag bleibt unvollständig.
+    pub fn bindung_traegt(&self, kennungen: &[myl_types::ids::SegmentId]) -> bool {
+        match self.gebunden {
+            None => true,
+            Some((sitzung, anzahl)) => {
+                kennungen.len() == anzahl as usize
+                    && kennungen.iter().all(|k| myl_types::sitzung_und_position(k).0 == sitzung)
+            }
+        }
+    }
 }
 
 /// ⚑ **Ein Streitfall** (T6d, Whitepaper 6.6, Festlegung des
@@ -262,6 +288,7 @@ pub fn auftraege_anlegen(
             wurzel: *wurzel,
             segmente: *segmente,
             besetzung: offen.besetzung.iter().find(|(p, _)| p == pod).map(|(_, b)| b.clone()).unwrap_or_default(),
+            gebunden: offen.pflicht.iter().find(|(p, s, _, _)| p == pod && s == segment).map(|(_, _, sitzung, anzahl)| (*sitzung, *anzahl)),
         });
     }
     ohne
@@ -352,13 +379,29 @@ pub struct Vorbehalt {
     pub je_miner: Vec<(MinerId, u64)>,
     pub frei: bool,
     pub bis_epoche: u64,
+    /// ⚑ **Der Vorbehalt einer Sitzung, die dem Zwilling fehlt** (Stufe 1
+    /// je Sitzung, 2026-11-16): die Stelle des Pflichtauftrags im Bündel
+    /// des Pods. Frei wird er nur, wenn dieser Auftrag einig und ohne
+    /// Abweichung schliesst ([`faellige_abschliessen`]); ein Urteil gegen
+    /// den Zwilling gibt ihn nicht frei, denn der Zwilling hat diese
+    /// Sitzung gar nicht bezeugt. `None`: der Vorbehalt des abweichenden
+    /// Teils. Angehängt.
+    pub pflicht: Option<u32>,
 }
 
-/// **Ein Pod ist überführt** (Schiedsurteil „Pod falsch“): sein Vorbehalt
-/// der Epoche verfällt, der seines Zwillings wird frei.
+/// ⚑ **Höchstens so viele Pflichtaufträge je Paar und Epoche** (Stufe 1 je
+/// Sitzung, 2026-11-16): Eine Sitzung, die nur ein Zwilling bezeugt, wird
+/// ganz nachgerechnet, und das kostet Checker. Die grössten zuerst,
+/// abwechselnd je Seite; was darüber hinaus fehlt, bleibt unvergütet.
+pub const PFLICHTAUFTRAEGE_JE_PAAR: usize = 4;
+
+/// **Ein Pod ist überführt** (Schiedsurteil „Pod falsch“): seine Vorbehalte
+/// der Epoche verfallen, alle, auch die seiner Pflichtaufträge. Der
+/// Vorbehalt des abweichenden Teils seines Zwillings wird frei; dessen
+/// Pflichtvorbehalte hängen allein an ihrem eigenen Auftrag.
 pub fn vorbehalt_entscheiden(state: &mut LedgerState, epoche: u64, falsch: &PodId) {
     state.vorbehalte.retain(|v| !(v.epoche == epoche && v.pod == *falsch));
-    for v in state.vorbehalte.iter_mut().filter(|v| v.epoche == epoche && v.zwilling == *falsch) {
+    for v in state.vorbehalte.iter_mut().filter(|v| v.epoche == epoche && v.zwilling == *falsch && v.pflicht.is_none()) {
         v.frei = true;
     }
 }
@@ -488,9 +531,35 @@ pub fn faellige_abschliessen(state: &mut LedgerState, hoehe: u64, schied_fenster
             (false, _) => Pruefausgang::Unvollstaendig,
         };
         if ausgang == Pruefausgang::Einig {
+            // ⚑ **Höchstens so viele Positionen, wie das Bündel Segmente hat**
+            //   (2026-11-17, Durchgang über die Pflichtaufträge): `positionen`
+            //   gibt der Checker selbst an, und der Pool zahlt nach Volumen.
+            //   📌 Bis hierher galt jede Zahl; ein Checker allein (es gab nur
+            //   einen Kandidaten), oder zwei, die sich absprechen, nahmen so
+            //   den anderen Checkern ihren Anteil. Ein Verlauf ist nie länger
+            //   als das ganze Bündel.
+            let hoechstens = auftrag.segmente.max(1);
             for (m, b) in &auftrag.aufdeckungen {
                 let v = state.pruefvolumen.entry(*m).or_insert(0);
-                *v = v.saturating_add(u64::from(b.positionen.max(1)));
+                *v = v.saturating_add(u64::from(b.positionen.clamp(1, hoechstens)));
+            }
+            // ⚑ **Ein Pflichtauftrag, einig und ohne Abweichung, gibt den
+            //   Vorbehalt seiner Sitzung frei** (2026-11-16), und nur dann:
+            //   Jeder Checker hat genau so viele Positionen nachgerechnet,
+            //   wie die Sitzung Segmente hat. Uneinig, unvollständig oder
+            //   mit Abweichung bleibt er zurück und verfällt.
+            if let Some((_, anzahl)) = auftrag.gebunden {
+                let ganz = !auftrag.aufdeckungen.is_empty()
+                    && auftrag.aufdeckungen.iter().all(|(_, b)| b.abweichung.is_none() && b.positionen == anzahl);
+                if ganz {
+                    for v in state
+                        .vorbehalte
+                        .iter_mut()
+                        .filter(|v| v.epoche == auftrag.epoche && v.pod == auftrag.pod && v.pflicht == Some(auftrag.segment))
+                    {
+                        v.frei = true;
+                    }
+                }
             }
         }
         if let Some((anfechter, (position, eintrag))) = abweichungen.iter().min_by_key(|(_, x)| *x).copied() {
@@ -638,6 +707,7 @@ mod tests {
             ersatz,
             // Vier Positionen über 28 Layer.
             besetzung: vec![(pod(), vec![(m(20), 0, 7), (m(21), 7, 14), (m(22), 14, 21), (m(23), 21, 28)])],
+            pflicht: Vec::new(),
         }
     }
 
@@ -691,6 +761,25 @@ mod tests {
         assert_eq!(s.pruefvolumen.get(&p[0]), Some(&7));
         assert_eq!(s.pruefvolumen.get(&p[1]), Some(&7));
         assert!(s.pruefauftraege.is_empty());
+    }
+
+    /// ⚑ **Das Volumen ist durch das Bündel gedeckelt** (2026-11-17): Ein
+    /// Checker allein, der eine riesige Zahl angibt, bekommt so viele
+    /// Positionen wie das Bündel Segmente hat (hier zehn). Gegenprobe: eine
+    /// Zahl darunter gilt, wie sie ist.
+    #[test]
+    fn das_volumen_ist_durch_das_buendel_gedeckelt() {
+        for (angegeben, gutgeschrieben) in [(u32::MAX, 10u64), (7, 7)] {
+            let mut s = LedgerState::genesis(1);
+            auftraege_anlegen(&mut s, &offen(vec![m(1)], Vec::new()), &[(pod(), 1)], 10, 20);
+            let b = Pruefbefund { positionen: angegeben, ..befund(None) };
+            let salz = [3u8; 32];
+            festlegen(&mut s, &a(1), 3, &pod(), 1, festlegung(&b, &salz, &m(1)), 5).unwrap();
+            aufdecken(&mut s, &a(1), 3, &pod(), 1, b, &salz, 6).unwrap();
+            let ab = faellige_abschliessen(&mut s, 21, 30);
+            assert_eq!(ab[0].ausgang, Pruefausgang::Einig);
+            assert_eq!(s.pruefvolumen.get(&m(1)), Some(&gutgeschrieben), "angegeben {angegeben}");
+        }
     }
 
     #[test]
@@ -801,6 +890,7 @@ mod tests {
                 pruefkandidaten: vec![m(1), m(2), m(3)],
                 ersatz: Vec::new(),
                 besetzung: Vec::new(),
+                pflicht: Vec::new(),
             },
             ausgabenwurzeln: vec![(pa, wurzel(myl_types::ausgabenwurzel(&aus_a))), (pb, wurzel(myl_types::ausgabenwurzel(&aus_b)))],
             gemeldet: Vec::new(),
@@ -840,6 +930,7 @@ mod tests {
             je_miner: vec![(m(wer), 100)],
             frei: false,
             bis_epoche: 6,
+            pflicht: None,
         };
         let mut st = LedgerState::genesis(1);
         st.vorbehalte = vec![vorbehalt(pa, pb, 1), vorbehalt(pb, pa, 2)];
@@ -855,5 +946,104 @@ mod tests {
         assert_eq!(st.vorbehalte.len(), 2);
         assert!(vorbehalte_faellig(&mut st, 6).is_empty());
         assert!(st.vorbehalte.is_empty(), "verfallen");
+    }
+
+    /// ⚑ **Stufe 1 je Sitzung, das Fehlende:** Der Vorbehalt einer Sitzung,
+    /// die dem Zwilling fehlt, wird nur frei, wenn sein Pflichtauftrag einig,
+    /// ohne Abweichung und über die ganze Sitzung schliesst.
+    #[test]
+    fn ein_pflichtauftrag_gibt_nur_einig_und_ganz_den_vorbehalt_frei() {
+        let zwilling = PodId::new([8; 32]);
+        let vorbehalt = |pflicht: Option<u32>, wert: u64| Vorbehalt {
+            epoche: 3,
+            pod: pod(),
+            zwilling,
+            je_miner: vec![(m(40), wert)],
+            frei: false,
+            bis_epoche: 6,
+            pflicht,
+        };
+        // Zwei Pflichtaufträge (Stellen 1 und 4), dazu der Vorbehalt des
+        // abweichenden Teils. Der Befund der Hilfe trägt sieben Positionen.
+        let lauf = |anzahl: u32, b: [Pruefbefund; 2], decken: usize| {
+            let mut s = LedgerState::genesis(1);
+            let mut o = offen(vec![m(1), m(2)], Vec::new());
+            o.pflicht = vec![(pod(), 1, 77, anzahl), (pod(), 4, 78, 3)];
+            assert_eq!(auftraege_anlegen(&mut s, &o, &[(pod(), 1), (pod(), 2)], 10, 20), 0);
+            assert_eq!(s.pruefauftraege[0].gebunden, Some((77, anzahl)));
+            assert_eq!(s.pruefauftraege[1].gebunden, None, "eine gewöhnliche Ziehung bleibt ungebunden");
+            s.vorbehalte = vec![vorbehalt(Some(1), 50), vorbehalt(Some(4), 30), vorbehalt(None, 20)];
+            let p = s.pruefauftraege[0].pruefer.clone();
+            let salz = [3u8; 32];
+            for (i, w) in p.iter().enumerate() {
+                festlegen(&mut s, &a(w.as_bytes()[0]), 3, &pod(), 1, festlegung(&b[i], &salz, w), 5).unwrap();
+            }
+            for (i, w) in p.iter().enumerate().take(decken) {
+                aufdecken(&mut s, &a(w.as_bytes()[0]), 3, &pod(), 1, b[i].clone(), &salz, 12).unwrap();
+            }
+            let ab = faellige_abschliessen(&mut s, 21, 30);
+            let frei: Vec<(Option<u32>, bool)> = s.vorbehalte.iter().map(|v| (v.pflicht, v.frei)).collect();
+            (ab.iter().find(|x| x.auftrag.segment == 1).map(|x| x.ausgang.clone()), frei, s)
+        };
+        let gut = befund(None);
+        // Einig, ohne Abweichung, sieben von sieben: genau dieser wird frei.
+        let (ausgang, frei, mut s) = lauf(7, [gut.clone(), gut.clone()], 2);
+        assert_eq!(ausgang, Some(Pruefausgang::Einig));
+        assert_eq!(frei, vec![(Some(1), true), (Some(4), false), (None, false)]);
+        assert_eq!(vorbehalte_faellig(&mut s, 4), vec![(m(40), 50)]);
+        // ⛔️ Gegenprobe 1: Die Sitzung hat neun Segmente, nachgerechnet
+        //    wurden sieben. Einig, aber nicht ganz: nichts wird frei.
+        let (ausgang, frei, _) = lauf(9, [gut.clone(), gut.clone()], 2);
+        assert_eq!(ausgang, Some(Pruefausgang::Einig));
+        assert!(frei.iter().all(|(_, f)| !f));
+        // ⛔️ Gegenprobe 2: Einer deckt nicht auf.
+        let (ausgang, frei, _) = lauf(7, [gut.clone(), gut.clone()], 1);
+        assert_eq!(ausgang, Some(Pruefausgang::Unvollstaendig));
+        assert!(frei.iter().all(|(_, f)| !f));
+        // ⛔️ Gegenprobe 3: Beide decken dieselbe Abweichung auf (einig,
+        //    aber falsch gerechnet): nichts wird frei, ein Streitfall steht.
+        let schlecht = befund(Some((2, 5)));
+        let (ausgang, frei, s) = lauf(7, [schlecht.clone(), schlecht], 2);
+        assert_eq!(ausgang, Some(Pruefausgang::Einig));
+        assert!(frei.iter().all(|(_, f)| !f));
+        assert_eq!(s.streitfaelle.len(), 1);
+        // ⛔️ Gegenprobe 4: verschiedene Befunde.
+        let anders = Pruefbefund { logits: Hash::sha256(b"andere"), ..gut.clone() };
+        let (ausgang, frei, _) = lauf(7, [gut.clone(), anders], 2);
+        assert_eq!(ausgang, Some(Pruefausgang::Uneinig));
+        assert!(frei.iter().all(|(_, f)| !f));
+
+        // ⚑ Die Bindung: genau die Sitzung, genau so lang.
+        let kennung = |sitzung: u64, p: u64| {
+            let mut b = [0u8; 32];
+            b[..8].copy_from_slice(&sitzung.to_le_bytes());
+            b[8..16].copy_from_slice(&p.to_le_bytes());
+            myl_types::ids::SegmentId::new(b)
+        };
+        let verlauf = |sitzung: u64, n: u64| (0..n).map(|p| kennung(sitzung, p)).collect::<Vec<_>>();
+        let mut s = LedgerState::genesis(1);
+        let mut o = offen(vec![m(1), m(2)], Vec::new());
+        o.pflicht = vec![(pod(), 1, 77, 7)];
+        auftraege_anlegen(&mut s, &o, &[(pod(), 1), (pod(), 2)], 10, 20);
+        let (gebunden, frei) = (&s.pruefauftraege[0], &s.pruefauftraege[1]);
+        assert!(gebunden.bindung_traegt(&verlauf(77, 7)));
+        // ⛔️ Eine andere Sitzung, zu kurz, zu lang, eine fremde Kennung
+        //    darin: trägt nicht.
+        assert!(!gebunden.bindung_traegt(&verlauf(78, 7)));
+        assert!(!gebunden.bindung_traegt(&verlauf(77, 6)));
+        assert!(!gebunden.bindung_traegt(&verlauf(77, 8)));
+        let mut gemischt = verlauf(77, 7);
+        gemischt[3] = kennung(78, 3);
+        assert!(!gebunden.bindung_traegt(&gemischt));
+        assert!(frei.bindung_traegt(&verlauf(78, 2)), "eine gewöhnliche Ziehung ist nicht gebunden");
+
+        // ⚑ Das Urteil gegen den Zwilling gibt nur den abweichenden Teil
+        //   frei; das Urteil gegen den Pod selbst nimmt ihm alles.
+        let mut s = LedgerState::genesis(1);
+        s.vorbehalte = vec![vorbehalt(Some(1), 50), vorbehalt(None, 20)];
+        vorbehalt_entscheiden(&mut s, 3, &zwilling);
+        assert_eq!(s.vorbehalte.iter().map(|v| (v.pflicht, v.frei)).collect::<Vec<_>>(), vec![(Some(1), false), (None, true)]);
+        vorbehalt_entscheiden(&mut s, 3, &pod());
+        assert!(s.vorbehalte.is_empty());
     }
 }

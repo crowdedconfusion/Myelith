@@ -126,6 +126,16 @@ pub enum Relaisfrage {
         /// Die Bytes.
         daten: Vec<u8>,
     },
+    /// ⚑ **Wie steht diese Sitzung, und was kostet ein Credit** (Fund 707,
+    /// 2026-11-16): Budget und Verbrauch des Kontrakts, die Credits des
+    /// Inhabers und der Preis der laufenden Epoche. Damit kauft ein Klient
+    /// innerhalb des Sitzungsbudgets nach, statt mitten im Auftrag ohne
+    /// Deckung zu stehen. Angehängt; [`Kontostand`] bleibt, wie er war,
+    /// und wer ihn liest, liest ihn weiter.
+    Sitzung {
+        /// Welche Sitzung.
+        id: crate::ids::SitzungId,
+    },
 }
 
 /// So gross ist ein Stück einer Spurablage höchstens, unter der Grenze
@@ -148,6 +158,50 @@ pub enum Relaisantwort {
     Erledigt(String),
     /// Die Antwort auf [`Relaisfrage::Konto`]. Angehängt.
     Konto(Kontostand),
+    /// Die Antwort auf [`Relaisfrage::Sitzung`]. Angehängt.
+    Sitzung(Sitzungsstand),
+}
+
+/// Eine Sitzung, wie der Knoten sie in der Kette sieht, samt dem, was ein
+/// Nachkauf wissen muss (Fund 707).
+///
+/// ⚑ **Zwei Zahlen für die Credits.** `credits` gilt jetzt; `credits_haltbar`
+/// gilt auch noch nach dem nächsten Epochenwechsel. Eine Runde, die über
+/// den Wechsel rechnet, wird erst danach abgebucht: Was dann verfallen ist,
+/// deckt sie nicht. Wie nah der Wechsel ist, sagen `bloecke_bis_wechsel` und
+/// `slot_ms`.
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Sitzungsstand {
+    /// Die Höhe, auf der geantwortet wurde.
+    pub hoehe: u64,
+    /// Die laufende Epoche.
+    pub epoche: u64,
+    /// So viele Blöcke bis zum nächsten Epochenwechsel, mindestens einer.
+    pub bloecke_bis_wechsel: u64,
+    /// Die Slotzeit dieses Netzes in Millisekunden.
+    pub slot_ms: u64,
+    /// Kleinstbeträge je Credit in der laufenden Epoche.
+    pub credit_preis: u64,
+    /// Der Inhaber des Kontrakts; von seinem Konto wird abgebucht.
+    pub inhaber: crate::ids::Address,
+    /// Seine Credits, die jetzt gelten ...
+    pub credits: u64,
+    /// ... und die davon, die auch die nächste Epoche noch gelten.
+    pub credits_haltbar: u64,
+    /// Sein Guthaben in Kleinstbeträgen.
+    pub guthaben: u64,
+    /// Budget des Kontrakts in Credits ...
+    pub budget: u64,
+    /// ... sein Einzellimit ...
+    pub einzellimit: u64,
+    /// ... und was die Kette davon schon abgebucht hat.
+    pub verbraucht: u64,
+    /// Die höchste abgerechnete Nummer.
+    pub hoechste_abrechnung: u64,
+    /// Die letzte Epoche, in der die Sitzung gilt.
+    pub gueltig_bis: u64,
+    /// Vom Inhaber widerrufen.
+    pub widerrufen: bool,
 }
 
 /// Ein Konto, wie der Knoten es sieht, und was eine Unterschrift braucht.
@@ -302,9 +356,44 @@ mod tests {
         };
         let a = Relaisantwort::Podbild(bild);
         assert_eq!(Relaisantwort::aus_bytes(&a.als_bytes().unwrap()), Some(a));
+        let s = Relaisantwort::Sitzung(Sitzungsstand {
+            hoehe: 5401,
+            epoche: 3,
+            bloecke_bis_wechsel: 1799,
+            slot_ms: 2000,
+            credit_preis: 67,
+            inhaber: crate::ids::Address::new([4; 32]),
+            credits: 900,
+            credits_haltbar: 500,
+            guthaben: 1_000_000,
+            budget: 4000,
+            einzellimit: 1000,
+            verbraucht: 120,
+            hoechste_abrechnung: 2,
+            gueltig_bis: 9,
+            widerrufen: false,
+        });
+        assert_eq!(Relaisantwort::aus_bytes(&s.als_bytes().unwrap()), Some(s));
         let mut mit_rest = Relaisfrage::Podbild.als_bytes().unwrap();
         mit_rest.push(0);
         assert_eq!(Relaisfrage::aus_bytes(&mit_rest), None, "ein Anhängsel wurde angenommen");
+    }
+
+    /// ⚑ **Angehängt heisst: Die alten Marken bleiben.** Ein Knoten oder
+    /// Klient vor der Sitzungsfrage liest alles Ältere weiter. Gegenprobe:
+    /// Wer die neue Variante nicht ans Ende stellt, verschiebt eine Marke,
+    /// und eine der Zahlen hier stimmt nicht mehr.
+    #[test]
+    fn die_sitzungsfrage_ist_angehaengt() {
+        let id = crate::ids::SitzungId::new([1; 32]);
+        assert_eq!(Relaisfrage::Podbild.als_bytes().unwrap()[0], 0);
+        assert_eq!(Relaisfrage::Konto { adresse: crate::ids::Address::new([0; 32]) }.als_bytes().unwrap()[0], 3);
+        assert_eq!(Relaisfrage::Transaktionen { txs: Vec::new() }.als_bytes().unwrap()[0], 8);
+        assert_eq!(Relaisfrage::Sitzung { id }.als_bytes().unwrap()[0], 10);
+        assert_eq!(Relaisantwort::Erledigt(String::new()).als_bytes().unwrap()[0], 3);
+        let k = Relaisantwort::Fehler("x".into()).als_bytes().unwrap();
+        assert_eq!(k[0], 2);
+        assert_eq!(Relaisfrage::aus_bytes(&Relaisfrage::Sitzung { id }.als_bytes().unwrap()), Some(Relaisfrage::Sitzung { id }));
     }
 
     #[test]

@@ -17,156 +17,17 @@ use myl_local_agent::{Antwort, Modellweg, Nachricht, Tuerfehler};
 
 /// Welche Form ein Artefakt versteht.
 ///
-/// # 📌 Warum das nicht der Client entscheidet (2026-09-08)
-///
-/// Der erste Anlauf setzte ChatML fuer alles, mit der Begruendung, es
-/// sei „die richtige" Vorlage. **Der Ende-zu-Ende-Test hat das
-/// widerlegt:** Qwen2.5-0,5B echote die Frage und lieferte Unsinn.
-///
-/// ⚑ **Der Grund stand im Modellkatalog.** Die Artefakte stammen aus
-/// `Qwen/Qwen2.5-0.5B` und `Qwen/Qwen2.5-7B`, also aus den
-/// **Basis**repositorien. Ein Basismodell ist auf Textfortsetzung
-/// trainiert und hat Rollenmarken nie gesehen; es setzt sie als
-/// gewoehnlichen Text fort. Bei **Qwen3** ist es umgekehrt: Dort ist
-/// die Fassung ohne Zusatz die instruktionsgeschliffene, das
-/// Basismodell hiesse `-Base`.
-///
-/// ⚑ **Deshalb haengt die Vorlage am Artefakt und nicht an einer
-/// Einstellung.** Eine Einstellung kann jemand falsch setzen; eine
-/// Eigenschaft des Modells nicht.
-///
-/// 📌 **Und eine Luecke, die offen bleibt:** Kaeme eine Instruct-Fassung
-/// von Qwen2.5 dazu, traeffe die Ableitung aus der Familie das Falsche.
-/// Dann braucht der Katalog ein eigenes Feld. Bis dahin ist die
-/// Herleitung richtig und die Grenze benannt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Vorlage {
-    /// Rollenmarken, wie ein instruktionsgeschliffenes Modell sie kennt.
-    ChatMl,
-    /// ChatML, aber die Aufforderung **oeffnet den Denkblock**.
-    ///
-    /// ⚑ **Der Unterschied ist eine Zeile und entscheidet alles**
-    /// (Fund 425). Qwen3 schreibt `<think>` selbst, sobald es dran ist;
-    /// die Vorlage des Qwen3.6 stellt es dagegen in die Aufforderung,
-    /// das Modell setzt also **innerhalb** des Blocks fort und schreibt
-    /// die Marke nicht mehr. Wer sie weglaesst, laesst das Modell auf
-    /// einer Form antworten, die seine Vorlage nie erzeugt.
-    ///
-    /// ⚠️ **Eine eigene Variante und kein Schalter an `ChatMl`**, damit
-    /// die Form fuer Qwen3 Zeichen fuer Zeichen bleibt, was sie war.
-    /// Vier eingesetzte Modelle haengen daran.
-    ChatMlDenkblock,
-    /// Schlichte Fortsetzung, wie ein Basismodell sie erwartet.
-    Fortsetzung,
-}
+/// ⚑ **Seit dem 2026-11-16 in `myl_types::vorlage`** (Fund 181): Die Tuer
+/// setzt den Chat jetzt in derselben Vorlage zusammen, und eine Form an zwei
+/// Stellen liefe auseinander. Hier steht nur noch, wie der Klient seine
+/// Nachrichten hineingibt.
+pub use myl_types::vorlage::Vorlage;
 
-impl Vorlage {
-    /// Leitet die Vorlage aus der Modellfamilie ab.
-    pub fn fuer_familie(familie: &str) -> Self {
-        match familie {
-            "qwen3" | "qwen3-moe" => Self::ChatMl,
-            // ⛔️ **Fund 425: die Familie des Qwen3.6 stand hier nicht**,
-            //   und das Modell bekam deshalb `Fortsetzung`, also rohen
-            //   Text statt ChatML. Ein Denkmodell auf einer Vorlage, die
-            //   es nie gesehen hat, antwortet mit Kauderwelsch, und der
-            //   Fehler sieht wie ein Numerikfehler aus.
-            //
-            // 📌 **Ein `_`-Zweig, der eine Notform liefert, verbirgt
-            //   jedes neue Modell.** Er ist hier richtig (ein Basismodell
-            //   soll fortsetzen), aber er meldet nichts, wenn ein
-            //   Chatmodell hineinfaellt. Deshalb steht die Familie jetzt
-            //   ausdruecklich da, und `die_familien_sind_abgedeckt` haelt
-            //   es fest.
-            f if f.starts_with("qwen3_5") => Self::ChatMlDenkblock,
-            _ => Self::Fortsetzung,
-        }
-    }
-
-    /// Setzt die Unterhaltung zusammen.
-    ///
-    /// ⚑ **`denken` entscheidet ueber den Denkmodus (2026-09-08).**
-    /// Qwen3 beginnt seine Antwort von sich aus mit einem
-    /// `<think>`-Block. Der erste Ende-zu-Ende-Lauf lieferte deshalb
-    /// „Okay, the user is asking for the capital of France..." und kam
-    /// bei vierundzwanzig Token nie zur Antwort.
-    ///
-    /// 📌 **Fuer einen Agenten ist das schaedlich und faellt nicht
-    /// auf:** Er erwartet einen Werkzeugaufruf und bekommt Ueberlegung,
-    /// und niemand sieht dem Fehlschlag an, warum. Ein **leerer**
-    /// Denkblock im Voraus sagt dem Modell, dass die Ueberlegung schon
-    /// stattgefunden hat, und es geht unmittelbar zur Antwort ueber.
-    /// ⚑ **Beginnt der Antwortstrom INNERHALB des Denkblocks?**
-    ///
-    /// Genau dann, wenn [`Self::bauen`] die Marke `<think>` offen
-    /// stehen laesst. Dann schreibt das Modell seine Ueberlegung ohne
-    /// sie noch einmal zu oeffnen und sendet nur noch `</think>`.
-    ///
-    /// ⛔️ **Deshalb steht diese Frage hier und nicht beim Zerleger**
-    /// (Fund 431, 2026-09-22). Bis dahin nahm der Zerleger an, jeder
-    /// Strom beginne ausserhalb, und wartete auf ein `<think>`, das
-    /// nie kam: Die **ganze** Ueberlegung des hybriden 35B ging als
-    /// Antworttext ins Fenster, und der Nutzer sah den Entwurfsprozess
-    /// statt eines ausklappbaren Blocks. 📌 **Wer die Vorlage aendert,
-    /// aendert die Lesart der Antwort mit**, und wenn beides an zwei
-    /// Stellen entschieden wird, laeuft es auseinander.
-    pub fn oeffnet_denkblock(self, denken: bool) -> bool {
-        denken && matches!(self, Self::ChatMlDenkblock)
-    }
-
-    pub fn bauen(self, nachrichten: &[Nachricht], denken: bool) -> String {
-        match self {
-            Self::ChatMl | Self::ChatMlDenkblock => {
-                let mut aus = String::new();
-                for n in nachrichten {
-                    aus.push_str("<|im_start|>");
-                    aus.push_str(&n.role);
-                    aus.push('\n');
-                    aus.push_str(&n.content);
-                    aus.push_str("<|im_end|>\n");
-                }
-                // ⚑ Die offene Marke sagt dem Modell, dass jetzt es
-                // dran ist. Ohne sie setzt es die Nutzerseite fort.
-                aus.push_str("<|im_start|>assistant\n");
-                if !denken {
-                    aus.push_str("<think>\n\n</think>\n\n");
-                } else if matches!(self, Self::ChatMlDenkblock) {
-                    // ⚑ **Offen, nicht geschlossen** (Fund 425): Das
-                    //   Modell soll ueberlegen, und seine Vorlage gibt
-                    //   ihm dafuer den Block vor.
-                    aus.push_str("<think>\n");
-                }
-                aus
-            }
-            // ⚑ **Fuer ein Basismodell zaehlt, was wie Text aussieht.**
-            // Am Pruefstand vom 2026-09-07 beantwortete Qwen2.5-0,5B
-            // vier von vier Fortsetzungsfragen und nur eine von zwei im
-            // Frage-Antwort-Schema. Die Fortsetzung ist damit nicht die
-            // Notloesung, sondern die passende Form.
-            Self::Fortsetzung => {
-                let mut aus = String::new();
-                for n in nachrichten {
-                    match n.role.as_str() {
-                        "system" => {
-                            aus.push_str(&n.content);
-                            aus.push_str("\n\n");
-                        }
-                        "assistant" => {
-                            aus.push_str("Antwort: ");
-                            aus.push_str(&n.content);
-                            aus.push('\n');
-                        }
-                        _ => {
-                            aus.push_str("Frage: ");
-                            aus.push_str(&n.content);
-                            aus.push('\n');
-                        }
-                    }
-                }
-                aus.push_str("Antwort:");
-                aus
-            }
-        }
-    }
+/// Setzt die Unterhaltung in der Vorlage zusammen, siehe
+/// [`Vorlage::bauen`].
+pub fn bauen(vorlage: Vorlage, nachrichten: &[Nachricht], denken: bool) -> String {
+    let paare: Vec<(&str, &str)> = nachrichten.iter().map(|n| (n.role.as_str(), n.content.as_str())).collect();
+    vorlage.bauen(&paare, denken)
 }
 
 /// Die Token, bei denen eine Antwort dieses Modells zu Ende ist.
@@ -909,25 +770,15 @@ impl Oertlichesmodell {
         Vorlage::fuer_familie(&self.familie)
     }
 
-    /// ⚑ **ChatML, und das weicht bewusst vom Netzweg ab.**
+    /// ⚑ **ChatML ohne Antwortmarke**, fuer den lokalen Pruefstand.
     ///
-    /// Der Gateway setzt eine Unterhaltung heute als `role: content`
-    /// zusammen. **Fund 181 haelt fest, dass Qwen2.5 und Qwen3 auf
-    /// ChatML trainiert sind** (`<|im_start|>rolle\ninhalt<|im_end|>`)
-    /// und diese Form damit eine ist, die das Modell **nie gesehen
-    /// hat**. Genau die Werkzeugfaehigkeit haengt an der Vorlage, und
-    /// ein Harness lebt von ihr.
-    ///
-    /// 📌 **Dort wurde es nicht geaendert, und das aus gutem Grund:** Die
-    /// Vorlage bestimmt die Token, die Token bestimmen die E2E-Vektoren,
-    /// und die stehen im Konformitaetswert. Eine Aenderung ist eine
-    /// Entscheidung ueber den numerischen Vertrag.
-    ///
-    /// ⚑ **Hier gilt das nicht.** Der lokale Weg ist keine bezahlte,
-    /// geprüfte Arbeit und steht in keinem Vertrag. Er benutzt deshalb
-    /// die **richtige** Vorlage und ist damit zugleich der Pruefstand,
-    /// an dem sich zeigt, ob ChatML die Werkzeugfaehigkeit hebt, **bevor**
-    /// jemand den Konformitaetswert dafuer bewegt.
+    /// **Fund 181 haelt fest, dass Qwen2.5 und Qwen3 auf ChatML trainiert
+    /// sind** (`<|im_start|>rolle\ninhalt<|im_end|>`). 📌 Bis zum
+    /// 2026-11-16 setzte die Tuer eine Unterhaltung als `role: content`
+    /// zusammen, aus Sorge, eine andere Vorlage bewege den
+    /// Konformitaetswert; die E2E-Vektoren nehmen aber Token als Eingabe,
+    /// nicht den Prompt der Tuer. Seitdem nimmt auch die Tuer die Vorlage
+    /// des Netzmodells (`myl_types::vorlage`).
     pub fn chatml(nachrichten: &[Nachricht]) -> String {
         let mut aus = String::new();
         for n in nachrichten {
@@ -1023,7 +874,7 @@ impl Oertlichesmodell {
         max_tokens: Option<u32>,
         abbruch: &std::sync::atomic::AtomicBool,
     ) -> Result<Antwort, Tuerfehler> {
-        let prompt = self.vorlage().bauen(nachrichten, self.denkt()) + anfang;
+        let prompt = bauen(self.vorlage(), nachrichten, self.denkt()) + anfang;
         // Einmal zerlegt, fuer den Zaehler und fuer die Rechnung: Bei einem
         // langen Verlauf kostet das Zerlegen selbst merklich.
         let prompt_token = self.wortschatz.encode(&prompt);
@@ -1213,7 +1064,7 @@ impl Modellweg for Oertlichesmodell {
     ///
     /// ⚑ Zaehlt nicht in die Tokenzaehler: Kein Auftrag hat das bestellt.
     fn vorwaermen(&self, nachrichten: &[Nachricht], abbruch: &std::sync::atomic::AtomicBool) -> Option<usize> {
-        let prompt = self.vorlage().bauen(nachrichten, self.denkt());
+        let prompt = bauen(self.vorlage(), nachrichten, self.denkt());
         let token = self.wortschatz.encode(&prompt);
         if token.len() >= self.modell.kontextgrenze() {
             return None;
@@ -1262,7 +1113,7 @@ impl Modellweg for Oertlichesmodell {
     /// Genau gezaehlt: dieselbe Vorlage und derselbe Wortschatz wie in
     /// [`Modellweg::chat`].
     fn kontext(&self, nachrichten: &[Nachricht]) -> Option<myl_local_agent::Kontextstand> {
-        let prompt = self.vorlage().bauen(nachrichten, self.denkt());
+        let prompt = bauen(self.vorlage(), nachrichten, self.denkt());
         Some(myl_local_agent::Kontextstand {
             belegt: self.wortschatz.encode(&prompt).len(),
             grenze: self.arbeitsgrenze(),

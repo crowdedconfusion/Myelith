@@ -351,6 +351,7 @@ mod tests {
             segmente,
             ausgabenwurzel: MerkleRoot::new([0u8; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         }
     }
 

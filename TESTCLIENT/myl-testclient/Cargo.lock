@@ -1756,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.92.0"
+version = "0.93.0"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -1769,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.106.1"
+version = "0.107.0"
 dependencies = [
  "integer-llm-kernels",
  "libc",
@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.134.0"
+version = "0.142.3"
 dependencies = [
  "aes",
  "borsh",
@@ -2671,7 +2671,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.52.0"
+version = "0.52.1"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2690,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "myl-gateway"
-version = "0.11.0"
+version = "0.16.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2712,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.58.0"
+version = "0.61.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2721,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.51.0"
+version = "0.58.0"
 dependencies = [
  "libc",
  "myl-agent",
@@ -2746,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "borsh",
  "chacha20poly1305",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.125.0"
+version = "0.133.1"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.56.0"
+version = "0.63.0"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",
@@ -2853,7 +2853,7 @@ dependencies = [
 
 [[package]]
 name = "myl-testclient"
-version = "0.69.8"
+version = "0.75.0"
 dependencies = [
  "borsh",
  "crossterm",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.69.0"
+version = "0.75.0"
 dependencies = [
  "blst",
  "borsh",

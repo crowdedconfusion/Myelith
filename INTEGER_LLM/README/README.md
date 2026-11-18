@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.152.0 (θ_v 0.22.0; kernels 0.92.0, runtime 0.106.1, pipeline 0.15.4)
-> **Datum:** 2026-11-15
+> **Version:** 0.154.0 (θ_v 0.22.0; kernels 0.93.0, runtime 0.107.0, pipeline 0.15.4)
+> **Datum:** 2026-11-18
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
 > Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
@@ -648,6 +648,82 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.154.0 (2026-11-18): Der int8-Kern mit `sdot` und `usdot` (kernels 0.93.0)
+
+- ⚑ **`dot::int8_zeile` und `dot::int8_zeile_viele`** (INT8-Kerne mit
+  den Punktproduktbefehlen der CPU, Teil ARM): Wo die Maschine `i8mm` hat (Apple ab M2), zerlegt
+  `Gewichtsmatrix::eingabe` auch fuer int8-Gewichte jede Eingabe einmal in
+  `x = 256 · hoch + tief` (dieselbe Zerlegung wie beim ternaeren und
+  Vierbitkern), und eine Zeile rechnet je 16 Werte mit einem `sdot`
+  (`w · hoch`) und einem `usdot` (`tief · w`) statt mit zwei Erweiterungen
+  und vier `vmlal`. Der gebuendelte Weg laedt die Zeile je 16 Werte einmal
+  fuer vier Eingaben. Ohne `i8mm` bleibt der alte Kern.
+- **Exaktheit:** `Σ w·x = 256 · Σ w·hoch + Σ w·tief`, ganzzahlig; die
+  `i32`-Spuren werden alle 4 096 Werte nach `i64` ausgeraeumt (hoechstens
+  33,4 Mio je Spur). Probe `der_zerlegte_kern_ist_die_skalare_formel`
+  (Laengen um 16, 32 und 4 096, Raender von `i8` und `i16`, eine und neun
+  Eingaben; belegt, dass der Kern lief); Gegenprobe am Code (Faktor 255
+  statt 256) rot.
+- **Gemessen** (`bench_probe`, 385 Token Prompt, `cpu-simd`, Freigabebau,
+  M5 Pro): sparrow 0,6B Vorbereitung 271 auf 331 Token/s, Decode 82 auf 96;
+  pigeon 4B Vorbereitung 80 auf 113, Decode 32,2 auf 32,7 (der Decode des 4B
+  haengt am Speicher). `decode_digest` (Logits und Token) gleich dem des
+  Referenzwegs ohne `cpu-simd`, auf beiden Modellen. Die Kachel von 8 bleibt
+  (4: 90, 8: 110, 12: 112, 16: 105 Token/s).
+- 📌 **Gemessen und verworfen:** der CPU-Weg der Gemische mit je einer Zeile
+  fuer alle Token eines Experten (Begruendung am Kopf von
+  `linear_w8a16_stapel_viele_cpu`): dieselben Digests, aber 10 % langsamer.
+  Die Probe `viele_stapel_sind_dasselbe_wie_einzeln` deckt seitdem auch
+  mehr Eingaben als eine Kachel und mehr als 32 Zeilen ab.
+
+### v0.153.0 (2026-11-16): Freigabeplan und Einmessung (runtime 0.107.0)
+
+- ⚑ **Festlegung des Projektinhabers (2026-11-16):** Das Programm wählt die
+  beste Ressourcenverteilung selbst, je nach Hardwarefreigabe, so wie später
+  in Produktion (Fund 705 weitergeführt).
+- **`rechenwege::Freigabeplan`**: je Rechenweg (`metal`, `cuda`, `rocm`) und
+  je Karte (PCI-Adresse) an oder aus, mit einer Textform für `--rechenwerke`
+  (`metal=aus,cuda=an,karte:0000:01:00.0=an`, leer `alle`). Der Klient
+  schreibt sie aus seinem Schaltplan, Knoten und Shard lesen sie mit
+  derselben Funktion. Ein unbekannter Weg oder Wert ist ein Fehler und kein
+  stilles Übergehen: Ein Knoten, der eine Freigabe falsch versteht, nähme
+  sonst mehr Maschine, als der Besitzer gab. `anwenden` schaltet und sagt je
+  Schalter, was geschah, auch wenn es den Schalter oder die Karte nicht gibt.
+- **`rechenwege::einmessen`**: misst die Arbeit des Aufrufers bei gegebenen
+  Stapelgrößen mit und ohne Beschleuniger (erst eine Rechnung zum
+  Aufwärmen, dann je die beste von zwei) und setzt die Schwelle von Metal
+  und Karten auf die kleinste Größe, ab der der Beschleuniger bei dieser
+  **und jeder größeren** klar gewinnt (um mehr als ein Zwanzigstel, damit
+  Messrauschen nicht hin und her schaltet); sonst rechnet die CPU allein.
+  `beschleuniger_an` nennt, was gerade rechnen darf. Kein Ergebnis hängt
+  daran, nur wo gerechnet wird.
+- Proben: die Textform hin und zurück; fünf unverständliche Pläne werden
+  abgelehnt (Gegenprobe: Ein Plan, der unbekannte Wege annimmt, macht sie
+  rot); eine fehlende Karte steht im Protokoll und ist danach wieder an; die
+  Schwelle aus Messzeilen in fünf Fällen (Gegenprobe: Ohne Abbruch beim
+  ersten Verlust von oben wird sie rot).
+
+### v0.152.1 (2026-11-15): Die Länge eines Speichers hängt nicht an seiner ersten Ebene (runtime 0.106.2)
+
+- 📌 **Fund 704: Das 35B rechnete in keinem Pod.** `KVCache::laenge` zählte
+  nur das erste Fach, also die erste Ebene des Bereichs. Beim hybriden 35B
+  ist sie oft eine Zustandsschicht, die nichts in `k` ablegt (ihr Kontext
+  steht im Zustand): Die Länge blieb null, und ein Shard wies jede Position
+  hinter dem ersten Stapel von 64 als „hinter dem Ende des KV-Speichers“ ab.
+  Die Tür meldete „kein Pod hat gerechnet“. Alle Pod-Proben rechnen am 0,6B
+  ohne Zustandsschichten, und lokal fragt niemand die Länge vor dem Rechnen;
+  gefunden im ersten Auftragslauf mit dem 35B (TESTCLIENT 0.70.0).
+- ⚑ **`laenge()` ist jetzt das längste Fach, mindestens aber, wie weit
+  Positionen durch alle Ebenen gelaufen sind** (`durch`, fortgeschrieben mit
+  `durchgelaufen`): am Ende von `run_layers` und im Stapelweg des Shards
+  (COMPUTE_PIPELINE 0.66.0). `kuerzen` und `zurueck_auf` ziehen die Zählung
+  mit. Ein Bereich nur aus Zustandsschichten hat damit seine Länge auch ohne
+  ein Fach.
+- An keiner Zahl ändert das etwas: Die Länge entscheidet nur, welche
+  Positionen ein Shard annimmt, und was der Klient als belegten Kontext zeigt
+  (dort stand beim 35B bisher die Länge der ersten Ebene).
+- Geprüft: `kv_cache::tests::die_laenge_haengt_nicht_an_der_ersten_ebene`.
 
 ### v0.152.0 (2026-11-15): int16 mal int16 mit NEON, exakt (kernels 0.92.0, runtime 0.106.1)
 

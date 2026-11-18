@@ -560,6 +560,16 @@ Oder im Fenster, Einstellungen, *Updates*: Es fragt, ob `origin`
 Änderungen hat, die dieser Klon nicht hat, und spielt sie auf Knopfdruck
 ein. ⚠️ Ohne Klon geht das nicht, und der Knopf sagt es.
 
+⚑ **Vor dem Einspielen wird die Herkunft geprüft.** Die Spitze des neuen
+Stands muss die Signatur eines Schlüssels aus
+`SYSTEM/install/freigabeschluessel` tragen (Format von `ssh-keygen`,
+ALLOWED SIGNERS), und zwar aus der Liste des Stands, der schon da ist. Ein
+Zugang zu GitHub allein bringt also keinen Code auf die Maschine, und ein
+neuer Schlüssel kommt nur mit der Signatur eines bisherigen herein.
+Trägt der neue Stand keine gültige Signatur, wird nichts eingespielt;
+nachsehen lässt es sich mit `git verify-commit FETCH_HEAD`. ⚠️ Solange die
+Liste keinen Schlüssel enthält, prüft das Skript nicht und sagt es laut.
+
 ---
 
 ## Was die Skripte bewusst nicht tun

@@ -62,6 +62,7 @@ fn ruesten(web: bool, schreiben: bool) -> Rundgang {
         ),
         web_recherche: web,
         text_kennzeichnen: true,
+        sandkasten: myl_local_agent::sandkasten::vorhanden(),
         ..Agenteneinstellung::default()
     };
     let wahl = Arc::new(Mutex::new(myl_local_agent::vorhaben::Rundenwahl::default()));

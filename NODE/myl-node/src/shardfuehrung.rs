@@ -177,6 +177,8 @@ pub struct Shardstart {
     pub training: bool,
     /// Wohin `netzlast.json` geht.
     pub netzlast: PathBuf,
+    /// ⚑ Die Freigabe des Besitzers, die jeder Shard mitbekommt (Fund 705).
+    pub freigabe: crate::konfig::Rechenfreigabe,
 }
 
 /// Der Dateiname des Ausweises der Shardtür, neben `netzlast.json`.
@@ -281,11 +283,24 @@ impl Shardfuehrung {
             .arg(soll.bis.to_string())
             .arg("--konsensschluessel")
             .arg(&self.start.konsensschluessel)
+            // 📌 **Fund 703 (2026-11-15): die Grenze des Protokolls.** Ohne
+            //   Angabe setzt `myl-shard` 16 Token je Sitzung, und der End-Shard
+            //   gab danach kein Token mehr weiter: Jede Antwort im Netz endete
+            //   nach 16 Token, gleich was Tür und Ortsdienst erlaubten. Mit
+            //   vier Token je Probefrage fiel das nicht auf. Wie viele ein
+            //   Auftrag wirklich bekommt, entscheidet der Koordinator; der
+            //   Shard hält nur die Obergrenze.
+            .arg("--deckel")
+            .arg(myl_types::inferenzauftrag::MAX_NEUE_TOKEN.to_string())
             .arg("--adresse")
             .arg("127.0.0.1:0");
         if self.start.training {
             befehl.arg("--training");
         }
+        // ⚑ **Die Freigabe des Besitzers** (Fund 705): Kerne und Rechenwerke.
+        //   📌 Bis hierher bekam der Shard keine von beiden und nahm die
+        //   ganze Maschine, gleich was der Besitzer freigab.
+        befehl.args(self.start.freigabe.als_optionen());
         let mut kind = befehl
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -439,6 +454,7 @@ mod tests {
             segmente: 3,
             ausgabenwurzel: myl_types::ids::MerkleRoot::new([0; 32]),
             vertreter: Vec::new(),
+            sitzungen: Vec::new(),
         };
         let unterzeichner = crate::kette::Kette::unterzeichner_des_buendels(pod, &[]).expect("Unterzeichner");
         let schluessel_von = |m: &MinerId| {
@@ -547,6 +563,7 @@ mod tests {
             konsensschluessel: ordner.join("konsens.key"),
             training: false,
             netzlast: netzlast.clone(),
+            freigabe: Default::default(),
         });
         assert_eq!(f.abgleichen(Some(auftrag(3, 7, 14))), Ok(Wechsel::Gestartet(auftrag(3, 7, 14))));
         let gelesen = myl_store::teilablage::Netzlast::lesen(&netzlast).expect("Netzlast");
@@ -566,5 +583,49 @@ mod tests {
         assert!(!ausweisdatei.exists(), "ohne Shard kein Ausweis");
         assert_eq!(f.abgleichen(None), Ok(Wechsel::Unveraendert));
         let _ = std::fs::remove_dir_all(&ordner);
+    }
+
+    /// ⚑ **Die Freigabe des Besitzers erreicht den Shard** (Fund 705): Kerne
+    /// und Rechenwerke stehen in seinen Optionen. 📌 Bis zum 2026-11-16 bekam
+    /// der Shard keine von beiden und nahm die ganze Maschine.
+    #[cfg(unix)]
+    #[test]
+    fn die_freigabe_erreicht_den_shard() {
+        let ordner = std::env::temp_dir().join(format!("myl-shardfreigabe-{}", std::process::id()));
+        std::fs::create_dir_all(&ordner).expect("Ordner");
+        let mitschrift = ordner.join("optionen.txt");
+        let programm = ordner.join("shard.sh");
+        std::fs::write(&programm, format!("#!/bin/sh\necho \"$@\" > '{}'\nsleep 30\n", mitschrift.display())).expect("Programm");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&programm, std::fs::Permissions::from_mode(0o700)).expect("Rechte");
+        let plan = integer_llm_runtime::rechenwege::Freigabeplan::aus_text("metal=aus,karte:0000:01:00.0=an").expect("Plan");
+        let mut f = Shardfuehrung::neu(Shardstart {
+            programm,
+            artefakte: ordner.join("artefakt"),
+            konsensschluessel: ordner.join("konsens.key"),
+            training: false,
+            netzlast: ordner.join("netzlast.json"),
+            freigabe: crate::konfig::Rechenfreigabe { kerne: Some(3), rechenwerke: Some(plan) },
+        });
+        assert_eq!(f.abgleichen(Some(auftrag(3, 7, 14))), Ok(Wechsel::Gestartet(auftrag(3, 7, 14))));
+        let mut gelesen = String::new();
+        for _ in 0..100 {
+            gelesen = std::fs::read_to_string(&mitschrift).unwrap_or_default();
+            if !gelesen.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(f.abgleichen(None), Ok(Wechsel::Beendet));
+        let _ = std::fs::remove_dir_all(&ordner);
+        assert!(gelesen.contains("--kerne 3"), "ohne Kerne: {gelesen}");
+        assert!(gelesen.contains("--rechenwerke metal=aus,karte:0000:01:00.0=an"), "ohne Rechenwerke: {gelesen}");
+    }
+
+    /// Die Gegenprobe: Ohne Freigabe kommt keine Option dazu, und der Shard
+    /// nimmt, was da ist.
+    #[test]
+    fn ohne_freigabe_keine_optionen() {
+        assert!(crate::konfig::Rechenfreigabe::default().als_optionen().is_empty());
     }
 }

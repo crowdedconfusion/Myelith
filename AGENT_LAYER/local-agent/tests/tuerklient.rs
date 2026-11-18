@@ -360,3 +360,43 @@ fn eine_tropfende_gegenstelle_haelt_nicht_laenger_als_die_frist() {
     assert!(matches!(f, Tuerfehler::Zeitueberschreitung { .. }), "{f:?}");
     assert!(start.elapsed() < Duration::from_secs(3), "{:?}", start.elapsed());
 }
+
+const TEXTANTWORT: &str = r#"{"id":"myl-3","object":"text_completion",
+"choices":[{"index":0,"text":"<tool_call>x</tool_call>","finish_reason":"length"}],
+"usage":{"prompt_tokens":40,"completion_tokens":12},"myelith_segment":""}"#;
+
+/// ⚑ **Die Modellliste kommt über `GET /v1/models`** (2026-11-16), mit
+/// Vollmacht und ohne Rumpf; der Klient liest die Namen.
+#[test]
+fn die_modellliste_kommt_ueber_get() {
+    let liste = r#"{"object":"list","data":[{"id":"raven-35b-a3b-int4","object":"model","created":1,"owned_by":"myelith"}]}"#;
+    let (port, gesehen) = stummel(Verhalten::Antwortet(liste.to_string()));
+    let klient = Tuerklient::neu("127.0.0.1", port, "vollmacht-m");
+    assert_eq!(klient.modelle().expect("Liste"), vec!["raven-35b-a3b-int4".to_string()]);
+    let roh = gesehen.recv_timeout(Duration::from_secs(5)).expect("Anfrage");
+    let text = String::from_utf8_lossy(&roh);
+    assert!(text.starts_with("GET /v1/models HTTP/1.1\r\n"), "{text}");
+    assert!(text.contains("Authorization: Bearer vollmacht-m\r\n"), "{text}");
+}
+
+/// ⚑ **Ein fertiger Prompt geht unverändert an `/v1/completions`**
+/// (2026-11-15), und die Antwort kommt mit Abschlussgrund zurück.
+#[test]
+fn ein_fertiger_prompt_geht_an_den_textweg() {
+    let (port, gesehen) = stummel(Verhalten::Antwortet(TEXTANTWORT.to_string()));
+    let klient = Tuerklient::neu("127.0.0.1", port, "vollmacht-t");
+    let prompt = "<|im_start|>user\nHallo<|im_end|>\n<|im_start|>assistant\n";
+    let a = klient.vervollstaendigen("raven", prompt, Some(12)).expect("die Tuer antwortet");
+    assert_eq!(a.text, "<tool_call>x</tool_call>");
+    assert_eq!(a.abschlussgrund.as_deref(), Some("length"));
+    assert_eq!((a.prompt_token, a.antwort_token), (40, 12));
+
+    let roh = gesehen.recv_timeout(Duration::from_secs(5)).expect("Anfrage");
+    let text = String::from_utf8_lossy(&roh);
+    assert!(text.starts_with("POST /v1/completions HTTP/1.1\r\n"), "{text}");
+    assert!(text.contains("Authorization: Bearer vollmacht-t\r\n"), "{text}");
+    // Der Prompt steht als eine Zeichenkette im Rumpf, mit den Marken.
+    assert!(text.contains(r#""prompt":"<|im_start|>user\nHallo<|im_end|>\n<|im_start|>assistant\n""#), "{text}");
+    assert!(text.contains(r#""max_tokens":12"#), "{text}");
+    assert!(!text.contains("messages"), "{text}");
+}

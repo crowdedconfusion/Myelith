@@ -88,5 +88,18 @@ pub fn bundle_message(bundle: &PoIBundle) -> Vec<u8> {
             msg.extend_from_slice(miner.as_bytes());
         }
     }
+    // ⚑ Die Liste der Sitzungen (Stufe 1 je Sitzung, 2026-11-16), sobald es
+    //   sie gibt, hinter einer eigenen Marke und mit ihrer Laenge: Nach ihr
+    //   rechnet die Kette ab, also darf sie nach dem Unterschreiben niemand
+    //   aendern, kuerzen oder streichen.
+    if !bundle.sitzungen.is_empty() {
+        msg.extend_from_slice(b"MYELITH_POI_SITZUNGEN");
+        msg.extend_from_slice(&(bundle.sitzungen.len() as u32).to_le_bytes());
+        for z in &bundle.sitzungen {
+            msg.extend_from_slice(&z.sitzung.to_le_bytes());
+            msg.extend_from_slice(&z.segmente.to_le_bytes());
+            msg.extend_from_slice(z.wurzel.as_bytes());
+        }
+    }
     msg
 }

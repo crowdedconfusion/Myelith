@@ -75,7 +75,7 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<usize
         kettendatei: Some(d.join("kette.dat")),
         konsensschluesseldatei: miner.map(|_| d.join("konsens.key")),
         modellzusage: miner.map(|_| Modellzusage { abdruck: [0; 32], ebenen_hoechstens: 48, ebenenzeit_us: 30_000, gehalten: None }),
-        shard: miner.map(|_| Shardkonfig { programm: shardprogramm(), artefakte: sparrow(), training: false }),
+        shard: miner.map(|_| Shardkonfig { programm: shardprogramm(), artefakte: sparrow(), training: false, freigabe: Default::default() }),
         konto: miner.map(konto),
         aufnahme_sekunden: 1,
         beobachtung: None,

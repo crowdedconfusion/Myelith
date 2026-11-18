@@ -1,7 +1,7 @@
 # networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.25.3
-> **Datum:** 2026-11-15
+> **Version:** 0.25.4
+> **Datum:** 2026-11-16
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -109,6 +109,19 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.25.4 (2026-11-16): Das Bündel endet mit zwei Listen (Fund 706, `myl-net` 0.25.4)
+
+- Das PoI-Bündel trägt hinter den Vertretern die Liste seiner Sitzungen
+  (SHARED_TYPES 0.72.0); seine Borsh-Form endet damit in zwei
+  Längenfeldern statt in einem. Am Code der Leitung ändert sich nichts, nur
+  die Bündel der Proben und die Worte in `validation.rs`.
+- 📌 **Zwei Verstümmelungsproben wurden rot und waren im Recht:**
+  `fuer_feste_typen_ist_die_borsh_pruefung_eine_laengenpruefung` nahm 0 von
+  2 000 Zufallsfolgen an, `verstuemmelte_nachrichten_stuerzen_nicht_ab` 3 von
+  20 000. Beide schonten die letzten 4 Bytes als das eine Längenfeld; jetzt
+  die letzten 8. Die Aussage bleibt: Für diesen Typ prüft Borsh nur die
+  Länge, über den Inhalt entscheidet der Validator der Kette.
 
 ### v0.25.3 (2026-11-15): Netz und Kette haben dieselbe Punktregel (Fund 701, `myl-net` 0.25.3)
 

@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.65.1 (`myl-pod` 0.56.0, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-11-15
+> **Version:** 0.72.1 (`myl-pod` 0.63.0, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-11-18
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Pipelining über Sitzungen,
@@ -106,6 +106,265 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.72.1 (2026-11-18): Die Messung zu Fund 655 steht in der Liste der CI
+
+- `tests/zeitprobe_messung.rs` (seit 0.71.1, mit `#[ignore]`) steht jetzt in
+  `grosse_proben` von `.github/ci/kisten.sh`. 📌 Die Vorprobe der CI
+  (`kisten.sh wache`) verlangt das für jede ausgeschaltete Probe und wäre
+  beim nächsten Push rot geworden; gefunden vor dem Commit.
+
+### v0.72.0 (2026-11-18): Der Rand vor dem Wechsel ist gemessen statt ein Sechstel (`myl-pod` 0.63.0)
+
+- ⚑ **`einreichen_ab`: ein Dreißigstel der Epoche, nie unter 30 s, nie über
+  ein Sechstel.** 📌 Bis hierher reichte der Pod fest im letzten Sechstel
+  ein; was danach gerechnet wurde, stand in keinem Bündel (bis zu einem
+  Sechstel der Arbeit ohne Vergütung). Gemessen im gezielten Auftragslauf vom
+  2026-11-17 unter Last 22, mit laufenden Runden: acht Bündel in 0,4 bis
+  4,2 s unterschrieben und abgegeben, in der Kette 1 bis 3 Blöcke danach.
+  Die 30 s sind rund das Siebenfache davon; bei schnellem Blocktakt (60 ms im
+  Podlauf, ein Dreißigstel wären 3,6 s) bleibt es beim Sechstel.
+- **`Blocktakt`**: Die Blockzeit misst der Pod selbst aus den Höhen, die er
+  alle 3 s sieht, über mindestens 20 Blöcke; das Podbild nennt sie nicht, und
+  ein Feld dafür hätte die Leitungsform geändert. Ohne Messung (kurz nach dem
+  Start, nach einem Neustart der Kette) gilt das Sechstel.
+- Proben `der_rand_ist_ein_dreissigstel_und_nie_unter_dreissig_sekunden`
+  (600 ms: 60 Blöcke; Testnetz 2 s: 60; 400 ms: 75; 60 ms: das Sechstel;
+  durchgemustert, dass der Rand nie unter 30 s fällt, ausser am Sechstel)
+  und `der_blocktakt_misst_ueber_zwanzig_bloecke`.
+- Whitepaper: ohne Aussage zum Zeitpunkt des Einreichens; keine Abweichung.
+
+### v0.71.1 (2026-11-17): Was ein kleiner Bereich unter der Zugabe versteckt (`myl-pod` 0.62.1)
+
+- Messung `tests/zeitprobe_messung.rs` (ausgeschaltet, von Hand mit
+  `--ignored`): echte Shards mit 1, 2 und 4 Ebenen und mit Kopf, Zeitproben
+  von 64, 512 und 2048 Positionen, je die kürzeste von drei; dazu die
+  kleinste Ansage, mit der ein Shard nach der Frist des Knotens durchkommt
+  (Zugabe 2 s, Probe `clamp(2 s / Z, 64, 2048)`). Auf dieser Maschine
+  (M5 Pro, ruhig):
+
+  | Bereich | 4B je Token | 35B je Token | kleinste Ansage (35B) |
+  |---|---|---|---|
+  | 1 Ebene | 0,76 bis 0,85 ms | 0,95 ms | jede, auch null |
+  | 2 Ebenen | 1,5 bis 1,7 ms | 1,9 ms | rund ein Viertel |
+  | 4 Ebenen | 3,1 bis 3,5 ms | 3,6 ms | ein Drittel |
+  | 1 Ebene mit Kopf | 5,2 ms | 6,9 bis 7,1 ms | ein Drittel |
+
+  Verstecken lässt sich je Shard höchstens Zugabe/2048 ≈ 0,98 ms je Token
+  über der Frist; das reicht genau für eine Ebene dieser Modelle auf dieser
+  Maschine. Die Rechnung selbst hat eine Probe
+  (`die_kleinste_ansage_folgt_der_frist`).
+
+### v0.71.0 (2026-11-17): Eine Neubesetzung behält die Arbeit der Epoche (`myl-pod` 0.62.0)
+
+- ⚑ **Der neue Koordinator erbt die Segmente des alten.** Kommt mitten in
+  der Epoche eine Runde leer zurück, besetzt der Ortsdienst den Pod neu.
+  📌 Bis hierher leerte er dafür den Platz, und alles, was der Pod in dieser
+  Epoche schon abgeschlossen hatte, ging verloren: gerechnet, ausgeliefert,
+  nie vergütet, und dem Zwilling fehlten diese Sitzungen im Vergleich.
+  Jetzt baut `neu_besetzen` unter der Schreibsperre einen neuen Podstand,
+  und `Coordinator::segmente_erben` übernimmt die Segmente des alten vorn,
+  in ihrer Folge, samt der Zahl der verworfenen; dazu der Vermerk, ob schon
+  eingereicht ist (sonst ginge ein zweites Bündel derselben Epoche hinaus).
+  Geerbt wird nur von demselben Pod in derselben Epoche mit denselben
+  Zuschnitten. Scheitert der Neubau, bleibt der alte stehen.
+- ⚠️ Vertritt danach die Reserve eine Position, nennt das Bündel sie für die
+  ganze Epoche (das Format kennt keinen Vertreter ab einem Segment). Der
+  Ausgefallene verliert so seinen Beitrag davor; vorher verloren ihn alle.
+- Proben in `tests/neubesetzung.rs` am 0,6B: Ein Neuer, der erbt und dann
+  die zweite Sitzung rechnet, baut dasselbe Bündel wie ein Koordinator mit
+  beiden Sitzungen (Wurzel, Ausgabenwurzel, Sitzungen, vTFE); Gegenprobe
+  ohne Erben mit weniger Segmenten und anderer Wurzel, dazu eine Mutation
+  (Erben ohne Übernahme), die rot wird. Andere Epoche und andere Zuschnitte
+  werden nicht geerbt.
+- Nebenbei: Der Kommentar von `verworfene_segmente` stand über
+  `vertreter_setzen`.
+
+### v0.70.1 (2026-11-17): Das Einreichen nennt seine Dauer (`myl-pod` 0.61.1)
+
+- Die Zeile „Bündel der Epoche …“ nennt jetzt, wie lange Unterschreiben und
+  Abgeben dauerten und wie viele Blöcke vor dem Wechsel das Einreichen
+  begann. Damit misst jeder Lauf, ob der Rand von einem Sechstel der Epoche
+  kürzer sein kann, auch unter Last; geändert ist der Rand nicht.
+
+### v0.70.0 (2026-11-17): Der Pod hält den Höchstbetrag eines Auftrags ein (Fund 711, `myl-pod` 0.61.0)
+
+- ⚑ **Nur der Pod zählt die Prompt-Token, also hält er den Betrag ein.**
+  `Podwerk` und `Pipelinewerk` fragen nach dem Zerlegen
+  `Inferenzauftrag::neue_token_im_rahmen`: Kostet schon der Prompt mehr als
+  `hoechstens`, antworten sie `Inferenzantwort::Ungedeckt` mit der Zahl der
+  Prompt-Token, bevor sie Ausweis, Relais oder einen Shard fragen; sonst
+  kürzen sie die Ausgabe so, dass der Preis (Prompt und Ausgabe) den Betrag
+  nicht übersteigt. Beide Zwillinge bekommen denselben Deckel.
+- Proben `der_pod_haelt_den_hoechstbetrag_ein` (am 0,6B: gekürzt auf zwei
+  Token mit demselben Anfang wie der volle Lauf, Preis genau der Betrag, ein
+  Credit unter dem Prompt nicht gerechnet; Gegenprobe ohne Grenze der volle
+  Deckel) und `ein_ungedeckter_auftrag_kostet_keinen_pod` (das Relais sieht
+  keine Rechenrunde; Gegenprobe mit Betrag).
+
+### v0.69.0 (2026-11-17): Das Bündel wartet nicht auf laufende Sitzungen (Fund 713, `myl-pod` 0.60.0)
+
+- ⛔️ **Fund 713:** Im gezielten Auftragslauf vom 2026-11-17 bekam ein
+  Zwillingspaar für eine ganze Epoche nichts. Zum Fünftel der Epoche liefen
+  Runden des 35B von 5 bis 15 Minuten; das Einreichen nahm die Schreibsperre
+  über den Stand des Pods und wartete auf jede laufende Sitzung, kam erst am
+  Wechsel dran, die Shards der Epoche waren beendet, und kein Mitglied
+  unterschrieb mehr („kein Shard an diesem Knoten“).
+- **Eingereicht wird jetzt unter der Lesesperre**, neben laufenden
+  Sitzungen. Die Sperre schützte nichts: Der Koordinator nimmt für das
+  Bündel einen Schnappschuss (ein Lauf kommt ganz oder gar nicht hinein), und
+  ein Shard prüft vor der Unterschrift nur, ob Anspruch und Segmentzahl des
+  Bündels zueinander passen. `eingereicht` ist atomar; scheitert schon das
+  Bündel, versucht es der nächste Blick wieder.
+- **`Coordinator::kanonisch_bis` und `blaetter_bis`:** Spurablage und Blätter
+  für den Differenzbeweis entstehen aus den ersten `segmente` Segmenten, also
+  genau aus denen des Bündels. Die Liste wächst nur, und ein Lauf hängt in
+  einem Zug an; was nach dem Bündel angehängt hat, gehört in keine Ablage
+  dieser Epoche.
+- Probe `das_buendel_ist_der_anfang_der_liste_auch_wenn_danach_gerechnet_wird`
+  (`tests/nebenlaeufig.rs`): ein Bündel neben einem Lauf kommt zustande, und
+  nach einem weiteren Lauf tragen Anfang und Blätter dieselben Wurzeln wie
+  das Bündel. Gegenprobe: Die ganze Liste trägt eine andere Wurzel, so wie
+  die Ablage sie vorher genommen hätte.
+- ⚠️ Arbeit nach dem Einreichen bleibt unvergütet wie bisher (das letzte
+  Sechstel); kürzer wird der Rand erst, wenn gemessen ist, wie lange das
+  Signieren unter Last dauert.
+
+### v0.68.0 (2026-11-16): Das Bündel nennt seine Sitzungen, beide Zwillinge rechnen zugleich (Fund 706, `myl-pod` 0.59.0)
+
+- ⚑ **Stufe 1 je Sitzung** (Whitepaper 6.4, Festlegung des Projektinhabers
+  vom 2026-11-16): Die Kette gleicht ein Zwillingspaar je Sitzung ab
+  (NODE 0.130.0). Dazu trägt das Bündel die Liste seiner Sitzungen
+  (SHARED_TYPES 0.72.0): `build_poi_bundle` füllt sie aus der kanonischen
+  Folge der Ausgabenzeugnisse, je Sitzung Länge und Wurzel, und die
+  Unterschrift des Pods deckt sie mit.
+- **Der Deckel der Sitzungen:** Die Kette nimmt höchstens
+  `SITZUNGEN_JE_BUENDEL_HOECHSTENS` (1024) Sitzungen je Bündel. Ein Lauf, der
+  eine weitere brächte, kommt ganz nicht in die Ablage und wird im Zähler
+  der verworfenen Segmente geführt (`verworfene_segmente`); ein Bündel mit zu
+  langer Liste gälte gar nicht und kostete die Arbeit der ganzen Epoche. Eine
+  Sitzung, die schon in der Liste steht, passt immer.
+  ⚠️ Die Antwort ist dann schon ausgeliefert: Diese Arbeit ist gerechnet und
+  bleibt unvergütet.
+- ⚑ **Beide Zwillinge zugleich, die erste Antwort mit Token geht hinaus**
+  (`Podwerk::einmal`, `erste_antwort`): je Pod ein Faden mit eigenem
+  Koordinator; der andere rechnet zu Ende und hängt an. 📌 Bis dahin begann
+  der Zwilling erst nach der Antwort des ersten Pods: Er lag um einen Auftrag
+  zurück, und was beim Einreichen noch lief, fehlte in seinem Bündel. Genau
+  das ließ die Kette beide Pods einer Epoche leer ausgehen. Die Neubesetzung
+  mitten in der Epoche (`mit_neubesetzung`, Fund 649) gilt für beide gleich.
+  ⚠️ Auf einer einzigen Maschine teilen sich beide Zwillinge die Kerne; ein
+  Lauf dort ist langsamer als zuvor der erste allein.
+- ⚠️ **Was bleibt:** Ein Lauf, der nach dem Einreichen des Bündels endet,
+  steht in keinem Bündel. Rechnet der Zwilling ihn noch vor seinem eigenen
+  Einreichen fertig, fehlt die Sitzung nur dem einen, und die Kette rechnet
+  sie nach (höchstens vier je Paar und Epoche).
+- Proben `der_deckel_zaehlt_sitzungen` und
+  `die_erste_antwort_mit_token_geht_hinaus` (Gegenproben: nach ihr wird
+  nicht gewartet; ohne Token zählt die leere Antwort vor dem Fehler; ohne
+  jede Antwort ist es ein Fehler); `kanonische_folge` prüft die Liste des
+  Bündels gegen die Folge.
+
+### v0.67.0 (2026-11-16): Der Shard nimmt, was freigegeben ist, und misst sich ein (`myl-pod` 0.58.0)
+
+- ⚑ **Fund 705 weitergeführt** (Festlegung des Projektinhabers vom
+  2026-11-16: die beste Ressourcenverteilung je nach Hardwarefreigabe, wie
+  in Produktion).
+- **Jeder Rechenweg, der zur Laufzeit geladen wird, in der Vorgabe**:
+  `default = ["cpu-simd", "cuda", "rocm"]`, auf macOS dazu `metal` über eine
+  Abhängigkeit je Ziel, wie im Klienten. `cuda` und `rocm` bauen ohne
+  Abhängigkeit, Treiber und Übersetzer kommen zur Laufzeit, ohne Karte
+  rechnet die CPU. 📌 Bis hierher kannte `myl-pod` gar kein Merkmal `cuda`
+  oder `rocm`: Shards ließen sich nicht für Karten bauen, nur der Klient.
+- **`myl-shard --rechenwerke <plan>`** schaltet nach dem Freigabeplan des
+  Besitzers (INTEGER_LLM 0.153.0); `--kerne` gab es schon, nur reichte der
+  Knoten es nie weiter. `--ohne-einmessung` lässt die Schwellen bei ihrer
+  Vorgabe.
+- **Die Einmessung beim Start**: `ShardNode::stapelzeit(n)` rechnet `n`
+  Positionen durch den eigenen Bereich, Ebene für Ebene wie
+  `process_stapel`, ohne Sitzung, Spur und Unterschrift. `myl-shard` misst
+  damit bei 16 und 64 Eingaben die CPU gegen die freigegebenen
+  Beschleuniger und setzt die Schwelle danach; ohne Beschleuniger wird nichts
+  gemessen. Zwei Zeilen im Protokoll sagen, was gemessen und gewählt wurde,
+  welche Rechenwege es gibt, welche Beschleuniger an sind und wie viele Kerne.
+- **Gemessen am 35B** (erstes Viertel, Ebenen 0 bis 10, M5 Pro): 16 Eingaben
+  CPU 64 ms, Metal 114 ms; 64 Eingaben CPU 226 ms, Metal 169 ms. Gewählt:
+  Metal ab 64 Eingaben, darunter und beim Dekodieren die CPU.
+- 📌 **Auf einer Maschine mit mehreren Shards gilt die Einzelmessung nicht.**
+  Vier Shards in einem Prozess (`myl-pod-node --prompt`, 3 563 Prompt-Token,
+  dieselben Token auf allen Wegen): CPU 61,5 s, Metal ab 16 Eingaben 79,9 s,
+  Metal ab 64 Eingaben 80,6 s. Die Stufen der Pipeline stellen sich an der
+  einen GPU an, und die CPU wartet (153 s Rechenzeit gegen 491 s). Im Betrieb
+  hat jede Maschine ihren Shard; wer mehrere Shards auf eine Maschine legt,
+  etwa im Probelauf, gibt nur die CPU frei.
+
+### v0.66.0 (2026-11-15): Die Antwort endet an der Endmarke (`myl-pod` 0.57.0)
+
+- 📌 **Fund 702: Der Pod rechnete jede Anfrage bis zum Deckel**, auch
+  hinter der Endmarke: Das Modell schrieb seine Antwort, `<|im_end|>`, und
+  danach eine erfundene nächste Runde, bis die Zahl erreicht war. Mit vier
+  Token je Probefrage fiel das nicht auf; ein Agent bekäme so Werkzeugaufrufe
+  aus der erfundenen Fortsetzung und zahlte jedes Token davon. Gefunden beim
+  Aufbau des Auftragslaufs (TESTCLIENT 0.70.0).
+- ⚑ **`Coordinator::haltemarken_setzen`**: Ist das gezogene Token eine
+  Endmarke, geht keine Runde mehr in die Pipeline, auch nicht, wenn schon das
+  erste Token nach dem Prefill eine ist. Ohne Marken rechnet der Koordinator
+  wie bisher bis zum Deckel. Das Endtoken bleibt in der Folge (gerechnet,
+  gespurt, unterschrieben und abgerechnet wie jedes andere); im Text der
+  Antwort fehlt es.
+- **`podwerk::haltemarken`**: aus dem Wortschatz, `<|im_end|>` und
+  `<|endoftext|>`, und nur, was zu genau einem Token wird; dieselbe Regel wie
+  im Klienten für ein Modell auf seiner Maschine. Das Podwerk setzt sie in
+  jedem Koordinator, den es je Epoche und Pod anlegt, auch in dem des
+  Zwillings: Beide halten an derselben Stelle, der Vergleich der Spuren bleibt,
+  wie er war.
+- 📌 **Fund 705: Jeder ausgelieferte Shard rechnete mit dem Referenzweg.**
+  `myl-pod` band die Laufzeit ohne Merkmal ein, deren Vorgabe `reference`
+  ist (skalar), und die Installation baut `myl-shard` mit `cargo build
+  --release`. Jetzt `default = ["cpu-simd"]`, dazu wählbar `metal`. Gemessen
+  am 35B mit vier Shards im Prozess (`myl-pod-node --prompt`, 3 563
+  Prompt-Token, 8 neue): `reference` 251 s bei 3 153 s Rechenzeit, `cpu-simd`
+  61 s bei 491 s, mit `metal` dazu 80 s bei 151 s; dieselben Token auf allen
+  drei Wegen. Metal verliert hier, weil bei Stapeln von 64 Token das Absetzen
+  an die GPU mehr kostet, als die gebündelten Experten bringen. Der Klient
+  rechnet seit Fund 367 mit `cpu-simd`.
+- ⚠️ **Noch offen, gemessen:** Auf der CPU bündelt
+  `linear_w8a16_stapel_viele_cpu` nicht über Eingaben derselben Matrix,
+  sondern rechnet je Paar aus Matrix und Eingabe `zeile_mal`; die
+  Vierbit-Gewichte werden je Token neu entpackt (Stichprobe: 85 % der Zeit
+  dort). `zeile_mal_viele` gibt es; ein Umbau bräuchte den Beleg gleicher
+  Zahlen (INTEGER_LLM).
+- ⛔️ **Fund 709: Eine Neurechnung lief auf altem Zustand.** Zwillinge
+  wichen im Auftragslauf fünfmal voneinander ab (24 gegen 47, 39 gegen 50,
+  174 gegen 187, 179 gegen 178, 24 gegen 20 Token), jedes Mal nach einer
+  Wiederholung: Ein Shard überschritt die Antwortfrist oder der Wechsel riss
+  die Rechnung ab, und der Koordinator rechnete denselben Auftrag mit
+  derselben Sitzungsnummer neu. `ShardNode::take_cache` gab dabei den alten
+  Speicher der Sitzung zurück, wenn das Vergessen den Shard nicht erreicht
+  hatte (am Wechsel „max sub-streams reached“) oder der zeitüberschrittene
+  Stapel ihn danach zurücklegte. Aufmerksamkeitsebenen überschreiben ihre
+  Positionen, die Zustandsschichten des 35B rechneten aber auf dem alten
+  Zustand weiter: ein ehrlicher Pod mit falschem Ergebnis, ein uneiniges
+  Paar. Jetzt beginnt eine Sitzung, die bei Position 0 ankommt, neu
+  (`neu_beginnen_bei_null`, im Token- und im Stapelweg, über
+  `sitzung_vergessen`). Geprüft: `tests/wiederholung.rs` (dieselbe Sitzung
+  zweimal ohne Vergessen gleicht einer frischen Rechnung, Token und Spuren),
+  am 35B grün, Gegenprobe ohne den Fix rot; am Ankermodell beißt die
+  Gegenprobe nicht (nur Aufmerksamkeit). Stapel- und Tokenweg sind am 35B
+  bitgleich, auch mit gruppierten Experten
+  (`stapel_prefill::der_lange_stapel_rechnet_bitgleich_auch_mit_gruppierten_experten`).
+  Ein Rennen, in dem ein zeitüberschrittener Stapel seinen Speicher erst
+  nach dem Neubeginn zurücklegt, gibt es nicht: Die Shardstelle bedient eine
+  Anfrage nach der anderen (`Shardstelle::laufen`), die Wiederholung kommt
+  also erst nach dem alten Stapel an. ⚠️ Bediente ein Shard je mehrere
+  Anfragen zugleich, bräuchte er eine Lauf-Nummer je Sitzung.
+- 📌 **Fund 704 im Shard:** Der Stapelweg schreibt nach der letzten Ebene
+  jede Position als durchgelaufen fort (`KVCache::durchgelaufen`, INTEGER_LLM
+  0.152.1); ohne das hatte ein Bereich des 35B, der mit einer Zustandsschicht
+  beginnt, die Länge null, und der Shard wies jeden Prompt über 64 Token ab.
+- Geprüft: `tests/haltemarke.rs` mit vier Shards im Prozess und dem
+  Ankermodell, je mit Gegenprobe (ohne Marken bis zum Deckel; das erste Token
+  als Marke).
 
 ### v0.65.1 (2026-11-15): Die Durchsatzmessung steht bei den langen Proben
 

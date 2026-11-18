@@ -483,7 +483,7 @@ fn ruesten_zugeschnitten(
         None => None,
         Some(pfad) => 'ohne: {
             let ein = match Einhaengung::neu(pfad, agent.schreiben) {
-                Ok(x) => x,
+                Ok(x) => x.mit_sandkasten(agent.sandkasten),
                 Err(f) if war_gesetzt => return Err(f),
                 // Die Vorgabe traegt nicht: weiter wie ohne Ordner. Die
                 // verankerten Werkzeuge haengen schon im Kasten.

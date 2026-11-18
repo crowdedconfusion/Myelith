@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.236.0 (`myl-client` 0.134.0, `myl-oberflaeche` 0.92.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
-> **Datum:** 2026-11-14
+> **Version:** 0.245.0 (`myl-client` 0.142.3, `myl-oberflaeche` 0.93.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
+> **Datum:** 2026-11-18
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -182,6 +182,234 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.245.0 (2026-11-18): Ein Update braucht die Signatur eines Freigabeschlüssels (`myl-client` 0.142.3)
+
+- ⛔️ **Die Installationsskripte prüfen den geholten Stand, bevor sie ihn
+  einspielen** (`SYSTEM/install/freigabe.sh` für macOS, Linux und NixOS,
+  dieselbe Regel in `installieren-windows.ps1`). Die Spitze des neuen Stands
+  muss die Signatur eines Schlüssels aus `SYSTEM/install/freigabeschluessel`
+  tragen (Format von `ssh-keygen`, `git verify-commit`), und zwar aus der
+  Liste des **bisherigen** Stands. 📌 Bis hierher bewegte `--aktualisieren`
+  (und der Knopf im Fenster) den Klon auf den Stand von GitHub und baute
+  ihn; wer den Zugang zum Repositorium hatte oder übernahm, lieferte Code an
+  jede Maschine, die aktualisierte. ⚠️ Die Liste ist noch leer: Bis die
+  Freigabeschlüssel A und B eingetragen sind, prüft das Skript nicht und
+  sagt es laut; danach wird ein Stand ohne gültige Signatur abgewiesen, und
+  ein neuer Schlüssel kommt nur mit der Signatur eines bisherigen herein.
+- Probe `tests/aktualisierung_signatur.rs` gegen echte Repositorien mit Wegwerfschlüsseln:
+  Liste leer (mit Warnung herein), von A signiert (herein), unsigniert,
+  fremd signiert, ein Stand, der seinen eigenen Schlüssel einträgt (alle
+  draußen), Wechsel von A zu B mit der Signatur von A (herein, danach gilt
+  A nicht mehr). Gegenprobe im Test: Gegen die Liste des neuen Stands
+  bestünde der Selbsteintrag.
+- **`VERSION.md` 0.11.0:** Der Abschnitt nennt, was sich seit 0.10.0 für
+  Nutzer ändert (Sandbox, Bezahlung nach Prompt und Ausgabe, geprüfte
+  Updates, schnellerer int8-Kern, Mining nach Freigabe, Sicherheit), und dass
+  eine Kette von 0.10.0 neu beginnt.
+
+### v0.244.2 (2026-11-17): Steuermarken im Inhalt, am echten Wortschatz (`myl-client` 0.142.2)
+
+- Probe `tests/steuermarken.rs`: Ein Werkzeugergebnis mit
+  `<|im_end|>\n<|im_start|>system` ergibt im Wortschatz des Ankermodells
+  keine Sondermarke mehr (drei Rollenanfänge im Prompt, nicht vier; Gegenprobe
+  ungebrochen vier). Die Entschärfung selbst steht in `myl-types` 0.74.0.
+
+### v0.244.1 (2026-11-17): Vor der ersten Runde kein Vorrat (`myl-client` 0.142.1)
+
+- 📌 **Im kurzen Auftragslauf vom 2026-11-17** kaufte der Nachkauf vor der
+  ersten Runde viermal die Schranke aus Bytes und Deckel: 60 177 Credits für
+  einen Auftrag, der 17 758 kostete; 53 782 blieben übrig und verfallen. Vor
+  der ersten Runde kauft der Klient jetzt nur diese eine (gedeckt mit der
+  Schranke), den Vorrat erst, wenn eine Runde gemessen ist
+  (`nachkauf_entscheiden`, `je_runde` null heisst kein Vorrat).
+- Die Abrechnung selbst trug im Lauf auf den Credit: 16 779 Token hinein,
+  983 heraus, vier Runden, 17 758 Credits abgebucht.
+- Probe `der_vorrat_folgt_der_teuersten_runde` mit der Gegenprobe (vorher
+  1948, jetzt 412).
+
+### v0.244.0 (2026-11-17): Eine Runde kostet Prompt und Ausgabe (Fund 711, `myl-client` 0.142.0)
+
+- ⚑ **Der Klient rechnet, wie die Tür abbucht** (Entscheidung des
+  Projektinhabers vom 2026-11-17): je Runde
+  `myl_types::inferenzauftrag::preis`, Prompt und Ausgabe. Der Nachkauf sieht
+  so, was offen ist.
+- **Der Bedarf einer Runde ist geschätzt** (`tuerweg::bedarf_schaetzen`):
+  die Prompt-Token aus dem Verhältnis von Bytes zu Token der bisherigen
+  Runden, ein Achtel dazu, und der Deckel; vor der ersten Runde und nach
+  einer Ablehnung wegen des Guthabens die sichere Schranke aus Bytes und
+  Deckel. Die Schranke ist rund das Dreifache, und wer mit ihr nachkauft,
+  kauft Credits, die kurz danach verfallen.
+- **Der Vorrat eines Nachkaufs** ist diese Runde und weitere wie die
+  teuerste bisher (`Rundenlage::je_runde`, `Nachkauflage::je_runde`), nicht
+  ein Vielfaches der Schätzung. Vor der ersten Runde bleibt es beim
+  Vielfachen.
+- **`myl wallet sitzung`** eröffnet ohne Angabe mit 250 000 Credits
+  (`bezahlen::SITZUNGSBUDGET`, Einzellimit ein Zehntel), dem alten Budget mal
+  25: so viel teurer wurde eine Runde im Auftragslauf.
+- Proben `der_bedarf_folgt_dem_verhaeltnis_und_nie_ueber_die_schranke`,
+  `nach_einer_ablehnung_gilt_die_schranke`, `der_vorrat_folgt_der_teuersten_runde`;
+  aus `eine_leere_runde_zaehlt_als_ein_credit` wird
+  `eine_runde_kostet_prompt_und_ausgabe` (eine Runde ohne neues Token kostet
+  ihren Prompt). 251 Proben grün.
+
+### v0.243.0 (2026-11-17): Die Einstellung heißt Sandbox (`myl-client` 0.141.0)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-17:** Die Einstellung steht
+  im Fenster und in der Konsole, lässt sich bei Bedarf abschalten und heißt
+  **Sandbox** (`agent.sandbox`, `myl setzen agent.sandbox aus`; AGENT_LAYER
+  0.71.0). Die Startzeile von `myl sitzung` heißt `Sandbox:` und sagt `an
+  (Seatbelt): …` oder `aus`.
+- Probe `die_sandbox_steht_in_fenster_und_konsole_und_laesst_sich_abschalten`:
+  das Feld in beiden Bedieninstrumenten, Vorgabe an, abschaltbar, gespeichert
+  als `sandbox`, der frühere Name gilt weiter, eine Ablage ohne das Feld
+  bedeutet an.
+
+### v0.242.0 (2026-11-17): Eine Runde über die Tür wird nach 502 wiederholt (Fund 712, `myl-client` 0.140.0)
+
+- 📌 **Fund 712:** Im gezielten Auftragslauf vom 2026-11-17 hatte der Agent
+  die Nebenkostenabrechnung richtig geprüft (Anteil der Reparatur 158,45,
+  Nachzahlung 245,49); die nächste Runde fiel auf den Epochenwechsel, die Tür
+  meldete 502 „kein Pod hat gerechnet“, und der Auftrag war verloren. Beim
+  zweiten Auftrag dasselbe am nächsten Wechsel.
+- **`tuerweg::WIEDERHOLUNG`:** Nach 502, 503 oder 504 versucht `myl sitzung
+  --tuer` dieselbe Runde nach 15, 30 und 60 s noch einmal, zusammen länger
+  als die 60 s, die der Ortsdienst am Wechsel auf den neuen Pod wartet. Das
+  ist sicher, weil die Tür nur abrechnet, was sie ausliefert. 401, 402 und
+  429 sind Antworten und werden nicht wiederholt; der Nachkauf nach 402
+  bleibt, wie er war.
+- Probe `nach_einem_502_kommt_ein_neuer_anlauf` mit zwei Gegenproben (ohne
+  Pausen bleibt der 502, ein 402 wird nicht wiederholt).
+### v0.241.0 (2026-11-17): Befehle des Agenten laufen im Sandkasten (`myl-client` 0.139.0, `myl-oberflaeche` 0.93.0)
+
+- **Neue Einstellung `agent.sandkasten`** („Befehle im Sandkasten“, Vorgabe
+  an): `run_command` und die Werkzeuge einer Kiste laufen unter der Grenze
+  des Betriebssystems (AGENT_LAYER 0.70.0): schreiben nur im Arbeitsordner,
+  kein Lesen in der übrigen Heimat, kein Netz. Gibt das Betriebssystem
+  keine Grenze her, läuft eingeschaltet kein Befehl. Fenster und Konsole
+  reichen die Einstellung an die Einhängung weiter.
+- **`myl sitzung` sagt beim Start, unter welcher Grenze Befehle laufen**
+  (Zeile `Sandkasten:`), über die Tür bei `Advanced` ebenso; die Zeile „run_command
+  ohne Sandkasten“ entfällt.
+- ⚑ **Die Kiste eines geprüften nativen Moduls ist ohne eigene Angabe frei**
+  (`Modulzusatz::aus` → `kisten::vorgabe_setzen`): Ihre Werkzeuge starten das
+  Programm des Moduls, das nach seiner Signatur ohne Abschottung läuft; die
+  Manifeste stehen unter derselben Signatur und nennen bisher keine Grenze.
+
+### v0.240.0 (2026-11-16): Der Klient kauft vor jeder Runde Credits nach (Fund 707, `myl-client` 0.138.0)
+
+- ⚑ **`myl sitzung --tuer … --nachkauf WALLET [--vorrat RUNDEN]`**
+  (Festlegung des Projektinhabers vom 2026-11-16: Credits gelten kurz, der
+  Klient kauft nach). Credits verfallen bald nach dem Kauf; ein Auftrag über
+  einen Epochenwechsel stand mit einem einzigen Kauf am Anfang ohne Guthaben
+  da, und die Tür lehnte mit 402 ab. Jetzt fragt der Klient vor jeder Runde
+  seinen Knoten nach dem Stand der Sitzung (SHARED_TYPES 0.71.0, NODE
+  0.129.0) und verbrennt, was fehlt: bis auf `--vorrat` Runden (Vorgabe 4),
+  jede zum Deckel der Runde gerechnet.
+- ⚑ **Nie über das Budget der Sitzung.** Der Nachkauf endet beim Rest des
+  Budgets abzüglich dessen, was über die Tür schon ausgegeben und noch nicht
+  abgebucht ist; deckt der Rest keine Runde mehr, wird nichts verbrannt, und
+  die Sitzung endet mit dem Grund. Der Kontrakt bleibt die Obergrenze dessen,
+  was ein Agent kosten kann (Whitepaper Kap. 8.2).
+- ⚑ **Der Schlüssel bleibt beim Klienten.** `--nachkauf` nimmt das Wallet des
+  Inhabers der Sitzung, ein anderes weist `Nachkaeufer::neu` ab. Unterschrieben
+  wird im Klienten; der Agent sieht weder Schlüssel noch Wallet, und kein
+  Werkzeug kann einen Kauf auslösen.
+- **Nah am Wechsel zählen nur haltbare Credits**: Reichen die Blöcke bis zum
+  Wechsel für weniger als zwei Runden der bisher längsten Dauer (vor der
+  ersten Messung: 300 s), rechnet der Klient nur mit Credits, die den Wechsel
+  überleben, und kauft sonst gleich für die neue Epoche.
+- **Eine Ablehnung wegen Guthaben wird einmal wiederholt**: Der Knoten der
+  Tür kann einen Block hinter dem des Klienten liegen. Nach 402 mit
+  „Guthaben“ wartet der Klient zwei Slots, prüft und kauft nötigenfalls,
+  und stellt die Runde ein zweites Mal. Eine Ablehnung des Kontrakts
+  (Budget, Einzellimit) wird nicht wiederholt.
+- `bezahlen`: `Knotenleitung::sitzungsstand`, `nachkauf_entscheiden` (reine
+  Entscheidung aus Zahlen), `zaehlbare_credits`, `Nachkaeufer`; `tuerweg`:
+  `Vorlagentuer::mit_vorlauf`, `Rundenlage`.
+- Proben: `der_nachkauf_fuellt_auf_den_vorrat_und_nie_ueber_das_budget`
+  (Gegenprobe: ohne die Kappung am Budget rot, 1 948 statt 500 Credits),
+  `ein_knappes_wallet_kauft_was_geht_oder_nichts`,
+  `nah_am_wechsel_zaehlen_nur_haltbare_credits`,
+  `der_vorlauf_sieht_den_deckel_und_kann_die_runde_aufhalten`,
+  `eine_ablehnung_wegen_guthaben_wird_einmal_wiederholt`; über einen echten
+  Knoten in TESTCLIENT 0.73.0.
+- **Der Klient rechnet, wie die Tür abrechnet**: je Runde die neuen Token,
+  mindestens ein Credit (`Rundenlage::abgerechnet`); eine Runde ohne neues
+  Token zählt als einer. Probe `eine_leere_runde_zaehlt_als_ein_credit`.
+
+### v0.239.0 (2026-11-16): Die Vorlage kommt aus `myl_types`, die Werkzeugkiste folgt dem Netzmodell (`myl-client` 0.137.0)
+
+- ⚑ **`myl sitzung --tuer` wählt die Werkzeugkiste nach dem Netzmodell**
+  (Festlegung des Projektinhabers vom 2026-11-16): Ohne `--werkzeuge` und
+  ohne eigens eingestellte Kiste fragt der Klient die Tür nach ihrem Modell
+  (`Tuerklient::modelle`) und nimmt `Werkzeugkiste::fuer_modellname`
+  (AGENT_LAYER 0.69.0): das 35B bekommt `Advanced`. Die Zeile
+  „Werkzeuge:“ nennt Kiste, Grund und, bei `Advanced`, dass `run_command`
+  keinen Sandkasten hat. Wer `--werkzeuge` setzt oder eine Kiste
+  eingestellt hat, bekommt sie wie bisher.
+
+- ⚑ **Fund 181**: `oertlich::Vorlage` ist jetzt `myl_types::vorlage::Vorlage`,
+  gemeinsam mit der Tür (GATEWAY 0.13.0, SHARED_TYPES 0.70.0);
+  `oertlich::bauen(vorlage, nachrichten, denken)` gibt die Nachrichten
+  hinein. Die zehn Proben in `tests/chatvorlage.rs` sind nach dem Umzug
+  unverändert grün: Die Vorlage rechnet Zeichen für Zeichen wie vorher. Der
+  Kommentar, der den Unterschied zur Tür mit dem Konformitätswert
+  begründete, ist berichtigt.
+
+### v0.238.0 (2026-11-16): Die Mining-Freigabe erreicht Knoten und Shard (`myl-client` 0.136.0)
+
+- ⚑ **Fund 705 weitergeführt** (Festlegung des Projektinhabers vom
+  2026-11-16: die beste Ressourcenverteilung je nach Hardwarefreigabe, über
+  den normalen Klienten im Test- und Produktionsnetz).
+- **`mining::freigabe_optionen`**: Kerne und Freigabeplan der Rechenwerke
+  aus demselben Schaltplan wie die Kapazität des Klienten
+  (`hardware::schaltplan`); ein Werk ist frei, wenn seine Kennung in der
+  Freigabe der Mining-Seite steht. `mining::starten` gibt beides dem Knoten
+  mit, der es an Prüfer und Shard weitergibt (NODE 0.126.0), und der Shard
+  misst sich beim Start ein (COMPUTE_PIPELINE 0.67.0). 📌 Bis hierher blieb
+  die Freigabe der Mining-Seite beim Klienten: Gespeichert und angezeigt,
+  aber der Shard nahm die ganze Maschine.
+- Probe `die_freigabe_wird_zu_optionen_des_knotens` (Karte frei und nicht
+  frei, Metal ohne Freigabe aus, die Kerne dabei, der Knoten liest, was der
+  Klient schreibt); Gegenprobe: Jedes Werk frei macht sie rot.
+
+### v0.237.0 (2026-11-15): Der Agent arbeitet über die Tür eines Knotens (`myl-client` 0.135.0)
+
+- ⚑ **`myl sitzung --tuer HOST:PORT [--agent NAME] [--frist S]`**: der Agent
+  mit seinen Werkzeugen auf dieser Maschine, das Modell im Netz. Jede Runde
+  geht über die Tür an einen Pod und wird mit der Vollmacht bezahlt, die
+  `myl wallet sitzung` für diesen Agenten abgelegt hat. Nach jedem Auftrag
+  steht auf dem Fehlerkanal, wie viele Runden und Token über die Tür gingen;
+  die Token heraus sind die abgebuchten Credits. Die Frist je Runde ist eine
+  halbe Stunde: Über Pods mit dem 35B rechnet ein langer Prompt Minuten.
+- ⚑ **`tuerweg::Vorlagentuer`**: Der Prompt entsteht mit derselben `Vorlage`
+  wie für ein Modell auf dieser Maschine, Zeichen für Zeichen, ohne
+  Denkblock, und geht als fertiger Prompt an `/v1/completions` (GATEWAY
+  0.12.0). 📌 Über den Chatweg bekäme das Modell `rolle: inhalt` (Fund 181).
+  Ohne Denkblock, weil es über die Tür kein Denkbudget gibt (Fund 512): Ein
+  Denkmodell überlegte dort bis zum Deckel. Die Antwort wird an der ersten
+  Endmarke abgeschnitten, für eine Tür vor Fund 702.
+- ⚑ **Weiterschreiben über die Tür**: Bricht eine Runde am Deckel mitten in
+  einem Werkzeugaufruf ab (`length`), setzt die Schleife ihn fort; über die
+  Tür geht dafür derselbe Prompt mit dem angefangenen Text dahinter an
+  `/v1/completions`. Anders als auf dieser Maschine rechnet der Pod den ganzen
+  Prompt neu. So bleibt jede Runde unter der Frist der Tür (540 s), ohne
+  lange Dateien abzuschneiden.
+- 📌 **Der Deckel je Runde gilt über die Tür** (`Vorlagentuer::mit_deckel`,
+  aus `--token`): Die Schleife verlangt je Runde mindestens 4 000 Token
+  (`agent_antwortlaenge`, für eine Maschine, die das in Sekunden rechnet).
+  Über die Pods des 35B sind es 3 bis 4 Token je Sekunde, und die Tür wartet
+  höchstens 540 s; im Auftragslauf brauchte eine Runde mit 1 487 Token 356 s,
+  obwohl `--token 512` gesetzt war. Was über den Deckel geht, schreibt die
+  Schleife weiter.
+- Gemeinsam statt doppelt: `sitzungsschleife` (lokal und über die Tür),
+  `vollmacht_des_agenten` und `tuer_angabe` (auch für `myl frage --tuer`).
+- Geprüft: `tuerweg::tests` (Prompt in der Vorlage, Weg, Deckel, Halt an der
+  Endmarke, Weiterschreiben, Deckel je Runde, Zählung), je mit Gegenprobe (kein Schnitt, mit
+  Denkblock, ohne Anfang, nicht gezählt: jeweils rot). Im Auftragslauf
+  (TESTCLIENT 0.70.0) löste der Agent über die Tür eine Aufgabenliste aus
+  Besprechungsnotizen ganz (7 von 7 Merkmalen, 4 Runden).
 
 ### v0.236.0 (2026-11-15): Lesemodelle aus dem Myelith-Ordner, nur für GolemOS (`myl-client` 0.134.0, `myl-scan` 0.5.0)
 

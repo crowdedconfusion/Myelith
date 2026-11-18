@@ -2336,6 +2336,8 @@ impl IntegerModel {
                 mitschnitt.as_deref_mut(),
             );
         }
+        // Fund 704: die Position ist durch den ganzen Bereich gelaufen.
+        cache.durchgelaufen(pos);
         hidden
     }
 

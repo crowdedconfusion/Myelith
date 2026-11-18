@@ -18,7 +18,7 @@
 // Referenzformel ist beim Nachrechnen mehr wert als die Namenskonvention.
 #![allow(non_snake_case)]
 
-use crate::dot::dot_i8_i16;
+
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 use crate::ternaer::{Eingabe, Ternaermatrix};
 use crate::vierbit::Vierbitmatrix;
@@ -49,9 +49,11 @@ pub enum Gewichtsmatrix<'a> {
 
 impl<'a> Gewichtsmatrix<'a> {
     /// Bereitet `x` fuer diese Matrix auf, einmal je Eingabe
-    /// ([`Eingabe`]); fuer int8 ist das `x` selbst.
+    /// ([`Eingabe`]); fuer int8 ist das `x` selbst, ausser der zerlegte
+    /// Kern rechnet auf dieser Maschine ([`crate::dot::int8_zerlegt_laeuft`]).
     pub fn eingabe<'x>(&self, x: &'x [i16]) -> Eingabe<'x> {
         match self {
+            Gewichtsmatrix::Int8(_) if crate::dot::int8_zerlegt_laeuft() => Eingabe::neu(x),
             Gewichtsmatrix::Int8(_) => Eingabe::roh(x),
             Gewichtsmatrix::Ternaer(_) | Gewichtsmatrix::Vierbit(_) => Eingabe::neu(x),
         }
@@ -61,7 +63,7 @@ impl<'a> Gewichtsmatrix<'a> {
     #[inline]
     pub fn zeile_mal(&self, z: usize, in_features: usize, e: &Eingabe<'_>) -> i64 {
         match self {
-            Gewichtsmatrix::Int8(w) => dot_i8_i16(&w[z * in_features..(z + 1) * in_features], e.x()),
+            Gewichtsmatrix::Int8(w) => crate::dot::int8_zeile(&w[z * in_features..(z + 1) * in_features], e),
             Gewichtsmatrix::Ternaer(t) => t.zeile_mal_mit(z, e),
             Gewichtsmatrix::Vierbit(v) => v.zeile_mal_mit(z, e),
         }
@@ -71,15 +73,20 @@ impl<'a> Gewichtsmatrix<'a> {
     /// [`Self::zeile_mal`] fuer `e[k]`.
     ///
     /// ⚑ Eine ternaere Zeile entpackt ihre Codes dabei einmal fuer alle
-    /// Eingaben ([`Ternaermatrix::zeile_mal_viele`]); eine int8-Zeile hat
-    /// nichts zu entpacken und rechnet Eingabe fuer Eingabe.
+    /// Eingaben ([`Ternaermatrix::zeile_mal_viele`]); eine int8-Zeile wird
+    /// mit dem zerlegten Kern je 16 Werte einmal fuer bis zu vier Eingaben
+    /// geladen ([`crate::dot::int8_zeile_viele`]), sonst Eingabe fuer Eingabe.
     #[inline]
     pub fn zeile_mal_viele(&self, z: usize, in_features: usize, e: &[Eingabe<'_>], aus: &mut [i64]) {
         match self {
             Gewichtsmatrix::Int8(w) => {
                 let zeile = &w[z * in_features..(z + 1) * in_features];
-                for (ein, ziel) in e.iter().zip(aus.iter_mut()) {
-                    *ziel = dot_i8_i16(zeile, ein.x());
+                if e.iter().all(|ein| ein.x().len() == in_features) {
+                    crate::dot::int8_zeile_viele(zeile, e, aus);
+                } else {
+                    for (ein, ziel) in e.iter().zip(aus.iter_mut()) {
+                        *ziel = crate::dot::int8_zeile(zeile, ein);
+                    }
                 }
             }
             Gewichtsmatrix::Ternaer(t) => t.zeile_mal_viele(z, e, aus),
@@ -571,7 +578,9 @@ mod stapeltests {
     /// Skalenarten.
     #[test]
     fn viele_stapel_sind_dasselbe_wie_einzeln() {
-        let formen = [(3usize, 8usize, 5usize), (17, 33, 0), (64, 128, 2), (2, 2049, 7), (1, 4, 1)];
+        // Auch mehr Eingaben als eine Kachel und mehr Zeilen als ein Block
+        // der CPU-Fassung (32).
+        let formen = [(3usize, 8usize, 5usize), (17, 33, 0), (64, 128, 2), (2, 2049, 7), (1, 4, 1), (70, 130, 40), (33, 64, 9)];
         let gewichte: Vec<Vec<i8>> = formen
             .iter()
             .enumerate()
@@ -1005,6 +1014,17 @@ pub fn linear_w8a16_stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec
 
 /// Wie [`linear_w8a16_stapel_viele`], **immer auf der CPU**: ein Buendel
 /// ueber alle Paare aus Auftrag und Eingabe, also eine Poolrunde.
+///
+/// 📌 **Gemessen und verworfen (2026-11-18): die Zeile je Auftrag fuer alle
+/// seine Eingaben.** Naheliegend ist, jede Expertenzeile einmal fuer alle
+/// Token des Experten zu laden, wie [`stapel_cpu`] es fuer eine Matrix tut
+/// (Einheiten aus Auftrag und 32 Zeilen, je Zeile
+/// [`Gewichtsmatrix::zeile_mal_viele`] in Kacheln). Dieselben Digests, aber
+/// langsamer: beim 35B in vier Bit 53 bis 55 gegen 56 bis 58 Token je
+/// Sekunde in der Vorbereitung, beim 30B in int8 54 gegen 61 (385 Token,
+/// `cpu-simd`, je zwei Laeufe). Eine Expertenmatrix ist klein (vier Bit:
+/// rund 0,5 MB) und bleibt ohnehin im zweiten Zwischenspeicher; gewonnen
+/// wird am Laden wenig, verloren an der groberen Verteilung auf die Kerne.
 pub fn linear_w8a16_stapel_viele_cpu(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec<i16>>> {
     let teile: Vec<Buendelteil<'_>> = auftraege
         .iter()

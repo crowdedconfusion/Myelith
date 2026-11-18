@@ -864,6 +864,12 @@ pub struct OffeneStichprobe {
     /// Position Miner und Layerbereich `[von, bis)` (2026-10-29). Daraus
     /// folgt im Streitfall, wen eine Abweichung trifft. Angehängt.
     pub besetzung: Vec<(PodId, crate::pruefung::Besetzung)>,
+    /// ⚑ **Die Pflichtaufträge** (Stufe 1 je Sitzung, 2026-11-16): je
+    /// Sitzung, die nur ein Zwilling bezeugt, der Pod, die Stelle ihres
+    /// letzten Segments in seinem Bündel, ihre Nummer und die Zahl ihrer
+    /// Segmente. Sie werden mit der Ziehung gezogen, immer, und ihr Auftrag
+    /// ist an die Sitzung gebunden. Angehängt.
+    pub pflicht: Vec<(PodId, u32, u64, u32)>,
 }
 
 impl LedgerState {

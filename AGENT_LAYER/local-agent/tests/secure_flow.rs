@@ -55,6 +55,8 @@ fn aufbau() -> (tempfile::TempDir, tempfile::TempDir, Agenteneinstellung) {
         wurzel: Some(arbeit.path().display().to_string()),
         schreiben: true,
         kistenordner: Some(kiste.path().display().to_string()),
+        // Mit dem Sandkasten, wo es einen gibt; geprueft wird hier der Fluss.
+        sandkasten: myl_local_agent::sandkasten::vorhanden(),
         ..Agenteneinstellung::default()
     };
     (arbeit, kiste, agent)

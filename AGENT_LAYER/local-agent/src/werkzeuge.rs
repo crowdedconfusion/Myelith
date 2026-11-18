@@ -56,6 +56,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::ausfuehrung::{Werkzeugausfuehrung, Werkzeugfehler};
+use crate::sandkasten::Sandkasten;
 use crate::werkzeug::{Ansageform, Werkzeug};
 
 /// Wie viel ein Lesevorgang hoechstens zurueckgibt.
@@ -115,6 +116,9 @@ pub const BEFEHL_AUSGABEGRENZE: usize = 16 * 1024;
 pub struct Einhaengung {
     wurzel: PathBuf,
     schreiben: bool,
+    /// Ob Befehle unter der Grenze des Betriebssystems laufen
+    /// (`crate::sandkasten`). Die Vorgabe ist ja.
+    sandkasten: bool,
 }
 
 impl Einhaengung {
@@ -129,7 +133,22 @@ impl Einhaengung {
         if !aufgeloest.is_dir() {
             return Err(format!("Einhaengung {}: kein Verzeichnis", aufgeloest.display()));
         }
-        Ok(Self { wurzel: aufgeloest, schreiben })
+        Ok(Self { wurzel: aufgeloest, schreiben, sandkasten: true })
+    }
+
+    /// **Schaltet den Sandkasten fuer diese Einhaengung an oder aus.**
+    ///
+    /// ⚑ **Aus ist eine Entscheidung des Nutzers** (`agent.sandbox`) und
+    /// keine, die ein Werkzeug oder das Modell treffen kann: Der Wert kommt
+    /// allein aus den Einstellungen, und die Ansage nennt ihn.
+    pub fn mit_sandkasten(mut self, an: bool) -> Self {
+        self.sandkasten = an;
+        self
+    }
+
+    /// Ob Befehle dieser Einhaengung unter der Grenze laufen.
+    pub fn sandkasten(&self) -> bool {
+        self.sandkasten
     }
 
     pub fn wurzel(&self) -> &Path {
@@ -307,6 +326,38 @@ impl Einhaengung {
         Ok(ziel)
     }
 
+    /// **Liest eine aufgeloeste Datei**, ohne einem Verweis zu folgen, der
+    /// nach der Pruefung entstand ([`crate::verweisfrei`], Fund A52).
+    pub fn lesen(&self, ziel: &Path) -> std::io::Result<Vec<u8>> {
+        crate::verweisfrei::lesen(&self.wurzel, ziel)
+    }
+
+    /// Wie [`Einhaengung::lesen`], als Text.
+    pub fn lesen_text(&self, ziel: &Path) -> std::io::Result<String> {
+        crate::verweisfrei::lesen_text(&self.wurzel, ziel)
+    }
+
+    /// **Schreibt eine aufgeloeste Datei** und legt fehlende Ordner an.
+    ///
+    /// ⚑ Mit Sandbox ueber den Schreibhelfer unter der Grenze des
+    /// Betriebssystems ([`crate::sandkasten::datei_schreiben`]), damit nicht
+    /// allein eigener Code das Schreiben ausserhalb verhindert (der Pfad ist
+    /// vorher mit [`Self::aufloesen`] geprueft). Ohne Sandbox
+    /// (abgeschaltet oder auf dieser Maschine nicht vorhanden) schreibt
+    /// [`crate::verweisfrei`] im Prozess, ohne einem Verweis zu folgen (Fund
+    /// A52).
+    pub fn schreiben(&self, ziel: &Path, inhalt: &[u8]) -> std::io::Result<()> {
+        if !ziel.starts_with(&self.wurzel) {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "der Pfad liegt nicht unter dem Arbeitsordner"));
+        }
+        if self.sandkasten {
+            if let Some(r) = crate::sandkasten::datei_schreiben(&self.wurzel, ziel, inhalt) {
+                return r;
+            }
+        }
+        crate::verweisfrei::schreiben(&self.wurzel, ziel, inhalt)
+    }
+
     /// Die Marke fuer das Sitzungsprotokoll.
     ///
     /// ⚑ **Der Abdruck der Wurzel, nicht ihr Pfad.** Der Strom ist das
@@ -424,6 +475,34 @@ impl Werkzeugkiste {
     /// oder gross sein; die kleinere Kiste geht in beiden Faellen, die
     /// groessere nur in einem. **Aber still darf die Entscheidung nicht
     /// fallen**, deshalb kommt der Grund mit.
+    /// ⚑ **Welche Kiste zu einem Netzmodell passt**, nach seinem Namen
+    /// (Festlegung des Projektinhabers vom 2026-11-16: über die Tür bekommt
+    /// ein großes Netzmodell `Advanced`, wie ein großes eigenes Artefakt).
+    /// Über die Tür gibt es kein Artefakt, dessen `variant` sich lesen ließe,
+    /// aber den Namen, den die Tür nennt (`raven-35b-a3b-int4`); die Größe
+    /// steht darin als Teil `35b`. Dieselbe Grenze wie bei einem Artefakt.
+    ///
+    /// ⚑ **`Advanced` heißt `run_command`**, und das läuft im Sandkasten
+    /// des Betriebssystems (`crate::sandkasten`): Ein Text aus einer fremden
+    /// Datei kann einen Befehl auslösen, aber der Befehl schreibt nur im
+    /// Arbeitsordner und erreicht kein Netz.
+    pub fn fuer_modellname(name: &str) -> (Self, String) {
+        const GRENZE: f64 = 7.0;
+        let groesse = name.split(['-', '_']).find_map(|teil| {
+            let zahl = teil.trim().to_ascii_lowercase();
+            let zahl = zahl.strip_suffix('b')?;
+            if zahl.is_empty() || !zahl.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                return None;
+            }
+            milliarden_aus(zahl)
+        });
+        match groesse {
+            Some(m) if m >= GRENZE => (Self::Advanced, format!("{name}: {m} Milliarden, ab {GRENZE}")),
+            Some(m) => (Self::Base, format!("{name}: {m} Milliarden, unter {GRENZE}")),
+            None => (Self::Base, format!("{name}: keine Größe im Namen")),
+        }
+    }
+
     pub fn fuer_artefakt(artefakt: &std::path::Path) -> (Self, String) {
         const GRENZE: f64 = 7.0;
         let konfig = artefakt.join("model_config.json");
@@ -1890,7 +1969,7 @@ impl Werkzeugausfuehrung for Suchen {
                     continue;
                 }
                 angesehen += 1;
-                let Ok(inhalt) = std::fs::read(&echt) else { continue };
+                let Ok(inhalt) = self.0.lesen(&echt) else { continue };
                 // 📌 **Binaerdateien werden uebersprungen, nicht
                 // eingebaut.** Ein Treffer mitten in einem Bild waere
                 // eine Zeile Zufallsbytes im Kontext des Modells.
@@ -2105,7 +2184,7 @@ impl Werkzeugausfuehrung for Dateiaendern {
         let roh = zeichenkette(a, "pfad")?;
         let aenderungen = aenderungsliste(a)?;
         let p = self.0.aufloesen(&roh, true)?;
-        let inhalt = ohne_kennzeichen(std::fs::read_to_string(&p).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?);
+        let inhalt = ohne_kennzeichen(self.0.lesen_text(&p).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?);
 
         // ⚑ **Erst der Trockenlauf, dann das Schreiben.**
         //
@@ -2212,7 +2291,8 @@ impl Werkzeugausfuehrung for Dateiaendern {
             }
         }
         let (geschrieben, marke) = zum_schreiben(&p, &stand);
-        std::fs::write(&p, &geschrieben)
+        self.0
+            .schreiben(&p, geschrieben.as_bytes())
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
         Ok(format!(
             "{}: {}{bleibt}{marke}. So steht es jetzt:\n{}",
@@ -2434,7 +2514,7 @@ impl Werkzeugausfuehrung for UeberallErsetzen {
                 return Err(Werkzeugfehler { grund: "`pfade` enthaelt etwas, das kein Pfad ist".into() });
             };
             let pfad = self.0.aufloesen(roh, true)?;
-            let inhalt = ohne_kennzeichen(std::fs::read_to_string(&pfad).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?);
+            let inhalt = ohne_kennzeichen(self.0.lesen_text(&pfad).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?);
             let stellen: Vec<usize> = inhalt.match_indices(alt.as_str()).map(|(i, _)| i).collect();
             if stellen.is_empty() {
                 unveraendert.push(roh.to_string());
@@ -2475,7 +2555,7 @@ impl Werkzeugausfuehrung for UeberallErsetzen {
         let mut aus = Vec::new();
         for g in &geplant {
             let (geschrieben, marke) = zum_schreiben(&g.pfad, &g.stand);
-            std::fs::write(&g.pfad, &geschrieben).map_err(|e| Werkzeugfehler { grund: format!("{}: {e}", g.roh) })?;
+            self.0.schreiben(&g.pfad, geschrieben.as_bytes()).map_err(|e| Werkzeugfehler { grund: format!("{}: {e}", g.roh) })?;
             aus.push(format!(
                 "{}: {} {} ersetzt{marke}. So steht es jetzt:\n{}",
                 g.roh,
@@ -2582,7 +2662,7 @@ impl Werkzeugausfuehrung for Dateilesen {
                 ),
             });
         }
-        let inhalt = std::fs::read(&p).map_err(|e| Werkzeugfehler {
+        let inhalt = self.0.lesen(&p).map_err(|e| Werkzeugfehler {
             grund: if e.kind() == std::io::ErrorKind::NotFound {
                 gibt_es_nicht(&roh, self.1, &self.0)
             } else {
@@ -2679,11 +2759,11 @@ impl Werkzeugausfuehrung for Dateischreiben {
         //    neunmal, und jedes Mal fehlte `ergebnis/`. Ohne Shell gibt es
         //    kein Werkzeug, das einen Ordner anlegt; in `Base` war die
         //    Aufgabe damit unloesbar. Die Grenze ist oben geprueft.
-        if let Some(eltern) = p.parent() {
-            std::fs::create_dir_all(eltern).map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
-        }
+        //    Angelegt wird jetzt im selben verweisfreien Gang wie das
+        //    Schreiben (Fund A52).
         let (geschrieben, marke) = zum_schreiben(&p, &inhalt);
-        std::fs::write(&p, geschrieben.as_bytes())
+        self.0
+            .schreiben(&p, geschrieben.as_bytes())
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
         // ⚑ Eine neue Datei darf unfertig sein; gesagt wird es trotzdem.
         let warnung = match crate::syntaxwache::pruefen(&p, &inhalt) {
@@ -2720,13 +2800,16 @@ impl Werkzeugausfuehrung for Dateischreiben {
 /// | Zeitgrenze, Ausgabegrenze | Ein Befehl blockiert die Schleife nicht und flutet den Kontext nicht |
 /// | Sperrliste | Ein **Rueckfall** gegen die offensichtlich zerstoererischen Zeilen, kein Schutz |
 ///
+/// | Sandkasten | **Die Grenze**: schreiben nur im Arbeitsordner, kein Lesen in der uebrigen Heimat, kein Netz (`crate::sandkasten`) |
+///
 /// ⛔️ **Die Sperrliste ist kein Sandkasten.** Sie faengt `rm -rf /` und
 /// eine Handvoll seinesgleichen, damit ein Modell nicht aus Versehen die
 /// Maschine loescht; sie faengt keinen entschlossenen Missbrauch. Die
-/// echte Grenze waere eine des Betriebssystems (Landlock, App-Sandbox,
-/// AppContainer), und die ist eigene Arbeit, wie schon beim Dateizugriff
-/// (Modulkopf). Bis dahin ist dieses Werkzeug so vertrauenswuerdig wie
-/// die Person, die den `manual mode` bedient.
+/// Grenze zieht seit dem 2026-11-16 das Betriebssystem (Seatbelt unter
+/// macOS, Landlock und seccomp unter Linux), und wo es keine hergibt,
+/// laeuft der Befehl nicht. ⚠️ Ist `agent.sandbox` aus, gilt wieder
+/// der alte Satz: Dieses Werkzeug ist dann so vertrauenswuerdig wie die
+/// Person, die den `manual mode` bedient.
 pub struct Befehlausfuehren(pub Einhaengung, pub Ansageform);
 
 /// Zeilen, die ein Modell nicht aus Versehen ausfuehren koennen soll.
@@ -2774,7 +2857,7 @@ impl Werkzeugausfuehrung for Befehlausfuehren {
 /// `run_command` verlangt sie, ein Manifest-Werkzeug entscheidet es an
 /// seinem `wirkt`-Feld.
 pub fn befehl_im_verzeichnis(e: &Einhaengung, befehl: &str) -> Result<String, Werkzeugfehler> {
-    befehl_im_verzeichnis_mit(e, befehl, &[], BEFEHL_ZEITGRENZE_S)
+    befehl_im_verzeichnis_mit(e, befehl, &[], BEFEHL_ZEITGRENZE_S, Sandkasten::Eng, &[], &[])
 }
 
 /// **Derselbe Weg, mit einer Umgebung und einer eigenen Frist.**
@@ -2795,11 +2878,21 @@ pub fn befehl_im_verzeichnis(e: &Einhaengung, befehl: &str) -> Result<String, We
 ///
 /// `zeitgrenze_s` ist die Frist in Sekunden. ⚠️ **Der Aufrufer begrenzt
 /// sie**; diese Funktion nimmt, was sie bekommt.
+///
+/// `art` ist die Grenze, die der Aufrufer verlangt, `lesen` nennt, was
+/// der Befehl ausser dem Arbeitsordner lesen muss (der Ordner seiner
+/// Kiste), und `schreiben`, wohin er ausserdem schreiben darf (siehe
+/// `crate::sandkasten::Auftrag`). ⚑ **Die Einhaengung kann die Grenze nur aufheben, nie ein
+/// Aufrufer sie erweitern**: Ist ihr Sandkasten aus, laeuft alles frei;
+/// ist er an, gilt `art`.
 pub fn befehl_im_verzeichnis_mit(
     e: &Einhaengung,
     befehl: &str,
     umgebung: &[(&str, String)],
     zeitgrenze_s: u64,
+    art: Sandkasten,
+    lesen: &[PathBuf],
+    schreiben: &[PathBuf],
 ) -> Result<String, Werkzeugfehler> {
     let klein = befehl.to_lowercase();
     if let Some(muster) = SPERRMUSTER.iter().find(|m| klein.contains(**m)) {
@@ -2811,19 +2904,30 @@ pub fn befehl_im_verzeichnis_mit(
     // ⚑ **Die Shell wird gesucht** (`crate::schale`): Unter Windows liegt
     //   `sh` nicht im PATH, sondern bei Git for Windows.
     let sh = crate::schale::sh().map_err(|grund| Werkzeugfehler { grund })?;
-    let mut kind = std::process::Command::new(sh);
-    kind.arg("-c")
-        .arg(befehl)
+    let art = if e.sandkasten() { art } else { Sandkasten::Frei };
+    let auftrag = crate::sandkasten::Auftrag { wurzel: e.wurzel(), art, lesen, schreiben };
+    // ⚑ Der Lauf haelt seinen Zwischenordner, bis die Ausgabe gelesen ist.
+    let mut lauf = crate::sandkasten::einrichten(&sh, befehl, &auftrag)
+        .map_err(|f| Werkzeugfehler { grund: format!("der Befehl {f}") })?;
+    lauf.kind
         .envs(umgebung.iter().map(|(name, wert)| (*name, wert.as_str())))
         .current_dir(e.wurzel());
-    let a = myl_senses::prozess::laufen(&mut kind, zeitgrenze_s, BEFEHL_AUSGABEGRENZE)
+    let a = myl_senses::prozess::laufen(&mut lauf.kind, zeitgrenze_s, BEFEHL_AUSGABEGRENZE)
         .map_err(|f| Werkzeugfehler { grund: format!("der Befehl {f}") })?;
     let (sicht, gekuerzt) = a.zusammen(BEFEHL_AUSGABEGRENZE);
-    let schwanz = if gekuerzt {
+    let mut schwanz = if gekuerzt {
         format!("\n… (Ausgabe auf {BEFEHL_AUSGABEGRENZE} Bytes gekuerzt)")
     } else {
         String::new()
     };
+    if !a.gut() && lauf.art != Sandkasten::Frei {
+        schwanz.push('\n');
+        schwanz.push_str(crate::sandkasten::hinweis(lauf.art));
+    }
+    if let Some(zeile) = lauf.nachschau() {
+        schwanz.push('\n');
+        schwanz.push_str(&zeile);
+    }
     Ok(format!("{}\n{sicht}{schwanz}", a.kopf()))
 }
 
@@ -2991,8 +3095,12 @@ mod neue_werkzeuge {
         (d, e)
     }
 
+    /// ⚑ **Mit dem Sandkasten, wo es einen gibt**, sonst ohne: Diese Proben
+    /// pruefen, was `run_command` tut, nicht die Grenze (die prueft
+    /// `crate::sandkasten`). Unter Windows liefe sonst kein Befehl.
     fn befehl(e: &Einhaengung, b: &str) -> Result<String, Werkzeugfehler> {
-        Befehlausfuehren(e.clone(), Ansageform::Amtlich)
+        let e = e.clone().mit_sandkasten(crate::sandkasten::vorhanden());
+        Befehlausfuehren(e, Ansageform::Amtlich)
             .ausfuehren(&serde_json::json!({"befehl": b}))
     }
 
@@ -3967,6 +4075,20 @@ mod kistenwahl {
             .expect("Konfig");
         }
         d
+    }
+
+    /// ⚑ **Die Kiste folgt dem Namen des Netzmodells** (2026-11-16): Das
+    /// 35B bekommt `Advanced`, das 0,6B `Base`, ein Name ohne Größe den
+    /// Grundsatz. Gegenprobe im selben Zug: `a3b` (aktive Größe eines
+    /// Gemischs) zählt nicht, die Gesamtzahl steht davor.
+    #[test]
+    fn die_kiste_folgt_dem_namen_des_netzmodells() {
+        assert_eq!(Werkzeugkiste::fuer_modellname("raven-35b-a3b-int4").0, Werkzeugkiste::Advanced);
+        assert_eq!(Werkzeugkiste::fuer_modellname("sparrow-0.6b-int8").0, Werkzeugkiste::Base);
+        assert_eq!(Werkzeugkiste::fuer_modellname("magpie-30b-a3b-int8").0, Werkzeugkiste::Advanced);
+        assert_eq!(Werkzeugkiste::fuer_modellname("myelith").0, Werkzeugkiste::Base);
+        assert_eq!(Werkzeugkiste::fuer_modellname("modell-a3b").0, Werkzeugkiste::Base);
+        assert!(Werkzeugkiste::fuer_modellname("raven-35b-a3b-int4").1.contains("35"));
     }
 
     /// **Das Modell sagt seine Groesse selbst, und die Kiste folgt.**

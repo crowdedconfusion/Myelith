@@ -311,7 +311,11 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     // ⚑ **Die Form, die ein Harness erwartet.**
     assert!(rumpf.contains(r#""object":"chat.completion""#), "{rumpf}");
     assert!(rumpf.contains(r#""role":"assistant""#), "{rumpf}");
-    assert!(rumpf.contains(r#""finish_reason":"stop""#), "{rumpf}");
+    // Acht Token bei `max_tokens: 8`: Beendet hat die Antwort der Deckel,
+    // nicht das Modell, und dafür steht `length` (seit GATEWAY 0.12.0; bis
+    // dahin meldete die Tür immer `stop`).
+    assert!(rumpf.contains(r#""finish_reason":"length""#), "{rumpf}");
+    assert!(rumpf.contains(r#""completion_tokens":8"#), "{rumpf}");
     assert!(rumpf.contains(r#""myelith_sitzung":41"#), "{rumpf}");
     // `temperature` war gesetzt und hat nichts bewirkt, und das steht da.
     assert!(rumpf.contains(r#""myelith_deterministisch":true"#), "{rumpf}");
@@ -371,7 +375,8 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
 
     eprintln!("\n--- Was das Harness liest ---\n{a:#?}\n");
     assert!(!a.text.trim().is_empty(), "das Harness hat keinen Text bekommen");
-    assert_eq!(a.abschlussgrund.as_deref(), Some("stop"), "{a:?}");
+    // Wie oben: Der Deckel von acht Token hat die Antwort beendet.
+    assert_eq!(a.abschlussgrund.as_deref(), Some("length"), "{a:?}");
     assert!(!a.kennung.is_empty(), "ohne Kennung hat der Nutzer keinen Beleg");
     assert!(a.antwort_token > 0 && a.antwort_token <= 8, "{a:?}");
     assert!(a.prompt_token > 0, "{a:?}");

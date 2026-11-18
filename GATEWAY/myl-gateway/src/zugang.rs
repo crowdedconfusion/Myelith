@@ -270,6 +270,14 @@ impl From<&Zugangsanfrage> for ZugangsanfrageRoh {
 pub trait Kontraktquelle {
     /// Kontrakt und Zustand zu einer Sitzung, falls es sie gibt.
     fn nachschlagen(&self, sitzung: SitzungId) -> Option<(Sitzungskontrakt, Sitzungszustand)>;
+    /// ⚑ **Das Guthaben eines Inhabers** (Fund 707, Festlegung des
+    /// Projektinhabers vom 2026-11-16): seine nicht verfallenen Credits, wie
+    /// die Kette sie zuletzt nannte, abzüglich dessen, was diese Tür schon
+    /// abgerechnet hat und die Kette noch nicht kennt. `None`: Die Quelle
+    /// weiß es nicht (eine Probe ohne Kette); dann prüft die Tür es nicht.
+    fn guthaben(&self, _inhaber: &Address) -> Option<u64> {
+        None
+    }
 }
 
 /// Die Zugangsstelle: Takt und Kontrakt in der richtigen Reihenfolge.
@@ -291,6 +299,9 @@ pub trait Kontraktquelle {
 pub struct Zugangsstelle<Q: Kontraktquelle> {
     quelle: Q,
     takt: crate::takt::Takt,
+    /// ⚑ **Was diese Tür gerade zugesagt hat, je Inhaber** (2026-11-17):
+    /// Zusagen laufender Anfragen, siehe [`Zusage`].
+    zugesagt: std::collections::BTreeMap<Address, u64>,
 }
 
 impl<Q: Kontraktquelle> Zugangsstelle<Q> {
@@ -299,6 +310,7 @@ impl<Q: Kontraktquelle> Zugangsstelle<Q> {
         Self {
             quelle,
             takt: crate::takt::Takt::neu(),
+            zugesagt: std::collections::BTreeMap::new(),
         }
     }
 
@@ -434,6 +446,141 @@ impl<Q: Kontraktquelle> Zugangsstelle<Q> {
         };
         myl_types::sitzung::pruefe_zugang(&kontrakt, &zustand, rahmen.jetzt, &vorhaben).erlaubt()
     }
+
+    /// ⚑ **Deckt das Guthaben des Inhabers diesen Höchstbetrag?** (Fund
+    /// 707). Die Kette bucht eine Abrechnung vom Konto des Inhabers ab
+    /// (`credit_spend`); reicht es nicht, nimmt sie sie nicht an, und die
+    /// Arbeit war umsonst. 📌 Bis zum 2026-11-16 prüfte die Tür nur Budget
+    /// und Einzellimit des Kontrakts, und Credits verfallen nach einer
+    /// Epoche: Eine Sitzung über viele Epochen rechnete ohne Deckung weiter.
+    /// Weiß die Quelle das Guthaben nicht, prüft die Tür es nicht.
+    pub fn deckt_das_guthaben(&self, rahmen: &crate::vollmacht::Anfragerahmen) -> bool {
+        let Some((kontrakt, _)) = self.quelle.nachschlagen(rahmen.sitzung) else {
+            return false;
+        };
+        let laufend = self.zugesagt.get(&kontrakt.inhaber).copied().unwrap_or(0);
+        self.quelle.guthaben(&kontrakt.inhaber).is_none_or(|g| g.saturating_sub(laufend) >= rahmen.credits)
+    }
+
+    /// **Was an diesem Betrag fehlt**, als Text der Antwort 402, oder `None`,
+    /// wenn Vollmacht, Kontrakt und Guthaben ihn decken. Die Reihenfolge ist
+    /// die der Prüfung vor dem Rechnen; ein Klient erkennt am Wort
+    /// „Guthaben“, dass ein Nachkauf hilft.
+    pub fn was_fehlt(&self, vollmacht: &crate::vollmacht::Vollmacht, rahmen: &crate::vollmacht::Anfragerahmen) -> Option<&'static str> {
+        if !vollmacht.deckt(rahmen) {
+            return Some("die Vollmacht deckt diesen Auftrag nicht");
+        }
+        if !self.deckt_der_kontrakt(vollmacht, rahmen) {
+            return Some("der Kontrakt deckt diesen Auftrag nicht");
+        }
+        if !self.deckt_das_guthaben(rahmen) {
+            return Some("das Guthaben des Inhabers deckt diesen Auftrag nicht");
+        }
+        None
+    }
+
+    /// ⚑ **Der grösste Betrag bis `obergrenze`, den Vollmacht, Kontrakt und
+    /// Guthaben decken** (Fund 711); null, wenn nicht einmal ein Credit
+    /// gedeckt ist.
+    ///
+    /// Vor dem Rechnen kennt die Tür den Preis nicht, denn die Zahl der
+    /// Prompt-Token kennt nur der Pod. Sie prüft deshalb nicht einen
+    /// geschätzten Preis, sondern ermittelt, wie viel sie zusagen kann, und
+    /// gibt das dem Pod mit; der hält es genau ein. 📌 Eine Prüfung gegen
+    /// eine Schätzung aus den Bytes wiese Anfragen ab, die gedeckt sind: Die
+    /// Bytes sind rund das Dreifache der Token.
+    ///
+    /// **Halbierend gesucht**, weil jede der drei Prüfungen monoton im Betrag
+    /// ist (ein Vorbehalt „höchstens“, Einzellimit, Restbudget, Schwelle,
+    /// Guthaben): Was ein Betrag nicht besteht, besteht kein grösserer. Rund
+    /// zwanzig Prüfungen ohne Signatur, also nichts gegen die Arbeit dahinter.
+    pub fn hoechstbetrag(
+        &self,
+        vollmacht: &crate::vollmacht::Vollmacht,
+        rahmen: &crate::vollmacht::Anfragerahmen,
+        obergrenze: u64,
+    ) -> u64 {
+        let deckt = |credits: u64| {
+            let r = crate::vollmacht::Anfragerahmen { credits, ..*rahmen };
+            self.was_fehlt(vollmacht, &r).is_none()
+        };
+        if obergrenze == 0 || !deckt(1) {
+            return 0;
+        }
+        if deckt(obergrenze) {
+            return obergrenze;
+        }
+        let (mut gedeckt, mut nicht) = (1u64, obergrenze);
+        while nicht - gedeckt > 1 {
+            let mitte = gedeckt + (nicht - gedeckt) / 2;
+            if deckt(mitte) {
+                gedeckt = mitte;
+            } else {
+                nicht = mitte;
+            }
+        }
+        gedeckt
+    }
+}
+
+/// ⚑ **Eine Zusage, solange ihre Anfrage läuft** (2026-11-17, Durchgang über
+/// die Guthabenprüfung).
+///
+/// 📌 Das Guthaben zog bis hierher nur ab, was schon abgerechnet und noch
+/// nicht in der Kette war. Eine Anfrage, die gerade rechnet, zählte nicht:
+/// Ein Inhaber mit mehreren Sitzungen (je Sitzung lässt A23 nur eine
+/// Anfrage zugleich zu) bekam dasselbe Guthaben jeder zugesagt, die Kette
+/// nahm danach nur so viele Abrechnungen an, wie es deckte, und der Rest war
+/// Rechenarbeit ohne Bezahlung, also umsonst für ihn.
+///
+/// [`Zusage::geben`] ermittelt den Höchstbetrag und merkt ihn unter derselben
+/// Sperre für den Inhaber vor; das Guthaben jeder weiteren Prüfung ist um
+/// ihn kleiner. Fällt die Zusage (jeder Ausgang der Anfrage), gibt sie den
+/// Betrag frei. Ist die Anfrage abgerechnet, steht ihr Betrag bis dahin in
+/// der Liste der Quelle (beim Knoten `offen`): Kurz zählt er doppelt, nie
+/// gar nicht.
+///
+/// ⚠️ Nur je Tür: Zwei Türen wissen nichts voneinander. Wer dasselbe
+/// Guthaben über mehrere Türen zugleich ausgibt, bekommt höchstens so viel
+/// mehr, wie Türen gleichzeitig zusagen.
+pub struct Zusage<'a, Q: Kontraktquelle> {
+    stelle: &'a std::sync::Mutex<Zugangsstelle<Q>>,
+    inhaber: Option<Address>,
+    /// Der zugesagte Betrag; null heisst: nicht gedeckt, nichts vorgemerkt.
+    pub betrag: u64,
+}
+
+impl<'a, Q: Kontraktquelle> Zusage<'a, Q> {
+    /// Ermittelt den Höchstbetrag ([`Zugangsstelle::hoechstbetrag`]) und
+    /// merkt ihn vor, in einem Zug unter der Sperre der Stelle.
+    pub fn geben(
+        stelle: &'a std::sync::Mutex<Zugangsstelle<Q>>,
+        vollmacht: &crate::vollmacht::Vollmacht,
+        rahmen: &crate::vollmacht::Anfragerahmen,
+        obergrenze: u64,
+    ) -> Self {
+        let mut s = stelle.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let betrag = s.hoechstbetrag(vollmacht, rahmen, obergrenze);
+        let inhaber = (betrag > 0).then(|| s.quelle.nachschlagen(rahmen.sitzung).map(|(k, _)| k.inhaber)).flatten();
+        if let Some(i) = inhaber {
+            let v = s.zugesagt.entry(i).or_insert(0);
+            *v = v.saturating_add(betrag);
+        }
+        Self { stelle, inhaber, betrag }
+    }
+}
+
+impl<Q: Kontraktquelle> Drop for Zusage<'_, Q> {
+    fn drop(&mut self) {
+        let Some(i) = self.inhaber else { return };
+        let mut s = self.stelle.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(v) = s.zugesagt.get_mut(&i) {
+            *v = v.saturating_sub(self.betrag);
+            if *v == 0 {
+                s.zugesagt.remove(&i);
+            }
+        }
+    }
 }
 
 /// Das Vorhaben, gegen das der Kontrakt geprüft wird.
@@ -544,6 +691,101 @@ mod tests {
                 None
             }
         }
+    }
+
+    /// Eine Quelle mit genau einem Kontrakt und einem Guthaben des Inhabers.
+    struct MitGuthaben(Sitzungskontrakt, Option<u64>);
+    impl Kontraktquelle for MitGuthaben {
+        fn nachschlagen(&self, sitzung: SitzungId) -> Option<(Sitzungskontrakt, Sitzungszustand)> {
+            (sitzung == self.0.adresse()).then(|| (self.0.clone(), Sitzungszustand::neu()))
+        }
+        fn guthaben(&self, inhaber: &Address) -> Option<u64> {
+            (inhaber == &self.0.inhaber).then_some(self.1).flatten()
+        }
+    }
+
+    /// ⚑ **Das Guthaben des Inhabers muss den Höchstbetrag decken** (Fund
+    /// 707). Gegenproben im selben Zug: Genug Guthaben deckt, und eine
+    /// Quelle ohne Kenntnis des Guthabens prüft es nicht.
+    #[test]
+    fn das_guthaben_muss_den_hoechstbetrag_decken() {
+        let k = kontrakt_fuer(7);
+        let rahmen = crate::vollmacht::Anfragerahmen {
+            jetzt: EpochId(1),
+            sitzung: k.adresse(),
+            credits: 16,
+            modell: Hash([0; 32]),
+        };
+        assert!(!Zugangsstelle::neu(MitGuthaben(k.clone(), Some(15))).deckt_das_guthaben(&rahmen));
+        assert!(Zugangsstelle::neu(MitGuthaben(k.clone(), Some(16))).deckt_das_guthaben(&rahmen));
+        assert!(Zugangsstelle::neu(MitGuthaben(k.clone(), None)).deckt_das_guthaben(&rahmen));
+        assert!(!Zugangsstelle::neu(LeereQuelle).deckt_das_guthaben(&rahmen), "ohne Kontrakt deckt nichts");
+    }
+
+    /// ⚑ **Der Höchstbetrag ist das Grösste, was alle drei decken** (Fund
+    /// 711): Guthaben, Einzellimit und ein Vorbehalt der Vollmacht begrenzen
+    /// je für sich, die Obergrenze ebenso. Gegenproben: ein Credit mehr
+    /// wäre nicht gedeckt, und ohne Kontrakt ist er null.
+    #[test]
+    fn der_hoechstbetrag_ist_das_groesste_was_alle_decken() {
+        use crate::vollmacht::{Anfragerahmen, Vollmacht, Vorbehalt};
+        let sk = geheim(7);
+        let mut k = kontrakt_fuer(7);
+        k.credits.einzellimit = 5_000;
+        let rahmen = Anfragerahmen { jetzt: EpochId(1), sitzung: k.adresse(), credits: 0, modell: myl_types::hash::Hash::sha256(b"m") };
+        let frei = Vollmacht::ausstellen(&sk, vec![Vorbehalt::NurSitzung(k.adresse())], [4u8; 32]).expect("ausstellen");
+        let knapp = Vollmacht::ausstellen(&sk, vec![Vorbehalt::NurSitzung(k.adresse()), Vorbehalt::HoechstensCredits(777)], [4u8; 32])
+            .expect("ausstellen");
+        let mit = |g: Option<u64>| Zugangsstelle::neu(MitGuthaben(k.clone(), g));
+        // Das Guthaben begrenzt.
+        assert_eq!(mit(Some(1_234)).hoechstbetrag(&frei, &rahmen, 100_000), 1_234);
+        // Das Einzellimit begrenzt.
+        assert_eq!(mit(Some(1_000_000)).hoechstbetrag(&frei, &rahmen, 100_000), 5_000);
+        assert_eq!(mit(None).hoechstbetrag(&frei, &rahmen, 100_000), 5_000, "ohne Kenntnis des Guthabens das Einzellimit");
+        // Der Vorbehalt der Vollmacht begrenzt.
+        assert_eq!(mit(Some(1_000_000)).hoechstbetrag(&knapp, &rahmen, 100_000), 777);
+        // Die Obergrenze begrenzt.
+        assert_eq!(mit(Some(1_000_000)).hoechstbetrag(&frei, &rahmen, 42), 42);
+        // Gegenproben.
+        let s = mit(Some(1_234));
+        assert!(s.was_fehlt(&frei, &Anfragerahmen { credits: 1_234, ..rahmen }).is_none());
+        assert_eq!(
+            s.was_fehlt(&frei, &Anfragerahmen { credits: 1_235, ..rahmen }),
+            Some("das Guthaben des Inhabers deckt diesen Auftrag nicht")
+        );
+        assert_eq!(mit(Some(0)).hoechstbetrag(&frei, &rahmen, 100_000), 0, "ohne Guthaben nichts");
+        assert_eq!(Zugangsstelle::neu(LeereQuelle).hoechstbetrag(&frei, &rahmen, 100_000), 0, "ohne Kontrakt nichts");
+        assert_eq!(mit(Some(10)).hoechstbetrag(&frei, &rahmen, 0), 0, "ohne Obergrenze nichts");
+    }
+
+    /// ⚑ **Laufende Zusagen mindern das Guthaben** (2026-11-17): Zwei
+    /// Sitzungen desselben Inhabers bekommen zusammen höchstens sein
+    /// Guthaben zugesagt; fällt eine Zusage, ist ihr Betrag wieder frei.
+    /// Gegenprobe: Ohne Vormerkung (der blosse Höchstbetrag) bekäme die
+    /// zweite noch einmal alles.
+    #[test]
+    fn laufende_zusagen_mindern_das_guthaben() {
+        use crate::vollmacht::{Anfragerahmen, Vollmacht, Vorbehalt};
+        let sk = geheim(7);
+        let k = kontrakt_fuer(7);
+        let rahmen = Anfragerahmen { jetzt: EpochId(1), sitzung: k.adresse(), credits: 0, modell: myl_types::hash::Hash::sha256(b"m") };
+        let v = Vollmacht::ausstellen(&sk, vec![Vorbehalt::NurSitzung(k.adresse())], [4u8; 32]).expect("ausstellen");
+        let stelle = std::sync::Mutex::new(Zugangsstelle::neu(MitGuthaben(k.clone(), Some(100))));
+        let erste = Zusage::geben(&stelle, &v, &rahmen, 80);
+        assert_eq!(erste.betrag, 80);
+        assert_eq!(stelle.lock().expect("Sperre").hoechstbetrag(&v, &rahmen, 80), 20, "das Guthaben ist um die Zusage kleiner");
+        let zweite = Zusage::geben(&stelle, &v, &rahmen, 80);
+        assert_eq!(zweite.betrag, 20);
+        let dritte = Zusage::geben(&stelle, &v, &rahmen, 80);
+        assert_eq!(dritte.betrag, 0, "nichts mehr frei");
+        drop(dritte);
+        drop(erste);
+        assert_eq!(stelle.lock().expect("Sperre").hoechstbetrag(&v, &rahmen, 100), 80, "die erste ist wieder frei");
+        drop(zweite);
+        assert!(stelle.lock().expect("Sperre").zugesagt.is_empty(), "nichts bleibt vorgemerkt");
+        // Gegenprobe: ohne Vormerkung zweimal alles.
+        let ohne = Zugangsstelle::neu(MitGuthaben(k.clone(), Some(100)));
+        assert_eq!((ohne.hoechstbetrag(&v, &rahmen, 80), ohne.hoechstbetrag(&v, &rahmen, 80)), (80, 80));
     }
 
     /// Eine Quelle, die nichts kennt.

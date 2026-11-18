@@ -6,5 +6,6 @@
     "properties": { "an": { "type": "string", "enum": ["ja", "nein"], "description": "ja: startet beim Hochfahren; nein: nicht" } },
     "required": ["an"]
   },
-  "befehl": "command -v golem-schicht >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; case {an} in ja) golem-schicht an ;; nein) golem-schicht aus ;; *) echo 'an: ja oder nein'; exit 2 ;; esac"
+  "befehl": "command -v golem-schicht >/dev/null || { echo 'Das ist kein GolemOS.'; exit 1; }; case {an} in ja) golem-schicht an ;; nein) golem-schicht aus ;; *) echo 'an: ja oder nein'; exit 2 ;; esac",
+  "sandbox": "frei"
 }

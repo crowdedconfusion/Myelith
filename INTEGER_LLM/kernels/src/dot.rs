@@ -138,6 +138,32 @@ mod gewaehlt {
         }
     }
 
+    /// Hat diese Maschine `i8mm` (fuer `usdot`) und `dotprod`?
+    #[inline]
+    pub fn int8_zerlegt() -> bool {
+        super::zerlegt::verfuegbar()
+    }
+
+    /// Die Laengen sind gleich (`super::int8_zeile`).
+    #[inline]
+    pub fn int8_zeile(w: &[i8], hoch: &[i8], tief: &[u8]) -> Option<i64> {
+        // SAFETY: `verfuegbar` ist geprueft (`super::int8_zerlegt_laeuft`),
+        // und alle drei Ausschnitte haben dieselbe Laenge.
+        (super::zerlegt::verfuegbar() && w.len() == hoch.len() && w.len() == tief.len())
+            .then(|| unsafe { super::zerlegt::zeile(w, hoch, tief) })
+    }
+
+    /// Die Laengen hat `super::int8_zeile_viele` geprueft.
+    #[inline]
+    pub fn int8_zeile_viele(w: &[i8], e: &[crate::ternaer::Eingabe<'_>], aus: &mut [i64]) -> bool {
+        if !super::zerlegt::verfuegbar() {
+            return false;
+        }
+        // SAFETY: wie oben; jede Eingabe hat die Laenge der Zeile.
+        unsafe { super::zerlegt::zeile_viele(w, e, aus) };
+        true
+    }
+
     /// Die Laengen hat [`super::vierbit_zeile`] geprueft.
     #[inline]
     pub fn vierbit(codes: &[u8], gitter: &[u8], _x: &[i16], hoch: &[i8], tief: &[u8], summen: &[i64]) -> i64 {
@@ -172,6 +198,20 @@ mod gewaehlt {
     #[inline]
     pub fn laeuft() -> bool {
         std::is_x86_feature_detected!("avx2")
+    }
+
+    /// Einen zerlegten int8-Kern gibt es hier nicht.
+    #[inline]
+    pub fn int8_zerlegt() -> bool {
+        false
+    }
+    #[inline]
+    pub fn int8_zeile(_w: &[i8], _hoch: &[i8], _tief: &[u8]) -> Option<i64> {
+        None
+    }
+    #[inline]
+    pub fn int8_zeile_viele(_w: &[i8], _e: &[crate::ternaer::Eingabe<'_>], _aus: &mut [i64]) -> bool {
+        false
     }
 
     /// int16 mal int16 bleibt hier skalar: `_mm256_madd_epi16` summiert
@@ -219,6 +259,21 @@ mod gewaehlt {
 #[cfg(not(all(feature = "cpu-simd", any(target_arch = "aarch64", target_arch = "x86_64"))))]
 mod gewaehlt {
     pub const VEKTORISIERT: bool = false;
+
+    /// Einen zerlegten int8-Kern gibt es hier nicht.
+    #[inline]
+    pub fn int8_zerlegt() -> bool {
+        false
+    }
+    #[inline]
+    pub fn int8_zeile(_w: &[i8], _hoch: &[i8], _tief: &[u8]) -> Option<i64> {
+        None
+    }
+    #[inline]
+    pub fn int8_zeile_viele(_w: &[i8], _e: &[crate::ternaer::Eingabe<'_>], _aus: &mut [i64]) -> bool {
+        false
+    }
+
 
     #[inline]
     pub fn laeuft() -> bool {
@@ -334,6 +389,56 @@ pub fn dot_i8_i8(w: &[i8], x: &[i8]) -> i64 {
         .zip(x.chunks(4096))
         .map(|(a, b)| i64::from(a.iter().zip(b).map(|(p, q)| i32::from(*p) * i32::from(*q)).sum::<i32>()))
         .sum()
+}
+
+/// **Rechnet auf dieser Maschine der zerlegte int8-Kern?** Dann bereitet
+/// [`crate::linear::Gewichtsmatrix::eingabe`] auch fuer int8-Gewichte die
+/// Zerlegung `x = 256 · hoch + tief` vor ([`crate::ternaer::Eingabe`]), und
+/// [`int8_zeile`] rechnet mit `sdot` und `usdot` statt mit `vmlal`.
+///
+/// ⚑ **Warum (2026-11-18, INT8-Kerne mit den Punktproduktbefehlen der CPU, Teil ARM):** Der alte Kern
+/// braucht je 16 Produkte zwei Erweiterungen und vier `vmlal`; der zerlegte
+/// zwei Befehle (`sdot` fuer `w · hoch`, `usdot` fuer `w · tief`). Die
+/// Zerlegung entsteht einmal je Eingabe und gilt fuer alle Zeilen der Matrix.
+/// `usdot` gehoert zur Erweiterung `i8mm` (Apple ab M2, Neoverse ab V1);
+/// ohne sie bleibt der alte Kern.
+///
+/// **Exaktheit:** `x = 256 · (x >> 8) + (x & 0xFF)` fuer jedes `i16`, also
+/// `Σ w·x = 256 · Σ w·hoch + Σ w·tief`, in ganzen Zahlen und damit in jeder
+/// Reihenfolge dieselbe Zahl (Modulkopf). Probe
+/// `der_zerlegte_kern_ist_die_skalare_formel`.
+pub fn int8_zerlegt_laeuft() -> bool {
+    VEKTORISIERT && !SKALAR_ERZWUNGEN.load(Ordering::Relaxed) && gewaehlt::int8_zerlegt()
+}
+
+/// Eine int8-Zeile mal einer zerlegten Eingabe; dieselbe Zahl wie
+/// [`dot_i8_i16`] mit `e.x()`. Ist die Eingabe nicht zerlegt oder rechnet
+/// der zerlegte Kern hier nicht, rechnet [`dot_i8_i16`].
+#[inline]
+pub fn int8_zeile(w: &[i8], e: &crate::ternaer::Eingabe<'_>) -> i64 {
+    let n = w.len().min(e.x().len());
+    if e.laengen_passen(n, 0) && int8_zerlegt_laeuft() {
+        let (hoch, tief, _) = e.teile(n, 0);
+        if let Some(s) = gewaehlt::int8_zeile(&w[..n], hoch, tief) {
+            return s;
+        }
+    }
+    dot_i8_i16(w, e.x())
+}
+
+/// Dieselbe int8-Zeile mal mehreren Eingaben: `aus[k]` ist genau
+/// [`int8_zeile`] fuer `e[k]`. Die Zeile wird je 16 Werte einmal geladen und
+/// fuer bis zu vier Eingaben zugleich gerechnet.
+pub fn int8_zeile_viele(w: &[i8], e: &[crate::ternaer::Eingabe<'_>], aus: &mut [i64]) {
+    assert_eq!(e.len(), aus.len(), "int8_zeile_viele: {} Eingaben, {} Ausgaben", e.len(), aus.len());
+    let n = w.len();
+    let gemeinsam = int8_zerlegt_laeuft() && e.iter().all(|ein| ein.x().len() == n && ein.laengen_passen(n, 0));
+    if gemeinsam && gewaehlt::int8_zeile_viele(w, e, aus) {
+        return;
+    }
+    for (ein, ziel) in e.iter().zip(aus.iter_mut()) {
+        *ziel = int8_zeile(w, ein);
+    }
 }
 
 /// Eine Zeile einer ternaeren Matrix mal `x`, siehe [`crate::ternaer`].
@@ -578,6 +683,166 @@ mod avx2 {
     }
 }
 
+/// **Der zerlegte int8-Kern** (`sdot` und `usdot`), siehe
+/// [`int8_zerlegt_laeuft`].
+///
+/// **Grenzen der Akkumulatoren:** Je 16 Werte bekommt jede Spur vier
+/// Produkte, hoechstens `4 · 128 · 128 = 65 536` (hoch) und
+/// `4 · 255 · 128 = 130 560` (tief). Nach [`zerlegt::BLOCK`] Werten (256
+/// Schritte) sind das hoechstens 33,4 Mio je Spur, weit unter `i32::MAX`;
+/// dann wird nach `i64` ausgeraeumt, und erst dort mit 256 malgenommen.
+#[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
+mod zerlegt {
+    use std::arch::aarch64::*;
+
+    /// Werte je Block, nach dem die `i32`-Spuren nach `i64` gehen.
+    pub const BLOCK: usize = 4096;
+
+    /// `i8mm` und `dotprod` auf dieser Maschine; die Standardbibliothek
+    /// fragt einmal und merkt es sich.
+    #[inline]
+    pub fn verfuegbar() -> bool {
+        std::arch::is_aarch64_feature_detected!("i8mm") && std::arch::is_aarch64_feature_detected!("dotprod")
+    }
+
+    #[inline]
+    #[target_feature(enable = "dotprod")]
+    unsafe fn sdot(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
+        let mut r = acc;
+        std::arch::asm!(
+            "sdot {r:v}.4s, {a:v}.16b, {b:v}.16b",
+            r = inout(vreg) r,
+            a = in(vreg) a,
+            b = in(vreg) b,
+            options(pure, nomem, nostack, preserves_flags)
+        );
+        r
+    }
+
+    /// `usdot`: vorzeichenlos (`a`) mal vorzeichenbehaftet (`b`).
+    #[inline]
+    #[target_feature(enable = "i8mm")]
+    unsafe fn usdot(acc: int32x4_t, a: uint8x16_t, b: int8x16_t) -> int32x4_t {
+        let mut r = acc;
+        std::arch::asm!(
+            "usdot {r:v}.4s, {a:v}.16b, {b:v}.16b",
+            r = inout(vreg) r,
+            a = in(vreg) a,
+            b = in(vreg) b,
+            options(pure, nomem, nostack, preserves_flags)
+        );
+        r
+    }
+
+    #[inline]
+    unsafe fn summe(v: int32x4_t) -> i64 {
+        vaddvq_s64(vpaddlq_s32(v))
+    }
+
+    /// `Σ w·x` mit `x = 256·hoch + tief`.
+    ///
+    /// # Safety
+    /// `verfuegbar()` ist wahr, und `w`, `hoch`, `tief` haben dieselbe Laenge.
+    #[target_feature(enable = "dotprod,i8mm")]
+    pub unsafe fn zeile(w: &[i8], hoch: &[i8], tief: &[u8]) -> i64 {
+        let n = w.len();
+        let (pw, ph, pt) = (w.as_ptr(), hoch.as_ptr(), tief.as_ptr());
+        let (mut h_ges, mut t_ges) = (0i64, 0i64);
+        let mut i = 0usize;
+        while i + 16 <= n {
+            let ende = (i + BLOCK).min(n);
+            // Zwei Ketten je Teil, damit keine Runde auf die vorige wartet.
+            let (mut h0, mut h1, mut t0, mut t1) = (vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0));
+            while i + 32 <= ende {
+                let w0 = vld1q_s8(pw.add(i));
+                let w1 = vld1q_s8(pw.add(i + 16));
+                h0 = sdot(h0, w0, vld1q_s8(ph.add(i)));
+                h1 = sdot(h1, w1, vld1q_s8(ph.add(i + 16)));
+                t0 = usdot(t0, vld1q_u8(pt.add(i)), w0);
+                t1 = usdot(t1, vld1q_u8(pt.add(i + 16)), w1);
+                i += 32;
+            }
+            while i + 16 <= ende {
+                let w0 = vld1q_s8(pw.add(i));
+                h0 = sdot(h0, w0, vld1q_s8(ph.add(i)));
+                t0 = usdot(t0, vld1q_u8(pt.add(i)), w0);
+                i += 16;
+            }
+            h_ges += summe(h0) + summe(h1);
+            t_ges += summe(t0) + summe(t1);
+        }
+        let mut s = 256 * h_ges + t_ges;
+        while i < n {
+            let x = 256 * i64::from(*ph.add(i)) + i64::from(*pt.add(i));
+            s += i64::from(*pw.add(i)) * x;
+            i += 1;
+        }
+        s
+    }
+
+    /// Eine Zeile mal bis zu vier Eingaben je Durchgang: Die Zeile wird je 16
+    /// Werte einmal geladen.
+    ///
+    /// # Safety
+    /// `verfuegbar()` ist wahr, jede Eingabe ist zerlegt und so lang wie `w`,
+    /// `aus` so lang wie `e`.
+    #[target_feature(enable = "dotprod,i8mm")]
+    pub unsafe fn zeile_viele(w: &[i8], e: &[crate::ternaer::Eingabe<'_>], aus: &mut [i64]) {
+        let n = w.len();
+        let pw = w.as_ptr();
+        let mut k = 0usize;
+        while k < e.len() {
+            let breite = (e.len() - k).min(4);
+            if breite < 4 {
+                for j in k..e.len() {
+                    let (hoch, tief, _) = e[j].teile(n, 0);
+                    aus[j] = zeile(w, hoch, tief);
+                }
+                return;
+            }
+            let t: [(*const i8, *const u8); 4] = std::array::from_fn(|j| {
+                let (hoch, tief, _) = e[k + j].teile(n, 0);
+                (hoch.as_ptr(), tief.as_ptr())
+            });
+            let mut h_ges = [0i64; 4];
+            let mut t_ges = [0i64; 4];
+            let mut i = 0usize;
+            while i + 16 <= n {
+                let ende = (i + BLOCK).min(n);
+                let mut h = [vdupq_n_s32(0); 4];
+                let mut u = [vdupq_n_s32(0); 4];
+                while i + 16 <= ende {
+                    let w0 = vld1q_s8(pw.add(i));
+                    h[0] = sdot(h[0], w0, vld1q_s8(t[0].0.add(i)));
+                    u[0] = usdot(u[0], vld1q_u8(t[0].1.add(i)), w0);
+                    h[1] = sdot(h[1], w0, vld1q_s8(t[1].0.add(i)));
+                    u[1] = usdot(u[1], vld1q_u8(t[1].1.add(i)), w0);
+                    h[2] = sdot(h[2], w0, vld1q_s8(t[2].0.add(i)));
+                    u[2] = usdot(u[2], vld1q_u8(t[2].1.add(i)), w0);
+                    h[3] = sdot(h[3], w0, vld1q_s8(t[3].0.add(i)));
+                    u[3] = usdot(u[3], vld1q_u8(t[3].1.add(i)), w0);
+                    i += 16;
+                }
+                for j in 0..4 {
+                    h_ges[j] += summe(h[j]);
+                    t_ges[j] += summe(u[j]);
+                }
+            }
+            for j in 0..4 {
+                let mut s = 256 * h_ges[j] + t_ges[j];
+                let mut r = i;
+                while r < n {
+                    let x = 256 * i64::from(*t[j].0.add(r)) + i64::from(*t[j].1.add(r));
+                    s += i64::from(*pw.add(r)) * x;
+                    r += 1;
+                }
+                aus[k + j] = s;
+            }
+            k += 4;
+        }
+    }
+}
+
 #[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
 mod neon {
     use std::arch::aarch64::*;
@@ -727,6 +992,48 @@ mod tests {
         assert_eq!(erzwungen, dot_scalar(&w, &x));
         if VEKTORISIERT {
             assert!(erzwungen_skalar_gerechnet() > vorher, "der Schalter hat nicht gegriffen");
+        }
+    }
+
+    /// ⚑ **Der zerlegte int8-Kern ist die skalare Formel** (2026-11-18): ueber
+    /// Laengen um die Grenzen von 16, 32 und `BLOCK`, die Raender von `i8`
+    /// und `i16` (auch -32768 und Werte mit tiefem Byte 0x80 bis 0xFF), eine
+    /// und viele Eingaben. Laeuft der Kern hier, wird belegt, dass er lief.
+    #[test]
+    fn der_zerlegte_kern_ist_die_skalare_formel() {
+        let mut z = 0x9E37_79B9_7F4A_7C15u64;
+        let mut naechste = move || {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z
+        };
+        let raender: [i16; 8] = [i16::MIN, i16::MAX, -1, 0, 255, 256, -256, 128];
+        let mut lief = false;
+        for n in [0usize, 1, 15, 16, 17, 31, 32, 33, 100, 4095, 4096, 4097, 8200, 17408] {
+            let w: Vec<i8> = (0..n).map(|i| if i % 97 == 0 { i8::MIN } else { naechste() as i8 }).collect();
+            let xs: Vec<Vec<i16>> = (0..9)
+                .map(|k| (0..n).map(|i| if (i + k) % 13 == 0 { raender[(i + k) % 8] } else { naechste() as i16 }).collect())
+                .collect();
+            let e: Vec<crate::ternaer::Eingabe<'_>> = xs.iter().map(|x| crate::ternaer::Eingabe::neu(x)).collect();
+            for (x, ein) in xs.iter().zip(&e) {
+                let soll = dot_scalar(&w, x);
+                assert_eq!(int8_zeile(&w, ein), soll, "eine Eingabe, n = {n}");
+                if let Some(v) = gewaehlt::int8_zeile(&w, ein.teile(n, 0).0, ein.teile(n, 0).1) {
+                    assert_eq!(v, soll, "Kern direkt, n = {n}");
+                    lief = true;
+                }
+            }
+            for viele in 0..=9 {
+                let mut aus = vec![0i64; viele];
+                int8_zeile_viele(&w, &e[..viele], &mut aus);
+                for (k, a) in aus.iter().enumerate() {
+                    assert_eq!(*a, dot_scalar(&w, &xs[k]), "{viele} Eingaben, Nummer {k}, n = {n}");
+                }
+            }
+        }
+        if VEKTORISIERT && cfg!(target_os = "macos") && gewaehlt::int8_zerlegt() {
+            assert!(lief, "der zerlegte Kern lief nicht, obwohl er verfuegbar ist");
         }
     }
 

@@ -93,6 +93,28 @@ const MINER: [Rolle4; 14] = [
     Rolle4 { name: "m13", ebenen: 48, zeit_us: 70_000, gehalten: None, ordner: Ordner::Ganz },
 ];
 
+/// **Ab so vielen Ebenen fällt der Lügner der Zeitprobe sicher auf**
+/// (Fund 710). Die Probe hat höchstens 2 048 Positionen und 2 s Zugabe: Wer
+/// je Token unter rund 1 ms bleibt, besteht, gleich was er ansagt. Gemessen
+/// im Testbau auf einem Apple M5 Pro: 0,37 ms je Token und Ebene (Selbstproben
+/// über 1 bis 12 Ebenen). Fünf Ebenen liegen mit rund 1,9 ms beim Doppelten
+/// der Schranke; Last macht einen Shard nur langsamer.
+const LUEGNER_MESSBAR_AB: u32 = 5;
+
+/// Wie viele Ebenen `mitglied` in dieser Zuteilung rechnet; `None` in der
+/// Reserve oder ohne Pod.
+fn ebenen_des_mitglieds(
+    zustand: &myl_ledger::state::LedgerState,
+    zuteilung: &myl_scheduler::shard_assignment::Zuteilung,
+    mitglied: &MinerId,
+) -> Option<u32> {
+    zuteilung.pods.iter().find_map(|p| {
+        let i = p.shards.iter().position(|s| s.miner.miner_id == *mitglied)?;
+        let (von, bis) = myl_node::kette::Kette::grenzen_des_pods(zustand, p)?[i];
+        Some(bis - von)
+    })
+}
+
 /// Legt den Artefaktordner eines Miners an: das ganze Artefakt oder einen
 /// Teil davon, als Verweise auf das Probeartefakt (nichts wird kopiert).
 fn artefaktordner(ziel: &Path, ordner: Ordner) -> PathBuf {
@@ -167,6 +189,7 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
             programm: shardprogramm(),
             artefakte: artefaktordner(&protokolle.join("artefakt"), m.ordner),
             training: false,
+            freigabe: Default::default(),
         }),
         aufnahme_sekunden: 1,
         beobachtung: None,
@@ -431,6 +454,15 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     //    fiel aus. Jetzt läuft das Netz Epoche um Epoche weiter, bis er eine
     //    Position hat, höchstens bis Epoche 6: Ausgelassen wird dann noch in
     //    rund zwei von tausend Läufen, und dann sichtbar.
+    // 📌 **Fund 710 (2026-11-16): Eine Position allein reicht nicht.** Der
+    //    Lügner bekam den Bereich (0, 1), und fünf Mitglieder massen seine
+    //    2 048 Positionen in 1,28 bis 1,71 s: unter der Zugabe von 2 s, also
+    //    bestanden, und der Lauf wartete bis Höhe 9 000 auf eine Meldung, die
+    //    nach der Regel nie kommt. An der Obergrenze der Probe ist die
+    //    Schranke absolut (rund 1 ms je Token über der Frist,
+    //    `myl_node::frist::probe_positionen`), und eine Ebene des
+    //    Probemodells rechnet im Testbau 0,37 ms je Token. Jetzt läuft das
+    //    Netz weiter, bis sein Bereich [`LUEGNER_MESSBAR_AB`] Ebenen fasst.
     let luegner = knoten[1 + MINER.iter().position(|m| m.name == "luegner").unwrap()].miner_kennung().expect("Lügner");
     let mut ziel = 2;
     let (zustand, z) = loop {
@@ -441,10 +473,14 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
         pruefe_einigkeit(&knoten, &format!("Beginn Epoche {ziel}"));
         let zustand = knoten[0].kette().zustand().clone();
         let z = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
-        if z.pods.iter().any(|p| p.shards.iter().any(|s| s.miner.miner_id == luegner)) || ziel >= 6 {
+        let ebenen = ebenen_des_mitglieds(&zustand, &z, &luegner);
+        if ebenen.is_some_and(|e| e >= LUEGNER_MESSBAR_AB) || ziel >= 6 {
             break (zustand, z);
         }
-        eprintln!("[netzlauf] Lügner in Epoche {ziel} in der Reserve, weiter");
+        match ebenen {
+            Some(e) => eprintln!("[netzlauf] Lügner in Epoche {ziel} mit {e} Ebenen unter der Schranke der Zeitprobe, weiter"),
+            None => eprintln!("[netzlauf] Lügner in Epoche {ziel} in der Reserve, weiter"),
+        }
         ziel += 1;
     };
     let n = namen(&knoten);
@@ -498,9 +534,10 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     eprintln!("[netzlauf] Shard von {} nach Absturz neu gestartet", MINER[opfer - 1].name);
 
     // ---- Stolperstein 1: der Lügner wird gemessen und gesperrt ---------
-    let lebt_im_pod = z.pods.iter().any(|p| p.shards.iter().any(|s| s.miner.miner_id == luegner));
+    let ebenen_des_luegners = ebenen_des_mitglieds(&zustand, &z, &luegner);
+    let messbar = ebenen_des_luegners.is_some_and(|e| e >= LUEGNER_MESSBAR_AB);
     let epoche = knoten[0].kette().zustand().epoch.0;
-    if lebt_im_pod {
+    if messbar {
         // ⚑ **Gemessen in Blöcken, nicht in Sekunden** (2026-10-27): Seit der
         //   Anlaufzeit und den zwei Fenstern der Zeitprobe (NODE 0.64.0)
         //   misst niemand vor einem Viertel der Epoche, und ein Zeugnis
@@ -519,9 +556,15 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
         }
         eprintln!("[netzlauf] Lügner gemeldet bei Höhe {}", knoten[0].kette().hoehe());
     } else {
-        // Die Reserve rechnet nicht und wird nicht gemessen; ausgelassen
-        // wird sichtbar, nicht still.
-        eprintln!("[netzlauf] ⚠️ Stolperstein 1 ausgelassen: der Lügner stand bis Epoche {ziel} in der Reserve");
+        // Die Reserve rechnet nicht und wird nicht gemessen, und ein zu
+        // kleiner Bereich bleibt unter der Schranke der Probe (Fund 710);
+        // ausgelassen wird sichtbar, nicht still.
+        match ebenen_des_luegners {
+            Some(e) => eprintln!(
+                "[netzlauf] ⚠️ Stolperstein 1 ausgelassen: der Lügner rechnete bis Epoche {ziel} höchstens {e} Ebenen, zu wenig für die Zeitprobe"
+            ),
+            None => eprintln!("[netzlauf] ⚠️ Stolperstein 1 ausgelassen: der Lügner stand bis Epoche {ziel} in der Reserve"),
+        }
     }
 
     // ---- Stolperstein 6: drei Knoten fallen zugleich aus und kehren zurück
@@ -568,7 +611,7 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     pruefe_einigkeit(&knoten, "Beginn der Epoche danach");
     let zustand = knoten[0].kette().zustand().clone();
     let z3 = myl_node::kette::Kette::zuteilung_der_laufenden_epoche(&zustand);
-    if lebt_im_pod {
+    if messbar {
         assert!(z3.pods.iter().all(|p| p.mitglieder().all(|m| m.miner_id != luegner)), "der Lügner steht wieder in einem Pod");
     }
     // Stolperstein 3: Teilablage im eigenen Teil.
@@ -601,7 +644,7 @@ async fn der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen() {
     //    die Prüfung verlangte bis zum 2026-10-22 dann „niemand“.
     let namen_gesperrt: Vec<String> = gesperrt.iter().map(|m| namen(&knoten)[m].clone()).collect();
     assert!(gesperrt.iter().all(|m| *m == luegner), "ein ehrlicher Knoten ist gesperrt: {namen_gesperrt:?}");
-    if lebt_im_pod {
+    if messbar {
         assert_eq!(gesperrt, vec![luegner], "der gemeldete Lügner ist nicht gesperrt: {namen_gesperrt:?}");
     }
     // Was die Stolpersteine im Protokoll hinterlassen haben.

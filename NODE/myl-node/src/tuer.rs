@@ -67,6 +67,17 @@ pub const TUER_PORT: u16 = 4160;
 
 /// Die Abschrift der Sitzungskontrakte, die die Tür liest.
 ///
+/// ⚑ **Eine vorgemerkte Abrechnung** (Fund 707): von dieser Tür
+/// ausgestellt, der Kette noch nicht bekannt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Vormerkung {
+    sitzung: SitzungId,
+    nummer: u64,
+    betrag: u64,
+    /// Die Epoche der Ausstellung.
+    epoche: u64,
+}
+
 /// Der Knoten schreibt, die Tür liest. Eine `Mutex` genügt: Die Sperre
 /// wird nur für das Kopieren gehalten, nie über ein `await`.
 #[derive(Debug, Clone, Default)]
@@ -83,6 +94,12 @@ pub struct Kontraktabschrift {
     /// Ein `AtomicU64` statt einer zweiten Sperre: ein Schreiber, viele
     /// Leser, ein Wort.
     epoche: Arc<AtomicU64>,
+    /// ⚑ **Fund 707:** die nicht verfallenen Credits je Inhaber einer
+    /// Sitzung, wie die Kette sie zuletzt nannte.
+    guthaben: Arc<Mutex<BTreeMap<myl_types::ids::Address, u64>>>,
+    /// ⚑ **Fund 707:** Abrechnungen dieser Tür, die die Kette noch nicht
+    /// kennt.
+    offen: Arc<Mutex<Vec<Vormerkung>>>,
 }
 
 impl Kontraktabschrift {
@@ -101,6 +118,31 @@ impl Kontraktabschrift {
             .iter()
             .map(|(id, s)| (*id, (s.kontrakt.clone(), s.zustand)))
             .collect();
+        // ⚑ **Fund 707: Guthaben und offene Abrechnungen mit demselben Stand.**
+        //   Eine Abrechnung ist erledigt, sobald die Kette eine Nummer dieser
+        //   Sitzung gleich oder höher kennt (angenommen oder überholt), und
+        //   vergessen, wenn sie älter ist als die Gültigkeit der Credits.
+        let guthaben: BTreeMap<myl_types::ids::Address, u64> = neu
+            .values()
+            .map(|(k, _)| {
+                let verfuegbar = zustand
+                    .account(&k.inhaber)
+                    .credits
+                    .iter()
+                    .filter(|c| c.expiry >= zustand.epoch)
+                    .fold(0u64, |summe, c| summe.saturating_add(c.vtfe));
+                (k.inhaber, verfuegbar)
+            })
+            .collect();
+        if let Ok(mut o) = self.offen.lock() {
+            o.retain(|v| {
+                neu.get(&v.sitzung).is_some_and(|(_, z)| v.nummer > z.hoechste_abrechnung)
+                    && v.epoche.saturating_add(1) >= zustand.epoch.0
+            });
+        }
+        if let Ok(mut g) = self.guthaben.lock() {
+            *g = guthaben;
+        }
         if let Ok(mut g) = self.stand.lock() {
             *g = neu;
         }
@@ -109,6 +151,15 @@ impl Kontraktabschrift {
         // über dem alten Stand: genau die Verwechslung, gegen die die
         // gemeinsame Quelle steht.
         self.epoche.store(zustand.epoch.0, Ordering::Relaxed);
+    }
+
+    /// ⚑ **Merkt eine Abrechnung dieser Tür vor** (Fund 707), bis die Kette
+    /// sie kennt: Ihr Betrag ist vom Guthaben des Inhabers schon vergeben.
+    pub fn vormerken(&self, sitzung: SitzungId, nummer: u64, betrag: u64) {
+        let epoche = self.epoche.load(Ordering::Relaxed);
+        if let Ok(mut o) = self.offen.lock() {
+            o.push(Vormerkung { sitzung, nummer, betrag, epoche });
+        }
     }
 
     /// Die Epoche des zuletzt abgelegten Standes.
@@ -245,6 +296,21 @@ impl myl_gateway::zugang::Kontraktquelle for Kontraktabschrift {
     fn nachschlagen(&self, sitzung: SitzungId) -> Option<(Sitzungskontrakt, Sitzungszustand)> {
         self.stand.lock().ok()?.get(&sitzung).cloned()
     }
+
+    /// ⚑ Fund 707: Guthaben laut Kette, abzüglich der vorgemerkten
+    /// Abrechnungen aller Sitzungen dieses Inhabers.
+    fn guthaben(&self, inhaber: &myl_types::ids::Address) -> Option<u64> {
+        let laut_kette = self.guthaben.lock().ok()?.get(inhaber).copied().unwrap_or(0);
+        let stand = self.stand.lock().ok()?;
+        let vorgemerkt: u64 = self
+            .offen
+            .lock()
+            .ok()?
+            .iter()
+            .filter(|v| stand.get(&v.sitzung).is_some_and(|(k, _)| k.inhaber == *inhaber))
+            .fold(0u64, |summe, v| summe.saturating_add(v.betrag));
+        Some(laut_kette.saturating_sub(vorgemerkt))
+    }
 }
 
 #[cfg(test)]
@@ -286,6 +352,35 @@ mod tests {
         a.setzen(&zustand);
         assert_eq!(a.anzahl(), 1);
         assert_eq!(a.nachschlagen(id).map(|(k, _)| k), Some(k));
+    }
+
+    /// ⚑ **Das Guthaben des Inhabers, abzüglich des Vorgemerkten** (Fund
+    /// 707): Was die Tür abgerechnet hat und die Kette noch nicht kennt, ist
+    /// vergeben; kennt die Kette die Nummer, zählt nur noch ihr Stand. Ein
+    /// verfallener Credit zählt nicht. Gegenprobe im selben Zug: ohne
+    /// Vormerkung das ganze Guthaben.
+    #[test]
+    fn das_guthaben_rechnet_vorgemerkte_abrechnungen_ab() {
+        let mut zustand = myl_ledger::LedgerState::genesis(1);
+        zustand.epoch = EpochId(4);
+        let k = kontrakt(5);
+        let id = k.adresse();
+        zustand.sitzungen.insert(id, myl_ledger::state::Sitzung { kontrakt: k.clone(), zustand: Sitzungszustand::neu() });
+        let konto = zustand.account_mut(&k.inhaber);
+        konto.credits.push(myl_types::InferenceCredit { owner: k.inhaber, vtfe: 100, expiry: EpochId(5) });
+        konto.credits.push(myl_types::InferenceCredit { owner: k.inhaber, vtfe: 50, expiry: EpochId(3) });
+        let a = Kontraktabschrift::neu();
+        a.setzen(&zustand);
+        assert_eq!(a.guthaben(&k.inhaber), Some(100), "der verfallene Credit zaehlt mit, oder es fehlt einer");
+        a.vormerken(id, 1, 60);
+        assert_eq!(a.guthaben(&k.inhaber), Some(40), "die Vormerkung zaehlt nicht");
+        // Die Kette kennt die Nummer jetzt und hat abgebucht.
+        let mut s = Sitzungszustand::neu();
+        s.hoechste_abrechnung = 1;
+        zustand.sitzungen.insert(id, myl_ledger::state::Sitzung { kontrakt: k.clone(), zustand: s });
+        zustand.account_mut(&k.inhaber).credits[0].vtfe = 40;
+        a.setzen(&zustand);
+        assert_eq!(a.guthaben(&k.inhaber), Some(40), "die erledigte Abrechnung wurde doppelt abgezogen");
     }
 
     /// ⚑ **Ein Widerruf in der Kette erreicht die Tür**, sobald der
@@ -498,12 +593,15 @@ mod tests {
 
     #[async_trait::async_trait]
     impl myl_gateway::oai::Rechenweg for Prueweg {
-        async fn rechne(&self, a: myl_gateway::oai::Rechenauftrag<'_>) -> Option<myl_gateway::oai::Rechenergebnis> {
+        async fn rechne(
+            &self,
+            a: myl_gateway::oai::Rechenauftrag<'_>,
+        ) -> Result<myl_gateway::oai::Rechenergebnis, myl_gateway::oai::Rechenfehler> {
             if a.prompt.contains("warten") {
                 self.begonnen.notify_one();
                 self.weiter.notified().await;
             }
-            Some(myl_gateway::oai::Rechenergebnis { text: "ok".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+            Ok(myl_gateway::oai::Rechenergebnis { text: "ok".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
         }
         async fn modell(&self) -> Option<myl_gateway::oai::Modellstand> {
             Some(myl_gateway::oai::Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
@@ -522,6 +620,13 @@ mod tests {
             k.agent = Address::aus_schluessel(&sk.public_key().expect("pk"));
             k.credits = Grenzen { budget: 10_000, einzellimit: 1_000, schwelle: u64::MAX, zeugenleiter: Vec::new() };
             let id = k.adresse();
+            // ⚑ Mit Guthaben des Inhabers (Fund 707): Ohne Credits lehnt die
+            //   Tür jetzt ab, bevor sie rechnet, wie die Kette es täte.
+            zustand.account_mut(&k.inhaber).credits.push(myl_types::InferenceCredit {
+                owner: k.inhaber,
+                vtfe: 1_000_000,
+                expiry: EpochId(1_000),
+            });
             zustand.sitzungen.insert(id, myl_ledger::state::Sitzung { kontrakt: k, zustand: Sitzungszustand::neu() });
             tokens.push(Vollmacht::ausstellen(&sk, vec![Vorbehalt::NurSitzung(id), Vorbehalt::GueltigBis(EpochId(9))], [4u8; 32]).expect("ausstellen").als_bearer());
         }
@@ -572,7 +677,12 @@ mod tests {
             let t = tokens[0].clone();
             tokio::spawn(async move { frage_v1(port, &t, "warten").await })
         };
-        weg.begonnen.notified().await;
+        // 📌 **Mit Frist** (2026-11-16): Ohne sie hing diese Probe 40 Minuten,
+        //   als die Tür richtig ablehnte (Inhaber ohne Credits) und nie
+        //   gerechnet wurde. Eine Probe, die hängt, sagt nicht, warum.
+        tokio::time::timeout(std::time::Duration::from_secs(30), weg.begonnen.notified())
+            .await
+            .expect("nach 30 s rechnet die Tuer noch nicht: abgelehnt (Guthaben, Kontrakt, Vollmacht)?");
         let kurz = frage_v1(port, &tokens[1], "sofort").await;
         assert!(kurz.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&kurz));
         weg.weiter.notify_one();

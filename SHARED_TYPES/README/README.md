@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.69.0
-> **Datum:** 2026-11-15
+> **Version:** 0.75.0
+> **Datum:** 2026-11-18
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -49,6 +49,136 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.75.0 (2026-11-18): Die Chiffre eines Anteils bindet ihren Wert (Fund A51)
+
+- ⛔️ **`anteilchiffre::verschluesseln` leitet den flüchtigen Schlüssel auch
+  aus dem Wert ab** (wie RFC 6979, 3.2 die Nonce aus der Nachricht). 📌 Bis
+  hierher hing er an Geheimnis, Empfänger, Kontext und Sitz, nicht am Wert.
+  Teilte ein Austeiler nach einem Zweigwechsel einen anderen Wert an
+  denselben Sitz aus, bekamen beide Chiffren denselben Strom, und das XOR
+  beider Chiffren war das XOR beider Werte, für jeden lesbar. Kein Format
+  ändert sich; geprüft wird eine Chiffre weiter über die Feldman-Bindung.
+- Probe `zwei_werte_am_selben_sitz_teilen_keinen_strom`; Gegenprobe am Code:
+  mit der alten Ableitung rot (gleiches `R`).
+
+### v0.74.0 (2026-11-17): Ein Inhalt schreibt keine eigene Runde
+
+- ⛔️ **`vorlage::entschaerft`, angewandt in `Vorlage::bauen`** auf Rolle und
+  Inhalt jeder Nachricht. Der Wortschatz liest `<|im_start|>` auch mitten im
+  Text als die eine Sondermarke; 📌 bis hierher ging der Inhalt unverändert
+  in die Vorlage, und ein Werkzeugergebnis (eine fremde Seite, eine gelesene
+  Datei) mit `<|im_end|>\n<|im_start|>system\n…` schloss seine Runde und
+  schrieb eine eigene Systemrunde, an jedem Rahmen des Agenten vorbei.
+  Gebrochen wird jede Folge `<|` Name `|>` (Buchstaben, Ziffern, `_`) mit
+  einem Leerzeichen ohne Breite hinter `<` (`MARKENBRECHER`, U+200B); `<|>`
+  und `<tool_call>` bleiben, ein Text ohne Marke kommt ohne Abschrift
+  zurück. Gilt für Tür und Klient, denn beide bauen hier. Whitepaper 8.3
+  (abgerufene Daten bestimmen nicht den Kontrollfluss): stimmt.
+- Probe `ein_inhalt_schreibt_keine_eigene_runde` mit Gegenprobe (ungebrochen
+  vier Rollenanfänge statt zwei); am echten Wortschatz in `myl-client`
+  (`tests/steuermarken.rs`).
+
+### v0.73.0 (2026-11-17): Eine Anfrage kostet Prompt und Ausgabe (Fund 711)
+
+- ⚑ **`inferenzauftrag::preis`** (Entscheidung des Projektinhabers vom
+  2026-11-17, Whitepaper 5.1: Credits sind in vTFE denominiert): so viele
+  Credits, wie der Pod Vorwärtspässe rechnet und als vTFE beansprucht, also
+  `prompt_token + neue_token - 1`, ohne neues Token der ganze Prompt,
+  mindestens einer. Bis hierher kostete eine Anfrage nur ihre erzeugten
+  Token: Im Auftragslauf zahlte ein Agent 463 Credits für rund 12 300
+  gerechnete Positionen, und die Nachfrage, an der der Credit-Preis hängt
+  (5.4), wurde um denselben Faktor zu klein gemessen. Ein eigenes Gewicht für
+  Prompt-Positionen wäre eine Änderung am Whitepaper.
+- ⚑ **`Inferenzauftrag.hoechstens`** (angehängt): so viele Credits darf der
+  Auftrag höchstens kosten, gemessen mit `preis`. Nur der Pod kennt die Zahl
+  der Prompt-Token; **`neue_token_im_rahmen`** sagt ihm, wie viele neue Token
+  der Betrag zulässt, oder `None`, wenn schon der Prompt mehr kostet.
+  `pruefe_form` weist einen Auftrag ohne Betrag ab (`OhneBetrag`).
+- **`Inferenzantwort::Ungedeckt`** (angehängt): nicht gerechnet, weil schon
+  der Prompt mehr kostet als der Höchstbetrag, mit der Zahl der Prompt-Token.
+  Eine Aussage über den Auftrag, kein Zustand des Pods.
+- **`obergrenze`**: Bytes des Prompts und Deckel, die Schranke, bis zu der
+  die Tür nach einem Höchstbetrag sucht (ein Token des byteweisen BPE trägt
+  mindestens ein Byte).
+- ⚠️ **Leitungsform.** Auftrag und Antwort sind zwischen Knoten und Shard
+  und zwischen Knoten über das Netz unterwegs; ältere Bytes eines Auftrags
+  liest diese Fassung nicht. Kein Konsensfeld.
+- Proben `der_preis_sind_die_vorwaertspaesse`,
+  `der_hoechstbetrag_kuerzt_die_ausgabe_und_nie_darueber` (durchgemustert:
+  der Preis liegt nie über dem Betrag, und ein Token mehr läge darüber),
+  `ohne_betrag_ist_formwidrig`, `die_obergrenze_sind_bytes_und_deckel`.
+
+### v0.72.0 (2026-11-16): Das Bündel nennt seine Sitzungen (Fund 706)
+
+- ⚑ **`PoIBundle.sitzungen`** (Festlegung des Projektinhabers vom
+  2026-11-16, Whitepaper 6.4): je Sitzung des Bündels ein `Sitzungszeugnis`
+  aus Nummer, Zahl der Segmente und `ausgabenwurzel` über genau ihre
+  Segmente, aufsteigend nach Nummer. Zwei Zwillinge, die dieselbe Sitzung
+  gleich gerechnet haben, kommen auf denselben Eintrag, gleich was sonst in
+  ihren Bündeln steht. Bis hierher kannte die Kette nur die flache Wurzel
+  über das ganze Bündel: Eine einzige Anfrage, die ein Zwilling nicht mehr
+  in sein Bündel bekam, machte das Paar für die ganze Epoche uneinig.
+- ⚑ **Die Sitzung, nicht das Segment.** Ein Segment ist eine Token-Position,
+  ein Bündel trägt bis zu hunderttausend; je Segment könnte die Kette nur
+  vergleichen, wenn alle Blätter in ihr stünden. Eine Sitzung ist die
+  Einheit, die ein Pod ganz oder gar nicht ablegt und die ein Prüfer ganz
+  nachrechnet. Das Whitepaper (6.4) spricht vom Segment; die Abweichung ist
+  die Einheit des Vergleichs, nicht seine Regel.
+- **`sitzungszeugnisse`** baut die Liste aus den Ausgabenzeugnissen;
+  **`sitzungsliste_pruefen`** lässt sie gelten, wenn sie höchstens
+  `SITZUNGEN_JE_BUENDEL_HOECHSTENS` (1024, rund 45 KiB, unter der Grenze
+  einer Transaktion von 64 KiB) Einträge hat, streng aufsteigend ist, keine
+  leere Sitzung nennt und ihre Summe die Segmentzahl des Bündels ist. Die
+  Summe bindet die Liste an die Zahl, aus der die Stichprobe zieht. Eine
+  leere Liste gilt als keine Liste.
+- **`sitzungen_abgleichen`** liefert den `Sitzungsabgleich` zweier Listen:
+  die Segmente in gleich bezeugten Sitzungen, die in abweichend bezeugten je
+  Seite und je Seite die Sitzungen, die nur sie bezeugt (`FehlendeSitzung`
+  mit der Stelle ihres letzten Segments in der kanonischen Folge; wer dieses
+  Segment nachrechnet, rechnet die ganze Sitzung nach). Eine reine Funktion
+  der beiden Listen.
+- ⚠️ **Konsensfeld.** Die unterschriebene Botschaft des Bündels hängt nach
+  den Vertretern die Marke `MYELITH_POI_SITZUNGEN`, die Zahl und die Einträge
+  an, aber nur bei nicht leerer Liste: Ein Bündel ohne Liste unterschreibt
+  dieselben Bytes wie zuvor. Die Borsh-Form des Bündels endet jetzt mit zwei
+  Listen; ältere Bytes eines Bündels liest diese Fassung nicht.
+- Proben `der_abgleich_je_sitzung_trennt_gleich_abweichend_und_fehlend`
+  (auch die Grenzen der Liste: zu viele, nicht aufsteigend, leer, falsche
+  Summe) und `die_botschaft_traegt_die_sitzungen` (jede Änderung an der
+  Liste ändert die Botschaft, ohne Liste bleibt sie die alte).
+
+### v0.71.0 (2026-11-16): Die Relaisleitung nennt den Stand einer Sitzung (Fund 707)
+
+- **`Relaisfrage::Sitzung { id }`** mit der Antwort
+  **`Relaisantwort::Sitzung(Sitzungsstand)`**: in einer Antwort alles, was ein
+  Klient braucht, um vor einer Runde Credits nachzukaufen. Höhe, Epoche,
+  Blöcke bis zum Wechsel und Slotlänge; Credit-Preis; Inhaber, seine geltenden
+  Credits, die davon über den nächsten Wechsel haltbaren, sein Guthaben in
+  MYL; Budget, Einzellimit, Verbrauch, höchste Abrechnung, Frist und Widerruf
+  der Sitzung.
+- ⚑ **Angehängt, nicht eingebaut.** `Kontostand` bleibt, wie er ist: Ein Feld
+  mehr dort änderte die Bytefolge, und ein älterer Klient läse die Antwort
+  seines Knotens nicht mehr. Beide neuen Varianten stehen am Ende ihrer
+  Aufzählung; die Probe `die_sitzungsfrage_ist_angehaengt` hält die Nummern
+  der alten und der neuen fest.
+
+### v0.70.0 (2026-11-16): Die Vorlage des Netzmodells (Fund 181)
+
+- **`myl_types::vorlage`**: `Vorlage` (`ChatMl`, `ChatMlDenkblock`,
+  `Fortsetzung`) mit `fuer_familie`, `oeffnet_denkblock` und
+  `bauen(&[(rolle, inhalt)], denken)`, aus dem Klienten hierher gezogen,
+  damit Klient und Tür denselben Prompt setzen, Zeichen für Zeichen; dazu
+  die Literale der amtlichen Werkzeugansage (`WERKZEUGE_KOPF`,
+  `WERKZEUGE_FUSS`). Ohne JSON: Werkzeugansage und das Lesen der Aufrufe
+  stehen in `myl-gateway`, diese Kiste bleibt schlank.
+- 📌 **Kein Konformitätswert hängt an der Vorlage**: Die E2E-Vektoren nehmen
+  Token als Eingabe (`prompt_tokens`), nicht den Prompt einer Tür.
+- Proben: ChatML Zeichen für Zeichen mit leerem und offenem Denkblock; die
+  Familien, die es gibt, und die Fortsetzung für ein Basismodell.
+- Die Gleitkomma-Prüfung (`INTEGER_LLM/tests/audit/test_no_float.py`) führt
+  `vorlage.rs` im Konsenspfad; ihre Vollständigkeitsprüfung hatte die neue
+  Datei gemeldet.
 
 ### v0.69.0 (2026-11-15): Ist die Netzadresse ein Schlüssel? (Fund 701)
 

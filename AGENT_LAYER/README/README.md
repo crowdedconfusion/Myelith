@@ -1,7 +1,7 @@
 # agent-layer
 
-> **Version:** 0.67.0 (`myl-agent` 0.10.0, `myl-local-agent` 0.51.0, `book2skill` 0.7.0)
-> **Datum:** 2026-11-13
+> **Version:** 0.74.0 (`myl-agent` 0.10.0, `myl-local-agent` 0.58.0, `book2skill` 0.7.0)
+> **Datum:** 2026-11-18
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**, seit v0.8.0 die Herkunft im
@@ -71,6 +71,206 @@ umbenannt, weil er in jedem `use` steht.
   was die Ausgabe eines Schritts einer geltenden Kette ist.
 
 ## Changelog
+
+### v0.74.0 (2026-11-18): Geschrieben wird unter der Grenze des Betriebssystems (`myl-local-agent` 0.58.0)
+
+- ⚑ **`sandkasten::datei_schreiben`, genutzt von `Einhaengung::schreiben`**
+  (also von `write_file`, `edit_file` und der Mehrfachänderung): Mit Sandbox
+  schreibt ein `sh` in der engen Sandbox die Bytes aus einer Röhre
+  (`cat > "$MYL_ZIEL"`, fehlende Ordner mit `mkdir -p`). Die Grenze im Prozess
+  (`aufloesen`, `verweisfrei`) bleibt davor; das Betriebssystem hält
+  dieselbe Grenze jetzt ein zweites Mal, für den schwersten Fall: ein
+  Schreiben nach draußen (`~/.ssh/authorized_keys`, `~/.zshrc`). Ohne
+  Sandbox (abgeschaltet oder nicht vorhanden, Windows) schreibt
+  `verweisfrei` wie in 0.73.0. Lesen bleibt im Prozess: Beliebige Bytes
+  verlustfrei über die Ausgabe eines Prozesses zurückzugeben kostete mehr,
+  als es hier bringt.
+- Probe `der_schreibhelfer_schreibt_innen_und_nicht_draussen`: 200 000 Bytes
+  mit Nullbytes und angelegten Ordnern, Kürzen beim Überschreiben, draußen
+  verweigert direkt am Helfer und über einen Verweis im Arbeitsordner;
+  Gegenprobe: ohne Sandbox schreibt derselbe Befehl über den Verweis
+  hinaus. Rund 50 ms je Schreiben.
+
+### v0.73.0 (2026-11-18): Kein Verweis, der nach der Prüfung entstand (Fund A52, `myl-local-agent` 0.57.0)
+
+- ⛔️ **Die Dateiwerkzeuge öffnen Stück für Stück vom Arbeitsordner aus**
+  (`verweisfrei`, `Einhaengung::{lesen, lesen_text, schreiben}`): jeder Ordner
+  mit `openat(… O_DIRECTORY | O_NOFOLLOW)`, die Datei mit `O_NOFOLLOW`, nur
+  gewöhnliche Dateien. 📌 Bis hierher prüfte `aufloesen` den Pfad, und danach
+  öffnete `std::fs` ihn und folgte jedem Verweis. Ein Prozess, den
+  `run_command` im Hintergrund zurücklässt, darf im Arbeitsordner schreiben;
+  tauscht er dort einen Ordner gegen einen Verweis nach draußen, lasen oder
+  schrieben `read_file`, `write_file`, `edit_file`, die Mehrfachänderung und
+  die Suche im Fenster dazwischen außerhalb, etwa in `~/.ssh`. Die
+  Dateiwerkzeuge laufen im Prozess des Agenten, also außerhalb der Sandbox;
+  der Tausch hob sie auf (CWE-367). Jetzt scheitert das Öffnen an der
+  getauschten Stelle. Fehlende Ordner legt `schreiben` im selben Gang an.
+- Proben `ein_getauschter_ordner_fuehrt_nicht_hinaus` (Gegenprobe im Test:
+  `std::fs` folgt dem Verweis), `eine_roehre_ist_keine_datei` (eine benannte
+  Röhre hielt das Lesen sonst für immer an), `wie_std_fs_ohne_tausch`.
+- ⚑ **Nachgesehen und ohne Fund:** Ein harter Verweis auf eine Datei
+  außerhalb lässt sich aus der Sandbox nicht anlegen (Seatbelt: „Operation
+  not permitted“; Landlock verlangt dafür `REFER` am Quellort).
+  Hintergrundprozesse bleiben nach `run_command` bestehen (ein
+  Entwicklungsserver soll weiterlaufen); sie stehen weiter unter der
+  Sandbox und führen jetzt nicht mehr über die Dateiwerkzeuge hinaus.
+  Unter Windows gilt weiter `std::fs`.
+
+### v0.72.0 (2026-11-17): Unter Linux bleibt `.git` im Arbeitsordner zu (`myl-local-agent` 0.56.0)
+
+- ⚑ **Ein eigener Namensraum, wo der Kern ihn ohne Vorrecht hergibt.**
+  Landlock nimmt aus dem beschreibbaren Arbeitsordner nichts heraus; jetzt
+  bekommt der Befehl zwischen `fork` und `exec` einen eigenen Benutzer- und
+  Einhängenamensraum (die eigene Nummer auf sich selbst, damit `git` das
+  Repositorium nicht für fremd hält). Darin ist `.git` auf sich selbst
+  eingehängt (lässt sich weder verschieben noch löschen), Haken und
+  Konfiguration sind schreibgeschützt, ebenso eine `.git`-Datei und jeder
+  Ordner, den der Auftrag nur zum Lesen nennt und der im Arbeitsordner
+  liegt (die Kiste eines Werkzeugs). Das geschieht vor Landlock; danach darf
+  der Befehl nichts mehr ein- oder aushängen. Fehlen die Haken, wird der
+  leere Ordner angelegt, den `git init` ohnehin anlegt.
+- **Rückfall:** Gibt der Kern den Namensraum nicht her (Behälter mit dem
+  üblichen seccomp-Profil, abgeschaltete Namensräume), läuft der Befehl wie
+  vorher, und die Startzeile sagt: „Im Arbeitsordner bleibt nichts zu“.
+- **`.git/commondir`** gibt es meist nicht, also lässt sich nichts darüber
+  hängen, und `git add` braucht `.git` beschreibbar. Nach jedem Befehl sieht
+  `Lauf::nachschau` nach und setzt zurück, was er daran geändert hat (auch
+  einen Verweis ins Leere); die Ausgabe sagt es. ⚠️ Ein Prozess, der den
+  Befehl überlebt, kann sie danach wieder anlegen.
+- ⚠️ Ein Verweis als `.git` oder als Haken bleibt ungeschützt: Eingehängt
+  wird am Ziel, und der Verweis selbst lässt sich ersetzen.
+- Proben: `im_arbeitsordner_bleiben_haken_und_kiste_zu` läuft jetzt auch
+  unter Linux (Haken, Konfiguration, Kiste, `commondir`, `mv .git`; mit
+  Gegenprobe ohne Sandbox), neu `die_nachschau_setzt_commondir_zurueck`.
+  Linux im Behälter: 21 Sandkastenproben grün mit Namensraum und ohne (dann
+  übersprungen mit Ansage), eine Mutation ohne Schutzorte wird rot; Clippy
+  unter Linux und macOS sauber, das Modul übersetzt für Windows ohne
+  Warnung.
+
+### v0.71.0 (2026-11-17): Sie heißt Sandbox (`myl-local-agent` 0.55.0)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-17:** Die Vorgaben bleiben
+  (ohne Grenze kein Befehl; die Kiste eines geprüften nativen Moduls ohne
+  Angabe frei; `netz` ohne Unix-Sockel), und für Menschen heißt sie
+  **Sandbox**. Einstellung `agent.sandbox` (gespeichert als `sandbox`, eine
+  Ablage mit `sandkasten` gilt weiter), Titel „Sandbox“, Manifestfeld
+  `sandbox` (`sandkasten` wird weiter gelesen), Meldungen und Startzeile
+  ebenso. Die Namen im Rust-Quelltext bleiben.
+- Die GolemOS-Kiste trägt `"sandbox": "frei"`.
+- Proben: der frühere Manifestname gilt weiter (`kisten`), die Meldungen
+  nennen `agent.sandbox` (`sandkasten::proben`).
+
+### v0.70.0 (2026-11-17): Befehle laufen im Sandkasten des Betriebssystems (`myl-local-agent` 0.54.0)
+
+- ⚑ **`run_command` und jedes Manifest-Werkzeug laufen unter einer Grenze
+  des Betriebssystems** (`src/sandkasten.rs`, unter Linux
+  `src/sandkasten_linux.rs`). Bis hierher fasste nur eine Sperrliste von
+  acht Mustern die Shell ein; seit ein großes Netzmodell über die Tür
+  `Advanced` bekommt, kann ein Text in einer fremden Datei einen Befehl
+  auslösen. Whitepaper 8.3 (architektonische Trennung statt Filter: ein
+  getäuschter Agent handelt nicht über seine Grenzen hinaus) deckt sich;
+  vorher war die Grenze des Befehls die des Nutzers.
+- **macOS: Seatbelt über `sandbox-exec`.** Schreiben nur im Arbeitsordner
+  und in einem eigenen Zwischenordner je Befehl (`$TMPDIR`, nach dem Lauf
+  gelöscht); Lesen im System ja, in `/Users`, `/Volumes`, der Heimat und den
+  geteilten Zwischenordnern nein, außer einer kurzen Liste von
+  Werkzeugorten (`.gitconfig`, `.cargo/bin`, `.rustup`, `.pyenv` und
+  ähnliche, nicht `.cargo` als Ganzes wegen `credentials.toml`); kein Netz,
+  kein Unix-Sockel, kein AppleEvent, kein `open`, kein Signal nach außen.
+  In einem Repositorium, das schon im Arbeitsordner liegt, bleiben
+  `.git/hooks`, `.git/config` und `.git/commondir` zu und `.git` an seinem
+  Platz; `git add` und `git commit` gehen. 📌 Die Weichen unter `/usr/bin`
+  (`git`, `python3`, `cc`) meldeten im Sandkasten auf jeder Zeile, dass sie
+  ihre Merkdatei nicht schreiben können; der Befehl bekommt deshalb den
+  echten Ordner der Entwicklerwerkzeuge vorn in den `PATH` und `SDKROOT`.
+  Die Merkdatei beschreibbar zu machen hätte einen Weg hinaus geöffnet.
+- **Linux: Landlock ab ABI 3 (Kern 6.2) und seccomp**, ohne Hilfsprogramm
+  und ohne Vorrecht. Lesen entsteht als Ergänzung der gesperrten Bäume
+  (Heimat, `/home`, `/root`, `/media`, `/mnt`, `/run/user`, `/tmp`,
+  `/var/tmp`, `/dev/shm`, `/dev/pts`); der Filter schließt `socket` außer
+  `AF_UNIX`, `connect`, `bind`, `listen`, `accept`, `sendmmsg`, `sendto` mit
+  Adresse und `io_uring_setup`; ab ABI 6 kein Signal nach außen. ⛔️ Die
+  zweite Ausnahme von `deny(unsafe_code)` in dieser Kiste, begründet im
+  Modulkopf: Die Grenze nimmt der Kern nur über Systemaufrufe zwischen `fork`
+  und `exec` an.
+- ⚑ **Ohne Grenze kein Befehl.** Gibt das Betriebssystem keine her
+  (Windows, Linux vor 6.2, ein selbst eingesperrter Prozess), läuft ein
+  Befehl nicht, und die Meldung nennt den Schalter. Neue Einstellung
+  **`agent.sandkasten`** („Befehle im Sandkasten“, Vorgabe an; eine Ablage
+  aus der Zeit davor bedeutet an): aus heißt ohne Grenze, und die Zeile beim
+  Start sagt es.
+- **Drei Arten:** `eng` (Vorgabe), `netz` (dazu das Netz; Unix-Sockel
+  bleiben zu, damit kein Dienst wie Docker erreichbar ist) und `frei`. Ein
+  Manifest nennt sie im neuen Feld `sandkasten` (ein Tippfehler ist ein
+  Fehler des Manifests) und mit `schreibt` Ausgabeordner außerhalb des
+  Arbeitsordners. ⛔️ `frei` und `schreibt` gelten nur für eine Kiste
+  außerhalb des Arbeitsordners, sonst könnte der Agent sich ein Manifest
+  schreiben, das sich selbst befreit; der Ordner der Kiste ist für den
+  Befehl lesbar und nie beschreibbar. Die Kiste eines geprüften nativen
+  Moduls ist ohne Angabe frei (`kisten::vorgabe_setzen`): Ihre Werkzeuge
+  starten das Programm des Moduls, das nach seiner Signatur ohne
+  Abschottung läuft. Die GolemOS-Kiste ist `frei` (sie verwaltet das
+  System).
+- **Umgebung gesiebt:** Variablen, deren Name nach einem Geheimnis klingt
+  (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `VOLLMACHT`, `SCHLUESSEL` und
+  ähnliche), dazu `SSH_AUTH_SOCK`, bekommt der Befehl nicht; was ein Aufrufer
+  selbst setzt, bleibt.
+- Ein gescheiterter Befehl im Sandkasten trägt eine Zeile, die die Grenze
+  nennt; ein Modell sucht den Fehler sonst bei sich.
+- ⚠️ **Was die Grenze nicht leistet** (Modulkopf): Der Arbeitsordner gehört
+  dem Agenten, und was er dort hinterlässt (ein `Makefile`, ein Skript),
+  führt später jemand außerhalb aus; unter Linux sind `.git/hooks` und
+  `.git/config` nicht geschützt (Landlock nimmt aus einem beschreibbaren
+  Baum nichts heraus); das Sieb der Umgebung geht nach Namen; Lesen außerhalb
+  der Heimat ist frei; in der engen Art geht unter Linux ein Datagramm an
+  einen Unix-Sockel mit Pfad hinaus (`sendmsg`); `mktemp` ohne Vorlage
+  nimmt auf macOS den geteilten Zwischenordner und scheitert;
+  `sandbox-exec` gilt bei Apple als veraltet. 📌 Auf den geteilten Ordnern
+  von Docker Desktop (`fakeowner`) greift eine Landlock-Regel nicht: Der
+  Befehl darf dort weniger, nicht mehr.
+- Proben (`sandkasten::proben`, `sandkasten::angewandt`, je mit Gegenprobe
+  ohne Sandkasten): Schreiben außen, Lesen außen, Netz eng und mit `netz`,
+  Signal nach außen, Haken und Kiste im Arbeitsordner, Ausgabeordner,
+  eigener Zwischenordner, Sieb der Umgebung, `git commit` in einem
+  vorhandenen Repositorium, gewöhnliche Arbeit, ohne Grenze nur `frei`.
+  Grün unter macOS 26 und unter Linux 6.12 (`rust:1.99.0-bookworm`), Clippy
+  auf beiden; das Modul allein übersetzt für Windows ohne Warnung.
+- ⚑ **Proben, die prüfen, was ein Befehl tut** (`run_command`, Kisten,
+  Fluss), laufen mit dem Sandkasten, wo es einen gibt, und ohne, wo nicht
+  (`sandkasten::vorhanden`); sonst liefe unter Windows keiner. Auf macOS
+  verlangt `diese_maschine_hat_eine_grenze` die Grenze; unter Linux nennt
+  sie nur, was sie fand, weil Landlock dort an der Startzeile des Kerns
+  hängt (ob die Läufer der CI es haben, zeigt der erste Lauf).
+
+### v0.69.0 (2026-11-16): Die Werkzeugkiste folgt dem Netzmodell (`myl-local-agent` 0.53.0)
+
+- ⚑ **Festlegung des Projektinhabers vom 2026-11-16:** Über die Tür bekommt
+  ein großes Netzmodell automatisch `Advanced`, wie ein großes eigenes
+  Artefakt. 📌 Im Auftragslauf rechnete das 35B mit `Base` und konnte nichts
+  ausrechnen lassen; drei der acht Aufträge scheiterten am Kopfrechnen.
+- **`Werkzeugkiste::fuer_modellname`**: Über die Tür gibt es kein Artefakt,
+  dessen `variant` sich lesen ließe, aber den Namen, den die Tür nennt
+  (`raven-35b-a3b-int4`); die Größe steht darin als Teil `35b`, dieselbe
+  Grenze wie bei einem Artefakt (7 Milliarden). Die aktive Größe eines
+  Gemischs (`a3b`) zählt nicht. Der Grund geht mit.
+- **`Tuerklient::modelle`** (`GET /v1/models`, `WEG_MODELLE`): die Namen,
+  die die Tür bedient, mit Vollmacht und ohne Rumpf.
+- ⚠️ **`Advanced` heißt `run_command`, und das hat keinen Sandkasten** (die
+  Sperrliste ist ein Rückfall). Der Klient sagt es in seiner Zeile; ein
+  echter Sandkasten für `run_command` ist offen.
+- Proben: `die_kiste_folgt_dem_namen_des_netzmodells` (Gegenprobe: ohne die
+  Grenze rot) und `die_modellliste_kommt_ueber_get`.
+
+### v0.68.0 (2026-11-15): Der Türklient schickt einen fertigen Prompt (`myl-local-agent` 0.52.0)
+
+- **`Tuerklient::vervollstaendigen`**: ein fertiger Prompt an
+  `/v1/completions` (`WEG_TEXT`), mit derselben Vollmacht, Frist und Lesart
+  der Antwort wie `chat`, samt Abschlussgrund. Für einen Aufrufer, der die
+  Vorlage des Modells selbst setzt (der Klient mit `myl sitzung --tuer`,
+  CLIENT 0.237.0).
+- Geprüft: `tests/tuerklient.rs::ein_fertiger_prompt_geht_an_den_textweg`
+  (Weg, Vollmacht, Prompt als eine Zeichenkette mit den Marken, kein
+  `messages`), `die_wegangaben_sind_die_der_tuer` nennt `WEG_TEXT`.
 
 ### v0.67.0 (2026-11-13): Dokumente, die der Agent schreibt, sind gekennzeichnet (`myl-local-agent` 0.51.0)
 

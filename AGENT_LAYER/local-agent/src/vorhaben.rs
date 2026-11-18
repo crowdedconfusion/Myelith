@@ -2661,10 +2661,11 @@ pub(crate) fn lebt(pid: u32) -> bool {
         return false;
     }
     // SAFETY: `kill` mit Signal 0 prueft nur, ob der Prozess existiert.
-    // ⚑ Die einzige Ausnahme von `deny(unsafe_code)` im Betrieb dieser
-    //   Kiste: Die Standardbibliothek fragt nicht nach einem fremden
-    //   Prozess, und ohne die Frage gaebe es keine Sperre gegen zwei
-    //   Fenster, die denselben Loop fuehren.
+    // ⚑ Eine von zwei Ausnahmen von `deny(unsafe_code)` im Betrieb dieser
+    //   Kiste (die andere: der Sandkasten unter Linux): Die
+    //   Standardbibliothek fragt nicht nach einem fremden Prozess, und ohne
+    //   die Frage gaebe es keine Sperre gegen zwei Fenster, die denselben
+    //   Loop fuehren.
     #[allow(unsafe_code)]
     let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
     // ⚠️ **`EPERM` heisst: er lebt, gehoert aber jemand anderem.** Nur

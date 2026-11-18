@@ -470,6 +470,23 @@ impl ShardNode {
     /// Abschnitt, in dem alle anderen Sitzungen dieses Shards warten,
     /// und zwar ausgerechnet beim ersten Zugriff einer neuen Sitzung.
     /// Gebraucht wird die Sperre nur für das Entnehmen.
+    /// **Eine Sitzung, die bei Position 0 beginnt, beginnt neu** (Fund 709,
+    /// 2026-11-16).
+    ///
+    /// 📌 Bis hierher nahm ein Shard den Speicher einer bekannten Sitzung
+    /// unverändert wieder auf. Wiederholt der Koordinator einen Auftrag und
+    /// erreicht das Vergessen den Shard nicht (im Auftragslauf am
+    /// Epochenwechsel: „max sub-streams reached“), überschreiben die
+    /// Aufmerksamkeitsebenen ihre alten Positionen, aber eine Zustandsschicht
+    /// rechnet auf dem alten Zustand weiter. Beim 35B gab so ein ehrlicher
+    /// Pod 24 Token aus, sein Zwilling 47, und das Paar war uneinig. Am
+    /// 0,6B ohne Zustandsschichten war es unsichtbar.
+    fn neu_beginnen_bei_null(&self, session_id: u64, position: usize) {
+        if position == 0 {
+            self.sitzung_vergessen(session_id);
+        }
+    }
+
     fn take_cache(&self, session_id: u64) -> Result<KVCache, String> {
         let vorhanden = sperre(&self.caches, "KV-Cache")?.remove(&session_id);
         Ok(vorhanden.unwrap_or_else(|| {
@@ -597,6 +614,7 @@ impl ShardNode {
                 ));
             }
 
+            self.neu_beginnen_bei_null(session_id, pos);
             let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
             let mut hidden = self.model.embed_token(token);
             faelschen(&mut hidden, true);
@@ -655,6 +673,7 @@ impl ShardNode {
         let mut hidden = msg.payload.clone();
         faelschen(&mut hidden, false);
 
+        self.neu_beginnen_bei_null(session_id, pos);
         let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
         let mut trace = msg.trace.clone();
         let out = self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
@@ -686,6 +705,12 @@ impl ShardNode {
         let einzeln = |msgs: &[PodMessage]| msgs.iter().enumerate().map(|(i, m)| self.process(m).map_err(|e| format!("Stapel, Nachricht {i}: {e}"))).collect();
         if msgs.len() <= 1 || self.model.vierstrom.is_some() {
             return einzeln(msgs);
+        }
+        // 0) Eine Sitzung, deren Stapel bei Position 0 beginnt, beginnt neu
+        //    (Fund 709); vor dem Sperren der Speicher, denn das Vergessen
+        //    sperrt sie selbst.
+        for m in msgs {
+            self.neu_beginnen_bei_null(m.session_id, m.position as usize);
         }
         // 1) Prüfen und die Eingänge bilden, ohne einen Speicher anzufassen.
         let grenze = self.model.kontextgrenze();
@@ -790,6 +815,12 @@ impl ShardNode {
                 spur.push(activation_hash(z));
             }
         }
+        // 📌 Fund 704: Jede Position ist durch alle Ebenen dieses Shards
+        //    gelaufen; ohne das hatte ein Bereich, der mit einer
+        //    Zustandsschicht beginnt, die Laenge null.
+        for b in &belegung {
+            speicher[b.speicher].durchgelaufen(b.position);
+        }
         for (s, c) in sitzungen.iter().zip(speicher) {
             self.put_cache(*s, c)?;
         }
@@ -841,6 +872,27 @@ impl ShardNode {
     /// über die Positionen 0 bis `t-1` auf.
     pub fn frischer_cache(&self) -> KVCache {
         KVCache::for_range(self.layer_start, self.layer_end, self.model.num_kv_heads)
+    }
+
+    /// ⚑ **Wie lange ein Stapel von `n` Eingaben durch den eigenen Bereich
+    /// braucht** (Fund 705, fuer die Einmessung beim Start): `n` Positionen ab
+    /// 0 in einem frischen Speicher, Ebene fuer Ebene wie
+    /// [`Self::process_stapel`], ohne Sitzung, Spur und Unterschrift. Die
+    /// Eingabe ist wie bei der Zeitprobe die Einbettung eines festen Tokens;
+    /// die Arbeit haengt nicht an den Werten.
+    pub fn stapelzeit(&self, n: usize) -> std::time::Duration {
+        let n = n.clamp(1, crate::shardweg::MAX_STAPEL);
+        let mut speicher = vec![self.frischer_cache()];
+        let belegung: Vec<Belegung> = (0..n).map(|position| Belegung { speicher: 0, position }).collect();
+        let mut zustaende: Vec<Vec<i16>> = (0..n).map(|_| self.model.embed_token(ZEITPROBE_TOKEN)).collect();
+        let ab = std::time::Instant::now();
+        for i in self.layer_start..self.layer_end {
+            match self.model.ebenen_stapel(zustaende, &belegung, &mut speicher, i, i + 1) {
+                Some(z) => zustaende = z,
+                None => break,
+            }
+        }
+        ab.elapsed()
     }
 
 

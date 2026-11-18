@@ -83,6 +83,41 @@ const _: () = assert!(
 /// lange Antwort und eine kurze Ewigkeit.
 pub const MAX_NEUE_TOKEN: u32 = 4096;
 
+/// ⚑ **Der Preis einer Anfrage in Credits** (Fund 711, Entscheidung des
+/// Projektinhabers vom 2026-11-17): so viele Vorwaertspaesse, wie der Pod
+/// fuer sie rechnet und als vTFE beansprucht. Der Prompt geht Position fuer
+/// Position durch alle Shards, dann jedes erzeugte Token ausser dem letzten
+/// noch einmal; das sind `prompt_token + neue_token - 1` Paesse. Ohne neues
+/// Token ist der Prompt trotzdem gerechnet, und mindestens einer ist es
+/// immer.
+///
+/// 📌 Bis zum 2026-11-17 kostete eine Anfrage nur ihre erzeugten Token. Im
+/// Auftragslauf zahlte ein Agent 463 Credits fuer rund 12 300 gerechnete
+/// Positionen, also ein Fuenfundzwanzigstel seiner Arbeit, und die
+/// Nachfrage, an der der Credit-Preis haengt (Whitepaper 5.4), wurde um
+/// denselben Faktor zu klein gemessen. Whitepaper 5.1 denominiert Credits
+/// in vTFE; ein eigenes Gewicht fuer Prompt-Positionen waere eine Aenderung
+/// daran.
+pub fn preis(prompt_token: u64, neue_token: u64) -> u64 {
+    prompt_token.saturating_add(neue_token.max(1)).saturating_sub(1).max(1)
+}
+
+/// ⚑ **Die obere Schranke, bis zu der die Tuer nach einem Hoechstbetrag
+/// sucht** (Fund 711): die Bytes des Prompts und der Deckel. Die Tuer kennt
+/// den Wortschatz nicht; ein Token des byteweisen BPE der Netzmodelle traegt
+/// mindestens ein Byte, also hat ein Prompt hoechstens so viele Token wie
+/// Bytes. Die Schranke ist grob (rund das Dreifache) und deshalb nur der
+/// Rahmen der Suche, nie der Preis: Den haelt der Pod genau ein, siehe
+/// [`Inferenzauftrag::neue_token_im_rahmen`]. ⚠️ Eine Unicode-Normalisierung
+/// kann seltene Zeichen verlaengern; ein solcher Prompt kann mehr Token
+/// haben als Bytes, und dann sagt der Pod „nicht gedeckt“. Das kostet den
+/// Absender eine Ablehnung und niemanden Arbeit.
+pub fn obergrenze(prompt_bytes: u64, max_token: u32) -> u64 {
+    prompt_bytes
+        .saturating_add(u64::from(max_token.min(MAX_NEUE_TOKEN)))
+        .max(1)
+}
+
 /// Was an einem Auftrag nicht stimmt.
 ///
 /// ⚑ **Jeder Fall ist eine eigene Aussage.** „Zu lang" und „ohne
@@ -98,6 +133,8 @@ pub enum Auftragsfehler {
     NullToken,
     /// `max_token` überschreitet [`MAX_NEUE_TOKEN`].
     ZuVieleToken { verlangt: u32 },
+    /// `hoechstens` ist null: ein Auftrag, den niemand bezahlt.
+    OhneBetrag,
 }
 
 impl std::fmt::Display for Auftragsfehler {
@@ -113,6 +150,7 @@ impl std::fmt::Display for Auftragsfehler {
                 f,
                 "{verlangt} Token verlangt, erlaubt sind {MAX_NEUE_TOKEN}"
             ),
+            Self::OhneBetrag => f.write_str("ein Auftrag ohne Hoechstbetrag bezahlt nichts"),
         }
     }
 }
@@ -145,6 +183,15 @@ pub struct Inferenzauftrag {
     /// rechnen: Dann verglichen sie zwei richtige Ergebnisse
     /// verschiedener Modelle und meldeten einen Streit.
     pub pipeline: Hash,
+    /// ⚑ **So viele Credits darf der Auftrag hoechstens kosten** (Fund 711),
+    /// gemessen mit [`preis`]: das Groesste, was Vollmacht, Kontrakt und
+    /// Guthaben an der Tuer decken. Nur der Pod kennt die Zahl der
+    /// Prompt-Token; er haelt den Betrag deshalb selbst ein
+    /// ([`Self::neue_token_im_rahmen`]) und sagt [`Inferenzantwort::Ungedeckt`],
+    /// wenn schon der Prompt mehr kostet.
+    ///
+    /// **Angehaengt** (2026-11-17), wie die Feldreihenfolge es verlangt.
+    pub hoechstens: u64,
 }
 
 impl Inferenzauftrag {
@@ -174,7 +221,25 @@ impl Inferenzauftrag {
                 verlangt: self.max_token,
             });
         }
+        if self.hoechstens == 0 {
+            return Err(Auftragsfehler::OhneBetrag);
+        }
         Ok(())
+    }
+
+    /// ⚑ **Wie viele neue Token der Hoechstbetrag zulaesst** (Fund 711),
+    /// nachdem der Pod den Prompt gezaehlt hat: `None`, wenn schon der
+    /// Prompt mit einem einzigen Token mehr kostet als [`Self::hoechstens`];
+    /// sonst `max_token`, gekuerzt so weit, dass [`preis`] den Betrag nicht
+    /// uebersteigt. Eine gekuerzte Antwort endet wie jede am Deckel
+    /// (`finish_reason` `length`).
+    pub fn neue_token_im_rahmen(&self, prompt_token: u64) -> Option<u32> {
+        if prompt_token == 0 || prompt_token > self.hoechstens {
+            return None;
+        }
+        // preis(p, n) = p + n - 1 <= h  <=>  n <= h - p + 1
+        let erlaubt = self.hoechstens - prompt_token + 1;
+        Some(u32::try_from(erlaubt).unwrap_or(u32::MAX).min(self.max_token))
     }
 }
 
@@ -232,6 +297,19 @@ pub enum Inferenzantwort {
         /// Die Sitzung, zu der die Ablehnung gehört.
         sitzung: u64,
     },
+    /// ⚑ **Nicht gerechnet, weil schon der Prompt mehr kostet als der
+    /// Hoechstbetrag** (Fund 711). Kein Zustand des Pods, sondern eine
+    /// Aussage ueber den Auftrag: Die Tuer antwortet darauf mit 402 und
+    /// nennt, was fehlt, statt mit 502, auf das ein Klient neu anlaeuft.
+    ///
+    /// **Angehaengt** (2026-11-17), die Reihenfolge der Faelle ist
+    /// Protokollvertrag.
+    Ungedeckt {
+        /// Die Sitzung, zu der die Antwort gehört.
+        sitzung: u64,
+        /// Wie viele Token der Prompt hatte.
+        prompt_token: u64,
+    },
 }
 
 #[cfg(test)]
@@ -246,6 +324,7 @@ mod tests {
             prompt_versiegelt: prompt.to_vec(),
             max_token,
             pipeline: Hash::sha256(b"probe-pipeline"),
+            hoechstens: u64::MAX,
         }
     }
 
@@ -322,5 +401,78 @@ mod tests {
         let ab = Inferenzantwort::Abgelehnt { sitzung: 7 };
         let roh = borsh::to_vec(&ab).expect("kodieren");
         assert_eq!(borsh::from_slice::<Inferenzantwort>(&roh).expect("dekodieren"), ab);
+
+        let ug = Inferenzantwort::Ungedeckt { sitzung: 7, prompt_token: 9 };
+        let roh = borsh::to_vec(&ug).expect("kodieren");
+        assert_eq!(borsh::from_slice::<Inferenzantwort>(&roh).expect("dekodieren"), ug);
+    }
+
+    /// ⚑ **Der Preis sind die Vorwaertspaesse** (Fund 711): Prompt und
+    /// Ausgabe, das letzte Token nicht noch einmal, mindestens einer.
+    #[test]
+    fn der_preis_sind_die_vorwaertspaesse() {
+        assert_eq!(preis(5, 3), 7);
+        assert_eq!(preis(1, 1), 1);
+        assert_eq!(preis(11_827, 463), 12_289);
+        // Gegenproben: Die alte Rechnung (nur die Ausgabe) und die
+        // naive Summe sind beide etwas anderes.
+        assert_ne!(preis(5, 3), 3);
+        assert_ne!(preis(5, 3), 8);
+        assert_eq!(preis(0, 0), 1, "auch ein leerer Lauf kostet einen Pass");
+        assert_eq!(preis(30, 0), 30, "ohne neues Token der ganze Prompt");
+        assert_eq!(preis(u64::MAX, 2), u64::MAX - 1, "kein Ueberlauf");
+    }
+
+    /// ⚑ **Der Pod haelt den Hoechstbetrag genau ein** (Fund 711): Der
+    /// Preis mit der gekuerzten Zahl neuer Token liegt nie ueber dem
+    /// Betrag, und ein Token mehr laege darueber.
+    #[test]
+    fn der_hoechstbetrag_kuerzt_die_ausgabe_und_nie_darueber() {
+        let mut a = auftrag(b"x", 64);
+        a.hoechstens = 20;
+        assert_eq!(a.neue_token_im_rahmen(10), Some(11));
+        assert_eq!(preis(10, 11), 20);
+        assert!(preis(10, 12) > 20, "Gegenprobe: ein Token mehr ginge darueber");
+        assert_eq!(a.neue_token_im_rahmen(20), Some(1), "genau der Prompt mit einem Token");
+        assert_eq!(a.neue_token_im_rahmen(21), None, "schon der Prompt kostet mehr");
+        assert_eq!(a.neue_token_im_rahmen(0), None, "ein leerer Prompt rechnet nichts");
+        a.hoechstens = 1_000;
+        assert_eq!(a.neue_token_im_rahmen(10), Some(64), "der Deckel bleibt, wenn der Betrag reicht");
+        a.hoechstens = u64::MAX;
+        assert_eq!(a.neue_token_im_rahmen(1), Some(64), "kein Ueberlauf");
+        // Durchgemustert: fuer jede Lage gilt preis <= hoechstens, und
+        // der Deckel bleibt die Obergrenze.
+        for h in 1..60u64 {
+            a.hoechstens = h;
+            for p in 1..70u64 {
+                match a.neue_token_im_rahmen(p) {
+                    Some(n) => {
+                        assert!((1..=64).contains(&n));
+                        assert!(preis(p, u64::from(n)) <= h, "h {h}, p {p}, n {n}");
+                        assert!(n == 64 || preis(p, u64::from(n) + 1) > h, "zu frueh gekuerzt: h {h}, p {p}, n {n}");
+                    }
+                    None => assert!(p > h, "abgelehnt, obwohl gedeckt: h {h}, p {p}"),
+                }
+            }
+        }
+    }
+
+    /// Ein Auftrag ohne Hoechstbetrag ist formwidrig.
+    #[test]
+    fn ohne_betrag_ist_formwidrig() {
+        let mut a = auftrag(b"x", 8);
+        a.hoechstens = 0;
+        assert_eq!(a.pruefe_form(), Err(Auftragsfehler::OhneBetrag));
+        a.hoechstens = 1;
+        assert_eq!(a.pruefe_form(), Ok(()));
+    }
+
+    /// Die Schranke der Tuer: Bytes und Deckel, der Deckel hoechstens der
+    /// des Protokolls.
+    #[test]
+    fn die_obergrenze_sind_bytes_und_deckel() {
+        assert_eq!(obergrenze(100, 50), 150);
+        assert_eq!(obergrenze(100, u32::MAX), 100 + u64::from(MAX_NEUE_TOKEN));
+        assert_eq!(obergrenze(0, 0), 1);
     }
 }

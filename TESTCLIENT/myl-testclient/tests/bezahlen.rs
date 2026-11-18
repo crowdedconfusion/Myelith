@@ -236,6 +236,58 @@ async fn ein_wallet_kauft_credits_eroeffnet_eine_sitzung_und_widerruft_sie() {
     .await;
     assert!(matches!(&r, Ok(myl_types::relais::Relaisantwort::Fehler(f)) if f.contains("abgewiesen")), "{r:?}");
 
+    // ---- Nachkauf vor einer Runde (Fund 707) ---------------------------------
+    // Der Fremde hat MYL, aber keine Credits. Er eröffnet eine Sitzung, und
+    // sein Klient kauft vor der ersten Runde nach: vier Runden zu 100.
+    let (l, f) = (leitung, fremd.clone());
+    let eigene = treiben_bis(
+        &mut knoten,
+        tokio::task::spawn_blocking(move || myl_client::bezahlen::sitzung_eroeffnen(&l, &f, "fremdagent", 1_000, 100, 10)),
+    )
+    .await
+    .expect("Sitzung des Fremden");
+    let eid = eigene.id;
+    bis(&mut knoten, "die Sitzung des Fremden kam nicht an", |k| k.kette().zustand().sitzungen.contains_key(&eid)).await;
+    let fa = fremd.adresse;
+    let (l, id2) = (leitung, eid);
+    let stand = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || l.sitzungsstand(id2))).await.expect("Sitzungsstand");
+    assert_eq!((stand.inhaber, stand.budget, stand.einzellimit, stand.verbraucht, stand.credits), (fa, 1_000, 100, 0, 0), "{stand:?}");
+    assert_eq!(stand.credit_preis, knoten[0].kette().zustand().credit_price);
+    // ⛔️ Gegenprobe: Ein Wallet, das nicht Inhaber ist, bekommt keinen Nachkauf.
+    let (l, z, v) = (leitung, zahler.clone(), eigene.vollmacht.clone());
+    let falsch = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || myl_client::bezahlen::Nachkaeufer::neu(l, z, &v, 4).map(|_| ()))).await;
+    assert!(matches!(&falsch, Err(f) if f.contains("nicht der Inhaber")), "{falsch:?}");
+    let (l, f, v) = (leitung, fremd.clone(), eigene.vollmacht.clone());
+    let kaeufer = std::sync::Arc::new(
+        treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || myl_client::bezahlen::Nachkaeufer::neu(l, f, &v, 4))).await.expect("Nachkäufer"),
+    );
+    let runde_s = Duration::from_secs(1);
+    // Eine Runde zu 100 ist gemessen; der Vorrat sind vier davon (vor der
+    // ersten gemessenen Runde kaufte der Klient nur die eine, Fund 711).
+    let vor = knoten[0].kette().zustand().account(&fa).balance;
+    let k = kaeufer.clone();
+    let bericht = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || k.vor_der_runde(100, 100, 0, runde_s, false))).await.expect("Nachkauf");
+    assert_eq!(
+        bericht,
+        myl_client::bezahlen::Nachkaufbericht::Gekauft { credits: 400, myl: 400 * stand.credit_preis, preis: stand.credit_preis, epoche: stand.epoche },
+    );
+    let z = knoten[0].kette().zustand();
+    let credits: u64 = z.account(&fa).credits.iter().map(|c| c.vtfe).sum();
+    assert_eq!(credits, 400, "die Kette schrieb nicht gut, was gekauft wurde");
+    assert!(vor - z.account(&fa).balance >= 400 * stand.credit_preis, "nichts verbrannt");
+    // Danach deckt das Guthaben die Runde: kein zweiter Kauf.
+    let k = kaeufer.clone();
+    let bericht = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || k.vor_der_runde(100, 100, 0, runde_s, false))).await;
+    assert_eq!(bericht, Ok(myl_client::bezahlen::Nachkaufbericht::Genug));
+    // ⛔️ Gegenprobe: 950 Credits sind über die Tür ausgegeben und noch nicht
+    //   abgebucht; der Rest des Budgets deckt keine Runde mehr, und es wird
+    //   nichts verbrannt.
+    let vor = knoten[0].kette().zustand().account(&fa).balance;
+    let k = kaeufer.clone();
+    let bericht = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || k.vor_der_runde(100, 100, 950, runde_s, false))).await;
+    assert!(matches!(&bericht, Err(f) if f.contains("Budget")), "{bericht:?}");
+    assert_eq!(knoten[0].kette().zustand().account(&fa).balance, vor, "trotz erschöpftem Budget verbrannt");
+
     // ---- Der Inhaber widerruft ----------------------------------------------
     let (l, z) = (leitung, zahler.clone());
     let r = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || myl_client::bezahlen::sitzung_widerrufen(&l, &z, id))).await;

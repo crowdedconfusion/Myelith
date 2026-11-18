@@ -142,6 +142,7 @@ fn auftrag(sitzung: u64) -> Inferenzauftrag {
         prompt_versiegelt: Vec::new(),
         max_token: 4,
         pipeline: Hash::sha256(b"probe"),
+        hoechstens: u64::MAX,
     }
 }
 
@@ -185,4 +186,49 @@ fn ein_auftrag_ueber_die_epochengrenze_bekommt_seine_antwort() {
         andere => panic!("über die Epochengrenze keine Antwort: {andere:?}"),
     }
     assert_eq!(relais.anlauf.load(Ordering::SeqCst), 0, "der Anlauf der neuen Shards wurde nie gefragt");
+}
+
+/// ⚑ **Ein ungedeckter Auftrag kostet keinen Pod** (Fund 711): Das Podwerk
+/// zaehlt die Prompt-Token und antwortet „nicht gedeckt“, bevor es das
+/// Relais fragt. Gegenprobe: Mit genug Betrag fragt es und rechnet.
+#[test]
+fn ein_ungedeckter_auftrag_kostet_keinen_pod() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let model = Arc::new(load_model(&dir).expect("Modell"));
+    let tok = Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad")).expect("Wortschatz");
+    let p = tok.encode(PROMPT).len() as u64;
+    let ordner = std::env::temp_dir().join(format!("myl-podwerk-ungedeckt-{}", std::process::id()));
+    std::fs::create_dir_all(&ordner).expect("Ordner");
+    let ausweis = [7u8; 32];
+    let datei = ordner.join("relais.ausweis");
+    std::fs::write(&datei, format!("{}\n", "07".repeat(32))).expect("Ausweis");
+    let relais = Arc::new(Relais {
+        epoche: AtomicU64::new(ERSTE),
+        runden: AtomicUsize::new(0),
+        wechsel_nach: usize::MAX,
+        anlauf: AtomicUsize::new(0),
+        pods: vec![ImProzess::neu(shards(&model, 0))],
+        schichten: model.num_layers,
+    });
+    let wo = relais_starten(Arc::clone(&relais), ausweis);
+    let werk = Podwerk::neu(&dir, wo, datei, Hash::sha256(b"probe"), 16).expect("Podwerk");
+
+    let mut knapp = auftrag(9);
+    knapp.hoechstens = p - 1;
+    let antwort = werk.rechne(&knapp, PROMPT.as_bytes());
+    assert_eq!(antwort, Inferenzantwort::Ungedeckt { sitzung: 9, prompt_token: p });
+    assert_eq!(relais.runden.load(Ordering::SeqCst), 0, "ein ungedeckter Auftrag hat gerechnet");
+
+    let mut genug = auftrag(9);
+    genug.hoechstens = myl_types::inferenzauftrag::preis(p, 2);
+    let antwort = werk.rechne(&genug, PROMPT.as_bytes());
+    let _ = std::fs::remove_dir_all(&ordner);
+    match antwort {
+        Inferenzantwort::Ergebnis { token, .. } => assert_eq!(token.len(), 2, "auf den Betrag gekuerzt"),
+        andere => panic!("gedeckt und nicht gerechnet: {andere:?}"),
+    }
+    assert!(relais.runden.load(Ordering::SeqCst) > 0, "Gegenprobe: mit Betrag fragt das Podwerk den Pod");
 }

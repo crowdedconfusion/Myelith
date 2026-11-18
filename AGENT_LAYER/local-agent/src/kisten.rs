@@ -14,9 +14,9 @@
 //! # ⛔️ Sicherheit: dieselbe Klasse wie run_command, und deshalb dieselben
 //!    Schranken
 //!
-//! Ein Manifest-Werkzeug fuehrt `sh -c` aus und kann damit alles, was der
-//! Prozess kann; es haelt die Einhaengegrenze **nicht** ein (siehe
-//! `Befehlausfuehren`). Zwei Folgen:
+//! Ein Manifest-Werkzeug fuehrt `sh -c` aus; die Einhaengegrenze der
+//! Dateiwerkzeuge haelt eine Shell **nicht** ein (siehe
+//! `Befehlausfuehren`). Drei Folgen:
 //!
 //!   - **Es braucht die Schreiberlaubnis**, ausnahmslos, und steht ohne sie
 //!     nicht im Angebot. Ein „nur lesendes" Manifest gibt es nicht, denn die
@@ -26,9 +26,19 @@
 //!     `muster = "; rm -rf ~"` liefert, darf keine zweite Kommandozeile
 //!     einschleusen.
 //!
-//! Die echte Grenze bleibt eine des Betriebssystems (Modulkopf von
-//! `werkzeuge.rs`); bis dahin ist ein Manifest-Werkzeug so vertrauenswuerdig
-//! wie die Kiste, aus der es kommt, und die Person am `manual mode`.
+//!   - **Es laeuft im Sandkasten des Betriebssystems** (`crate::sandkasten`),
+//!     ohne Angabe in der engen Art: schreiben nur im Arbeitsordner, lesen
+//!     dazu im Ordner seiner Kiste, kein Netz. Ein Manifest sagt mit
+//!     `"sandbox": "netz"`, dass es etwas abruft, mit `"frei"`, dass es
+//!     das System verwaltet und keine Grenze vertraegt, und mit `"schreibt"`,
+//!     wohin ausserhalb es eine Ausgabe legt. Die Kiste eines geprueften
+//!     nativen Moduls ist ohne Angabe frei ([`vorgabe_setzen`]).
+//!
+//! ⛔️ **`frei` gilt nur fuer eine Kiste ausserhalb des Arbeitsordners.**
+//! Was im Arbeitsordner liegt, kann der Agent schreiben, also auch ein
+//! Manifest, das sich selbst fuer frei erklaert; ein solches laeuft eng.
+//! Ein freies Werkzeug ist so vertrauenswuerdig wie die Kiste, aus der es
+//! kommt, und die Person am `manual mode`.
 
 use std::path::{Path, PathBuf};
 
@@ -36,6 +46,7 @@ use crate::ausfuehrung::{Werkzeugausfuehrung, Werkzeugfehler};
 use crate::werkzeug::Werkzeug;
 use serde::Deserialize;
 
+use crate::sandkasten::Sandkasten;
 use crate::werkzeuge::{befehl_im_verzeichnis_mit, Einhaengung, Werkzeugkiste, BEFEHL_ZEITGRENZE_S};
 
 /// Ein Werkzeug, wie es als Datei in einer Kiste liegt.
@@ -92,6 +103,32 @@ pub struct Werkzeugmanifest {
     /// verlangen will, sagt hier, was es ist.
     #[serde(default)]
     pub fluss: Option<Manifestfluss>,
+    /// **Unter welcher Grenze der Befehl laeuft**: `eng` (die Vorgabe),
+    /// `netz` oder `frei` (`crate::sandkasten`).
+    ///
+    /// ⚑ **Die Grenze ist nicht der Vertrag.** `fluss` sagt, was ein
+    /// Werkzeug fuer den Informationsfluss **sein soll**, und danach
+    /// entscheidet die Schleife, ob es laufen darf; `sandkasten` sagt, was
+    /// der Befehl **kann**, wenn er laeuft, und das setzt der Kern durch.
+    /// ⛔️ Ein unbekanntes Wort ist ein Fehler des Manifests und kein
+    /// stilles `eng`: Wer `frie` schreibt, soll es lesen.
+    ///
+    /// ⚑ **Ohne Angabe gilt die Vorgabe des Ordners** ([`vorgabe_setzen`]),
+    /// sonst `eng`.
+    ///
+    /// ⚑ Im Manifest heisst das Feld `sandbox`; der fruehere Name
+    /// `sandkasten` wird weiter gelesen.
+    #[serde(default, rename = "sandbox", alias = "sandkasten")]
+    pub sandkasten: Option<Sandkasten>,
+    /// **Ordner ausserhalb des Arbeitsordners, in die der Befehl schreiben
+    /// darf**, relativ zum Ordner des Manifests (`"../vorschau"`).
+    ///
+    /// ⚑ Fuer eine Ausgabe, die ein anderes Programm abholt, wie die
+    /// Vorschau des CAD-Moduls. ⛔️ Es gilt dieselbe Regel wie fuer `frei`:
+    /// nur fuer eine Kiste ausserhalb des Arbeitsordners, und nie fuer die
+    /// Kiste selbst oder einen Ordner ueber ihr.
+    #[serde(default)]
+    pub schreibt: Vec<String>,
 }
 
 /// Die Angabe eines Manifests zum Informationsfluss.
@@ -347,6 +384,34 @@ pub fn umgebung_setzen(ordner: &Path, umgebung: Umgebung) {
     }
 }
 
+/// **Die Grenze fuer Manifeste eines Ordners, die selbst keine nennen.**
+///
+/// ⚑ **Fuer die Kiste eines geprueften nativen Moduls** (der Client traegt
+/// sie ein): Ihre Werkzeuge starten das Programm des Moduls, und das laeuft
+/// nach seiner Signatur ohne Abschottung, mit Netz und eigener Ablage. Die
+/// Manifeste stehen unter derselben Signatur und nennen bisher keine
+/// Grenze; eine neue Fassung des Moduls kann es tun, und dann gilt ihre
+/// Angabe.
+static KISTENGRENZE: std::sync::Mutex<Vec<(PathBuf, Sandkasten)>> = std::sync::Mutex::new(Vec::new());
+
+/// Traegt die Vorgabe fuer die Manifeste aus `ordner` ein.
+pub fn vorgabe_setzen(ordner: &Path, art: Sandkasten) {
+    let ordner = std::fs::canonicalize(ordner).unwrap_or_else(|_| ordner.to_path_buf());
+    if let Ok(mut g) = KISTENGRENZE.lock() {
+        g.retain(|(o, _)| o != &ordner);
+        g.push((ordner, art));
+    }
+}
+
+/// Die Vorgabe fuer `ordner`, ohne Eintrag `eng`.
+pub fn vorgabe_fuer(ordner: &Path) -> Sandkasten {
+    KISTENGRENZE
+        .lock()
+        .ok()
+        .and_then(|g| g.iter().find(|(o, _)| o == ordner).map(|(_, a)| *a))
+        .unwrap_or_default()
+}
+
 /// Die eingetragene Umgebung fuer `ordner`, leer ohne Eintrag.
 pub fn umgebung_fuer(ordner: &Path) -> Umgebung {
     KISTENUMGEBUNG
@@ -528,8 +593,27 @@ impl Werkzeugausfuehrung for ManifestWerkzeug {
         let mut umgebung: Vec<(String, String)> = vec![(UMGEBUNG_KISTE.to_string(), ordner.display().to_string())];
         umgebung.extend(umgebung_fuer(&ordner));
         let umgebung: Vec<(&str, String)> = umgebung.iter().map(|(k, w)| (k.as_str(), w.clone())).collect();
-        befehl_im_verzeichnis_mit(&self.einhaengung, &befehl, &umgebung, self.manifest.frist_s())
+        let verlangt = self.manifest.sandkasten.unwrap_or_else(|| vorgabe_fuer(&ordner));
+        let art = wirksame_art(verlangt, &ordner, self.einhaengung.wurzel());
+        let schreiben: Vec<PathBuf> = if ordner.starts_with(self.einhaengung.wurzel()) {
+            Vec::new()
+        } else {
+            self.manifest.schreibt.iter().map(|o| ordner.join(o)).collect()
+        };
+        let frist = self.manifest.frist_s();
+        befehl_im_verzeichnis_mit(&self.einhaengung, &befehl, &umgebung, frist, art, &[ordner], &schreiben)
     }
+}
+
+/// **Die Grenze, die fuer ein Manifest wirklich gilt.**
+///
+/// ⛔️ `frei` zaehlt nur, wenn die Kiste **ausserhalb** des Arbeitsordners
+/// liegt (Modulkopf). Beide Pfade sind aufgeloest.
+pub fn wirksame_art(verlangt: Sandkasten, kiste: &Path, arbeitsordner: &Path) -> Sandkasten {
+    if verlangt == Sandkasten::Frei && kiste.starts_with(arbeitsordner) {
+        return Sandkasten::Eng;
+    }
+    verlangt
 }
 
 /// **Setzt die Argumente shell-sicher in die Vorlage ein.**
@@ -615,7 +699,7 @@ mod tests {
                "befehl":"wc -l {datei}"}"#,
         )]);
         std::fs::write(d.path().join("drei.txt"), "a\nb\nc\n").expect("Datei");
-        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung").mit_sandkasten(crate::sandkasten::vorhanden());
         let mut warnungen = Vec::new();
         let angebote = angebote(&kiste, &ein, |w| warnungen.push(w));
         assert!(warnungen.is_empty(), "{warnungen:?}");
@@ -663,7 +747,7 @@ mod tests {
             ("kaputt.json", "{ das ist kein json"),
             ("gut.json", r#"{"name":"gut","beschreibung":"b","parameter":{"type":"object","properties":{},"required":[]},"befehl":"echo ok"}"#),
         ]);
-        let ein = Einhaengung::neu(kiste.parent().unwrap(), true).expect("Einhaengung");
+        let ein = Einhaengung::neu(kiste.parent().unwrap(), true).expect("Einhaengung").mit_sandkasten(crate::sandkasten::vorhanden());
         let mut warnungen = Vec::new();
         let angebote = angebote(&kiste, &ein, |w| warnungen.push(w));
         assert_eq!(angebote.len(), 1, "die gute Datei bleibt");
@@ -735,7 +819,7 @@ mod tests {
                "befehl":"sh \"$MYL_KISTE/sinn.sh\" {wort}"}"#,
         )]);
         std::fs::write(kiste.join("sinn.sh"), "#!/bin/sh\necho kennwort:\"$1\"\n").expect("Skript");
-        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung").mit_sandkasten(crate::sandkasten::vorhanden());
         let angebote = angebote(&kiste, &ein, |w| panic!("{w}"));
         let aus = angebote[0].1.ausfuehren(&serde_json::json!({"wort": "hallo"})).expect("laeuft");
         assert!(aus.contains("kennwort:hallo"), "das Skript neben dem Manifest lief nicht: {aus}");
@@ -758,7 +842,7 @@ mod tests {
         assert_eq!(&mit[..ohne.len()], &ohne[..], "die gewaehlte Kette bleibt");
         assert_eq!(mit.last(), Some(&kiste), "die Modulkiste liegt zuletzt");
         umgebung_setzen(&kiste, vec![("MYL_MODUL_PROGRAMM".into(), "/geprueft/handel".into())]);
-        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung").mit_sandkasten(crate::sandkasten::vorhanden());
         let aus = angebote(&kiste, &ein, |w| panic!("{w}"))[0].1.ausfuehren(&serde_json::json!({})).expect("laeuft");
         assert!(aus.contains("programm:/geprueft/handel"), "die Umgebung kam nicht an: {aus}");
     }
@@ -778,7 +862,7 @@ mod tests {
         )
         .expect("Manifest");
         std::fs::write(relativ.join("sinn.sh"), "#!/bin/sh\necho gefunden\n").expect("Skript");
-        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung").mit_sandkasten(crate::sandkasten::vorhanden());
         let angebote = angebote(&relativ, &ein, |w| panic!("{w}"));
         let aus = angebote[0].1.ausfuehren(&serde_json::json!({}));
         let _ = std::fs::remove_dir_all(&relativ);
@@ -791,6 +875,35 @@ mod tests {
     /// 30 s der Vorgabe nicht fertig; ein Werkzeug ohne Ende haelt die
     /// Schleife an. Beides wird hier gemessen: dass die eigene Angabe
     /// wirkt, und dass sie nicht beliebig gross wird.
+    /// ⛔️ `frei` gilt nur fuer eine Kiste ausserhalb des Arbeitsordners;
+    /// die Vorgabe eines Ordners gilt nur ohne eigene Angabe.
+    #[test]
+    fn frei_gilt_nur_ausserhalb_und_die_vorgabe_nur_ohne_angabe() {
+        let w = Path::new("/arbeit");
+        assert_eq!(wirksame_art(Sandkasten::Frei, Path::new("/arbeit/kiste"), w), Sandkasten::Eng);
+        assert_eq!(wirksame_art(Sandkasten::Frei, Path::new("/module/kiste"), w), Sandkasten::Frei);
+        assert_eq!(wirksame_art(Sandkasten::Netz, Path::new("/arbeit/kiste"), w), Sandkasten::Netz);
+        let d = tempfile::tempdir().expect("Ordner");
+        let o = d.path().canonicalize().expect("aufloesbar");
+        assert_eq!(vorgabe_fuer(&o), Sandkasten::Eng, "ohne Eintrag eng");
+        vorgabe_setzen(&o, Sandkasten::Frei);
+        assert_eq!(vorgabe_fuer(&o), Sandkasten::Frei);
+        let m: Werkzeugmanifest = serde_json::from_str(
+            r#"{"name":"x","beschreibung":"b","parameter":{},"befehl":"true","sandbox":"netz"}"#,
+        )
+        .expect("lesbar");
+        assert_eq!(m.sandkasten, Some(Sandkasten::Netz));
+        let alt: Werkzeugmanifest = serde_json::from_str(
+            r#"{"name":"x","beschreibung":"b","parameter":{},"befehl":"true","sandkasten":"frei"}"#,
+        )
+        .expect("der frühere Name gilt weiter");
+        assert_eq!(alt.sandkasten, Some(Sandkasten::Frei));
+        assert!(serde_json::from_str::<Werkzeugmanifest>(
+            r#"{"name":"x","beschreibung":"b","parameter":{},"befehl":"true","sandbox":"frie"}"#
+        )
+        .is_err(), "ein Tippfehler ist ein Fehler");
+    }
+
     #[test]
     fn die_frist_kommt_aus_dem_manifest_und_hat_einen_deckel() {
         let mach = |zeit: Option<u64>| Werkzeugmanifest {
@@ -801,6 +914,8 @@ mod tests {
             zeitgrenze_s: zeit,
             fuer: Vec::new(),
             fluss: None,
+            sandkasten: None,
+            schreibt: Vec::new(),
         };
         assert_eq!(mach(None).frist_s(), crate::werkzeuge::BEFEHL_ZEITGRENZE_S);
         assert_eq!(mach(Some(180)).frist_s(), 180);
@@ -813,7 +928,7 @@ mod tests {
             r#"{"name":"schlaf","beschreibung":"b","parameter":{"type":"object","properties":{},"required":[]},
                "befehl":"sleep 5","zeitgrenze_s":1}"#,
         )]);
-        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung").mit_sandkasten(crate::sandkasten::vorhanden());
         let angebote = angebote(&kiste, &ein, |w| panic!("{w}"));
         let anfang = std::time::Instant::now();
         let aus = angebote[0].1.ausfuehren(&serde_json::json!({})).expect("laeuft");
@@ -857,6 +972,7 @@ mod tests {
             blick_kamera: false,
             web_recherche: false,
             text_kennzeichnen: true,
+            sandkasten: true,
             netzsaat: None,
             modul: None,
             modulkiste: None,
@@ -963,6 +1079,7 @@ mod tests {
             blick_kamera: false,
             web_recherche: false,
             text_kennzeichnen: true,
+            sandkasten: true,
             netzsaat: None,
             modul: None,
             modulkiste: None,
@@ -989,7 +1106,7 @@ mod tests {
         let Some(heimat) = crate::ort::wurzel().map(|w| w.join(HEIMAT)) else {
             return;
         };
-        let ein = Einhaengung::neu(&heimat, true).expect("Einhaengung");
+        let ein = Einhaengung::neu(&heimat, true).expect("Einhaengung").mit_sandkasten(crate::sandkasten::vorhanden());
         let basis: Vec<String> = angebote(&heimat.join(Werkzeugkiste::Base.name()), &ein, |_| {})
             .into_iter()
             .map(|(a, _)| a.name)
@@ -1009,6 +1126,7 @@ mod tests {
             blick_kamera: false,
             web_recherche: false,
             text_kennzeichnen: true,
+            sandkasten: true,
             netzsaat: None,
             modul: None,
             modulkiste: None,

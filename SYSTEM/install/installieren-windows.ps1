@@ -146,6 +146,30 @@ if ($Aktualisieren) {
     throw "Das hier ist kein Klon, sondern ein entpacktes Verzeichnis; es gibt nichts zu holen."
   }
   git fetch --quiet origin
+  # ⚑ **Erst die Herkunft, dann das Einspielen** (Sicherheitsaudit vom
+  # 2026-11-18, dieselbe Regel wie `freigabe.sh`): Die Spitze des neuen
+  # Stands muss die Signatur eines Schluessels aus
+  # `SYSTEM/install/freigabeschluessel` tragen, und zwar aus der Liste des
+  # **bisherigen** Stands. Ohne Schluessel in der Liste wird nicht geprueft,
+  # und das steht laut da.
+  if ((git rev-parse FETCH_HEAD) -ne (git rev-parse HEAD)) {
+    $gitDir = (git rev-parse --absolute-git-dir)
+    $liste = Join-Path $gitDir "myelith-freigabeschluessel"
+    $inhalt = git show "HEAD:SYSTEM/install/freigabeschluessel" 2>$null
+    $schluessel = @($inhalt | Where-Object { $_ -match '^[^#\s]' })
+    if ($LASTEXITCODE -ne 0 -or $schluessel.Count -eq 0) {
+      Write-Warning "Im bisherigen Stand steht kein Freigabeschluessel. Der neue Stand wird NICHT auf eine Signatur geprueft."
+    } else {
+      Set-Content -Path $liste -Value $inhalt -Encoding ascii
+      git -c "gpg.ssh.allowedSignersFile=$liste" verify-commit FETCH_HEAD 2>$null | Out-Null
+      $gueltig = ($LASTEXITCODE -eq 0)
+      Remove-Item -Force $liste
+      if (-not $gueltig) {
+        throw "Der neue Stand traegt keine gueltige Signatur eines Freigabeschluessels. Nichts eingespielt. Pruefen: git verify-commit FETCH_HEAD"
+      }
+      Write-Host "   Signatur des neuen Stands: gueltig (Freigabeschluessel)"
+    }
+  }
   git merge --ff-only --quiet FETCH_HEAD
   if ($LASTEXITCODE -ne 0) {
     throw "Der Klon laesst sich nicht vorwaerts bewegen; wahrscheinlich liegen eigene Aenderungen darauf."

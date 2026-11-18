@@ -136,6 +136,14 @@ myl-node — ein Myelith-Netzknoten
   --artefakte <ordner>   Das Artefakt des Netzmodells, fuer den Shard und
                          den Dateidienst.
   --shard-training       Den Shard mit Trainingshaelfte starten.
+  --kerne <n>            Hoechstens so viele Kerne fuer Pruefer und Shard
+                         (die Freigabe des Besitzers); ohne Angabe alle.
+  --rechenwerke <plan>   Welche Rechenwege und Karten rechnen duerfen, etwa
+                         metal=aus,cuda=an,karte:0000:01:00.0=an; ohne
+                         Angabe alles, was da ist und seine Selbstpruefung
+                         gegen die CPU bestanden hat. Der Shard misst sich
+                         beim Start ein und nimmt einen Beschleuniger nur,
+                         wo er schneller ist.
   --konto <64 hex>       Wohin die Ertraege gehen. Der Knoten meldet sich
                          dafuer mit --konsensschluessel als Miner an und
                          traegt das Konto ueber die Kette ein. Ohne Angabe
@@ -328,6 +336,8 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     let mut shard_programm: Option<PathBuf> = None;
     let mut artefakte: Option<PathBuf> = None;
     let mut shard_training = false;
+    let mut rechenfreigabe = myl_node::konfig::Rechenfreigabe::default();
+    let mut modellangabe: Option<String> = None;
     let mut lokale_suche = false;
     let mut i = 0;
     while i < roh.len() {
@@ -402,7 +412,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 konfig.pod = Some(b);
                 i += 2;
             }
-            "--modell" => { konfig.modellname = wert(i)?; i += 2; }
+            "--modell" => { modellangabe = Some(wert(i)?); i += 2; }
             "--speicherorte" => { konfig.speicherorte = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--zusage" => { zusage = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--netz" => {
@@ -430,6 +440,20 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
             "--shard-programm" => { shard_programm = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--artefakte" => { artefakte = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--shard-training" => { shard_training = true; i += 1; }
+            "--kerne" => {
+                let n: usize = wert(i)?.parse().map_err(|_| "--kerne erwartet eine Zahl".to_string())?;
+                if n == 0 {
+                    return Err("--kerne erwartet eine Zahl ueber null".into());
+                }
+                rechenfreigabe.kerne = Some(n);
+                i += 2;
+            }
+            "--rechenwerke" => {
+                let plan = integer_llm_runtime::rechenwege::Freigabeplan::aus_text(&wert(i)?)
+                    .map_err(|e| format!("--rechenwerke: {e}"))?;
+                rechenfreigabe.rechenwerke = Some(plan);
+                i += 2;
+            }
             "--kontoschluessel" => {
                 konfig.kontoschluesseldatei = Some(PathBuf::from(wert(i)?));
                 i += 2;
@@ -636,14 +660,16 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     if let Some(ms) = bft_zuwachs {
         timeouts.delta_ms = ms;
     }
+    // ⚑ Ohne `--modell` der Name des Netzmodells (2026-11-16).
+    konfig.modellname = myl_node::konfig::modellname_fuer(konfig.netz, modellangabe.as_deref());
     konfig.shard = match (shard_programm, artefakte) {
         (Some(programm), Some(artefakte)) => {
-            Some(myl_node::konfig::Shardkonfig { programm, artefakte, training: shard_training })
+            Some(myl_node::konfig::Shardkonfig { programm, artefakte, training: shard_training, freigabe: rechenfreigabe.clone() })
         }
         (Some(_), None) => return Err("--shard-programm braucht --artefakte".into()),
         (None, Some(artefakte)) => {
             // ⚑ Ohne Programm kein Shard, aber der Dateidienst liefert aus.
-            Some(myl_node::konfig::Shardkonfig { programm: PathBuf::new(), artefakte, training: false })
+            Some(myl_node::konfig::Shardkonfig { programm: PathBuf::new(), artefakte, training: false, freigabe: rechenfreigabe.clone() })
         }
         (None, None) => None,
     };
@@ -702,6 +728,14 @@ async fn main() {
             std::process::exit(2);
         }
     };
+
+    // ⚑ **Die Freigabe des Besitzers gilt auch in diesem Prozess** (Fund
+    //   705): Der Prüfer rechnet hier, der Shard bekommt sie beim Start.
+    if let Some(sk) = &args.konfig.shard {
+        for satz in sk.freigabe.anwenden() {
+            eprintln!("[myl-node] Freigabe: {satz}");
+        }
+    }
 
     // ⚑ **Vor dem Start des Netzes.** Wer nur seine Stimmsatzdatei-Zeile
     // braucht, soll dafür kein Netz aufmachen und keine Ports belegen.
@@ -787,6 +821,7 @@ async fn main() {
     let ortsausweis = args.konfig.ortsausweis.clone();
     let podkennung = args.konfig.pod;
     let modellname = args.konfig.modellname.clone();
+    let vorlage = args.konfig.netz.vorlage;
     let konsenspfad = args.konfig.konsensschluesseldatei.clone();
     let zusage = args.zusage.clone();
     // ⚑ **Der Identitaetsschluessel der Tuer.** Er unterschreibt die
@@ -895,7 +930,8 @@ async fn main() {
                     start,
                     empfaenger,
                     knoten.abrechnungskanal(),
-                );
+                )
+                .map(|w| w.mit_vorlage(vorlage).mit_abschrift(abschrift.clone()));
                 match &weg {
                     Some(_) => eprintln!(
                         "myl-node: eigenes Gateway auf http://{wo}/v1/chat/completions (Shard-Weg steht, Abrechnung an)"

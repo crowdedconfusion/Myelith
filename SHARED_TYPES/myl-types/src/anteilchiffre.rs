@@ -135,6 +135,12 @@ impl Verschluesselungsschluessel {
 /// aus dem Geheimnis des Austeilers, dem Empfaenger, dem Kontext und der
 /// Nummer abgeleitet: kein Zufallsgenerator, und nie zweimal derselbe fuer
 /// verschiedene Empfaenger oder Sitze. `None` bei ungueltigem Empfaenger.
+///
+/// ⛔️ **Und aus dem Wert selbst** (Fund A51, 2026-11-18; RFC 6979, 3.2: die
+/// Nonce bindet die Nachricht). Ohne ihn bekam derselbe Sitz auf zwei Zweigen
+/// mit verschiedenen Werten denselben fluechtigen Schluessel, also denselben
+/// Strom, und das XOR beider Chiffren war das XOR beider Werte, fuer jeden
+/// lesbar.
 pub fn verschluesseln(
     empfaenger: &Verschluesselungsschluessel,
     wert: &Skalar,
@@ -143,13 +149,13 @@ pub fn verschluesseln(
     geheimnis_des_austeilers: &[u8; 32],
 ) -> Option<Anteilchiffre> {
     let p = punkt(&empfaenger.0)?;
-    let k = breit(&[DST_FLUECHTIG, geheimnis_des_austeilers, &empfaenger.0, kontext, &nummer.to_le_bytes()]);
+    let klar = wert.als_bytes_be();
+    let k = breit(&[DST_FLUECHTIG, geheimnis_des_austeilers, &empfaenger.0, kontext, &nummer.to_le_bytes(), &klar]);
     if k == Scalar::ZERO {
         return None;
     }
     let r = (k * RISTRETTO_BASEPOINT_POINT).compress().to_bytes();
     let s = strom(&r, &empfaenger.0, &(k * p), kontext, nummer);
-    let klar = wert.als_bytes_be();
     let mut c = [0u8; 32];
     for ((c, k), s) in c.iter_mut().zip(&klar).zip(&s) {
         *c = k ^ s;
@@ -194,6 +200,25 @@ mod tests {
         let a = verschluesseln(&p, &w, b"k", 1, &[9; 32]).expect("Chiffre");
         let b = verschluesseln(&p, &w, b"k", 2, &[9; 32]).expect("Chiffre");
         assert_ne!(a.r, b.r);
+    }
+
+    /// ⛔️ Fund A51: Derselbe Sitz mit zwei Werten (zwei Zweige) bekommt zwei
+    /// fluechtige Schluessel; sonst laege das XOR der Werte offen.
+    #[test]
+    fn zwei_werte_am_selben_sitz_teilen_keinen_strom() {
+        let e = schluessel(1);
+        let p = e.oeffentlich();
+        let (w1, w2) = (Skalar::aus_u64(7), Skalar::aus_u64(1_000_003));
+        let a = verschluesseln(&p, &w1, b"k", 3, &[9; 32]).expect("Chiffre");
+        let b = verschluesseln(&p, &w2, b"k", 3, &[9; 32]).expect("Chiffre");
+        assert_ne!(a.r, b.r);
+        let xor_c: Vec<u8> = a.c.iter().zip(&b.c).map(|(x, y)| x ^ y).collect();
+        let xor_w: Vec<u8> = w1.als_bytes_be().iter().zip(&w2.als_bytes_be()).map(|(x, y)| x ^ y).collect();
+        assert_ne!(xor_c, xor_w);
+        assert_eq!(e.entschluesseln(&a, b"k", 3), Some(w1));
+        assert_eq!(e.entschluesseln(&b, b"k", 3), Some(w2));
+        // Deterministisch: derselbe Wert ergibt dieselbe Chiffre.
+        assert_eq!(verschluesseln(&p, &w1, b"k", 3, &[9; 32]), Some(a));
     }
 
     #[test]

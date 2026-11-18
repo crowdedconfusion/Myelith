@@ -64,6 +64,8 @@ fn main() {
     let mut probeschluessel = false;
     let mut training = false;
     let mut kerne: Option<usize> = None;
+    let mut rechenwerke: Option<integer_llm_runtime::rechenwege::Freigabeplan> = None;
+    let mut einmessung = true;
     let mut von_bis: (Option<usize>, Option<usize>) = (None, None);
 
     let args: Vec<String> = std::env::args().collect();
@@ -135,6 +137,23 @@ fn main() {
                     }
                 }
             }
+            // ⚑ **Die freigegebenen Rechenwerke** (Fund 705, 2026-11-16), als
+            //   Freigabeplan des Klienten (`metal=aus,karte:0000:01:00.0=an`),
+            //   vom Knoten durchgereicht. Ohne Angabe rechnet alles, was da
+            //   ist und seine Selbstpruefung bestanden hat.
+            "--rechenwerke" => {
+                i += 1;
+                match integer_llm_runtime::rechenwege::Freigabeplan::aus_text(args.get(i).map(String::as_str).unwrap_or("")) {
+                    Ok(p) => rechenwerke = Some(p),
+                    Err(e) => {
+                        eprintln!("[myl-shard] --rechenwerke: {e}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            // Ohne die Einmessung beim Start: Die Beschleuniger rechnen dann
+            // ab ihrer Vorgabe (`MYL_GPU_AB`, `MYL_METAL_AB`).
+            "--ohne-einmessung" => einmessung = false,
             andere => {
                 eprintln!("[myl-shard] unbekannte Option: {andere}");
                 std::process::exit(2);
@@ -145,6 +164,11 @@ fn main() {
 
     if let Some(n) = kerne {
         integer_llm_runtime::kapazitaet::kerne_setzen(n);
+    }
+    if let Some(plan) = &rechenwerke {
+        for satz in plan.anwenden() {
+            eprintln!("[myl-shard] Freigabe: {satz}");
+        }
     }
     if artefakte.is_empty() {
         eprintln!("[myl-shard] --artefakte fehlt");
@@ -236,6 +260,25 @@ fn main() {
         sk,
         deckel,
     ));
+    // ⚑ **Die Einmessung** (Fund 705, 2026-11-16): Rechnet ein freigegebener
+    //   Beschleuniger die Stapel dieses Bereichs schneller als die CPU, und
+    //   ab welcher Groesse? Gemessen an den eigenen Ebenen, bei den Stapeln
+    //   des Pods (bis 64 Token), und danach geschaltet. Ohne Beschleuniger
+    //   wird nichts gemessen.
+    if einmessung {
+        let messshard = shard.clone();
+        match integer_llm_runtime::rechenwege::einmessen(&[16, myl_pod::shardweg::MAX_STAPEL], |n| messshard.stapelzeit(n)) {
+            Some(e) => eprintln!("[myl-shard] Einmessung: {}", e.als_satz()),
+            None => eprintln!("[myl-shard] Einmessung: kein Beschleuniger frei, die CPU rechnet"),
+        }
+    }
+    let an = integer_llm_runtime::rechenwege::beschleuniger_an();
+    eprintln!(
+        "[myl-shard] Rechenwege: {}; Beschleuniger an: {}; {} Kerne",
+        integer_llm_runtime::rechenwege::vorhanden().join(", "),
+        if an.is_empty() { "keiner".to_string() } else { an.join(", ") },
+        integer_llm_runtime::kapazitaet::kerne()
+    );
 
     let ausweis = match ausweisdatei.as_deref().map(|d| myl_types::ortsleitung::schluessel_lesen(std::path::Path::new(d))) {
         Some(Ok(a)) => a,

@@ -92,6 +92,33 @@ struct Wahl {
     finish_reason: Option<String>,
 }
 
+/// Was der Klient an `/v1/completions` sendet: ein fertiger Prompt.
+#[derive(Debug, Clone, Serialize)]
+struct Textanfrage<'a> {
+    model: &'a str,
+    prompt: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Textwahl {
+    text: String,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Rohtextantwort {
+    choices: Vec<Textwahl>,
+    #[serde(default)]
+    usage: Verbrauch,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    myelith_segment: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 struct Verbrauch {
     #[serde(default)]
@@ -433,8 +460,65 @@ impl Tuerklient {
         })
     }
 
+    /// **Eine Vervollständigung aus einem fertigen Prompt** (2026-11-15).
+    ///
+    /// ⚑ Für einen Aufrufer, der die Vorlage des Modells selbst setzt,
+    /// Zeichen für Zeichen wie auf seiner Maschine; die Tür reicht den Prompt
+    /// unverändert weiter ([`crate::WEG_TEXT`]). Über [`Self::chat`] setzt
+    /// die Tür die Unterhaltung als `rolle: inhalt` zusammen.
+    pub fn vervollstaendigen(&self, modell: &str, prompt: &str, max_tokens: Option<u32>) -> Result<Antwort, Tuerfehler> {
+        let anfrage = Textanfrage { model: modell, prompt, max_tokens };
+        let rumpf = serde_json::to_vec(&anfrage).unwrap_or_default();
+        let (status, antwort) = self.senden(crate::WEG_TEXT, &rumpf)?;
+        if status != 200 {
+            return Err(Tuerfehler::Abgelehnt {
+                status,
+                rumpf: String::from_utf8_lossy(&antwort).into_owned(),
+            });
+        }
+        let roh: Rohtextantwort = serde_json::from_slice(&antwort).map_err(|_| Tuerfehler::Unlesbar {
+            rumpf: String::from_utf8_lossy(&antwort).chars().take(200).collect(),
+        })?;
+        let wahl = roh.choices.into_iter().next().ok_or(Tuerfehler::OhneWahl)?;
+        Ok(Antwort {
+            text: wahl.text,
+            abschlussgrund: wahl.finish_reason,
+            segment: hex32(&roh.myelith_segment),
+            kennung: roh.id,
+            prompt_token: roh.usage.prompt_tokens,
+            antwort_token: roh.usage.completion_tokens,
+        })
+    }
+
     /// Eine POST-Anfrage, und die Antwort als (Status, Rumpf).
+    /// ⚑ **Welche Modelle die Tür bedient** (`GET /v1/models`, 2026-11-16):
+    /// die Namen, wie ein Klient sie in `model` schreibt. Der Klient wählt
+    /// damit die Werkzeugkiste nach der Größe des Netzmodells
+    /// ([`crate::werkzeuge::Werkzeugkiste::fuer_modellname`]).
+    pub fn modelle(&self) -> Result<Vec<String>, Tuerfehler> {
+        #[derive(serde::Deserialize)]
+        struct Liste {
+            data: Vec<Eintrag>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Eintrag {
+            id: String,
+        }
+        let (status, antwort) = self.anfragen("GET", crate::WEG_MODELLE, &[])?;
+        if status != 200 {
+            return Err(Tuerfehler::Abgelehnt { status, rumpf: String::from_utf8_lossy(&antwort).into_owned() });
+        }
+        let liste: Liste = serde_json::from_slice(&antwort).map_err(|_| Tuerfehler::Unlesbar {
+            rumpf: String::from_utf8_lossy(&antwort).chars().take(200).collect(),
+        })?;
+        Ok(liste.data.into_iter().map(|e| e.id).collect())
+    }
+
     fn senden(&self, weg: &str, rumpf: &[u8]) -> Result<(u16, Vec<u8>), Tuerfehler> {
+        self.anfragen("POST", weg, rumpf)
+    }
+
+    fn anfragen(&self, methode: &str, weg: &str, rumpf: &[u8]) -> Result<(u16, Vec<u8>), Tuerfehler> {
         let mut strom = TcpStream::connect((self.wirt.as_str(), self.port))
             .map_err(|e| Tuerfehler::Unerreichbar { grund: e.to_string() })?;
         strom
@@ -442,7 +526,7 @@ impl Tuerklient {
             .map_err(|e| Tuerfehler::Unerreichbar { grund: e.to_string() })?;
 
         let mut aus = format!(
-            "POST {weg} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\
+            "{methode} {weg} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\
              Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             self.wirt,
             self.vollmacht,

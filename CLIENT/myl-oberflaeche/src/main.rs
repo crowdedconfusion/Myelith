@@ -533,7 +533,7 @@ async fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
     // Ein Pfad, der nicht existiert, hat auch keine Werkzeuge, und das
     // soll man sehen, bevor der Auftrag laeuft.
     let ein = match myl_local_agent::werkzeuge::Einhaengung::neu(&pfad, e.agent.schreiben) {
-        Ok(x) => x,
+        Ok(x) => x.mit_sandkasten(e.agent.sandkasten),
         Err(m) => {
             return Ok(Werkzeugliste {
                 wurzel: Some(format!("{pfad}  ({m})")),

@@ -43,6 +43,12 @@ pub struct Netz {
     pub profil: ModellProfil,
     /// Der Schlüssel des Artefakts im Katalog, für Meldungen und Proben.
     pub artefakt: &'static str,
+    /// ⚑ **Die Vorlage des Netzmodells** (Fund 181, 2026-11-16): In ihr
+    /// setzt jede Tür dieses Netzes eine Unterhaltung zusammen. Eine
+    /// Protokollgröße und keine Einstellung eines Knotens: Zwei Türen
+    /// desselben Netzes setzen denselben Prompt, und ein Klient kann ihn aus
+    /// seinen Nachrichten nachrechnen.
+    pub vorlage: myl_types::vorlage::Vorlage,
     /// ⚑ **Die erste Tür** (seit dem 2026-10-22): Adressen langlebiger
     /// Knoten (`/ip4/…/tcp/…/p2p/…`), die jeder Knoten dieses Netzes beim
     /// Start zusätzlich zu seinen eigenen Bootstrap-Angaben kennt. Kein
@@ -211,6 +217,8 @@ pub const PROBEKETTE: Netz = Netz {
     },
     profil: myl_tokenomics::vtfe::PROBE_MODELL,
     artefakt: "sparrow-0.6b-int8",
+    // Qwen3-0.6B, Familie `qwen3`.
+    vorlage: myl_types::vorlage::Vorlage::ChatMl,
     // Proben bauen ihr Netz selbst; eine lokale Suche liesse Proben auf
     // derselben Maschine einander finden.
     einstieg: &[],
@@ -258,6 +266,8 @@ pub const TESTNETZ_INT4: Netz = Netz {
     },
     profil: myl_tokenomics::vtfe::RAVEN_35B_A3B,
     artefakt: "raven-35b-a3b-int4",
+    // Familie `qwen3_5-moe-hybrid`: der Denkblock steht in der Aufforderung.
+    vorlage: myl_types::vorlage::Vorlage::ChatMlDenkblock,
     // ⚠️ Noch kein langlebiger Knoten: Bis es einen gibt, ist die Liste
     //   leer, und ausserhalb des lokalen Netzes braucht der Einstieg eine
     //   Bootstrap-Angabe.
