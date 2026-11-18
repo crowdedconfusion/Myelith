@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.133.1"
+version = "0.133.2"
 dependencies = [
  "async-trait",
  "borsh",

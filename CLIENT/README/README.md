@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.245.0 (`myl-client` 0.142.3, `myl-oberflaeche` 0.93.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
+> **Version:** 0.245.1 (`myl-client` 0.142.3, `myl-oberflaeche` 0.93.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
 > **Datum:** 2026-11-18
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -182,6 +182,23 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.245.1 (2026-11-18): Der erste Freigabeschlüssel steht in der Liste
+
+- ⛔️ **`SYSTEM/install/freigabeschluessel` nennt `myelith-freigabe`**
+  (Ed25519 mit Passphrase, beim Projektinhaber;
+  `SHA256:H4yDjpfrRohpmmuhWFHMI5JXBt2bOb3KeEJ8JWNQ1Mw`). Damit wirkt die
+  Prüfung aus 0.245.0: Ein Klon auf diesem Stand oder später spielt nur
+  noch einen Stand ein, dessen Spitze dieser Schlüssel signiert hat. Das
+  eine Update auf diesen Stand selbst prüft ein älterer Klon noch nicht,
+  denn es gilt die Liste des bisherigen Stands, und die war leer.
+- Das Beispiel in der Liste und in `freigabe.sh` nennt den Schlüssel beim
+  Namen statt `freigabe-a`; die Liste trägt Fingerabdruck und eine Zeile,
+  mit der er sich nachprüfen lässt. `ssh-keygen -Y find-principals` liest
+  sie ohne Fehler (geprüft mit einem Wegwerfschlüssel). Ein Ersatzschlüssel
+  auf einem getrennten Datenträger kommt später, mit der Signatur dieses
+  Schlüssels.
+- Code unverändert, `myl-client` bleibt 0.142.3.
 
 ### v0.245.0 (2026-11-18): Ein Update braucht die Signatur eines Freigabeschlüssels (`myl-client` 0.142.3)
 

@@ -1,4 +1,4 @@
-0.11.0
+0.11.1
 
 # Myelith: die aktuelle Fassung und was sie ändert
 
@@ -12,7 +12,16 @@ Darunter steht ein einziger Abschnitt: was sich mit der aktuellen Fassung
 ändert. Er wird mit jeder neuen Fassung ersetzt, ältere Fassungen stehen
 hier nicht. Das Programm zeigt ihn vor dem Update.
 
-## 0.11.0 (2026-11-18)
+## 0.11.1 (2026-11-18)
+
+- **Updates kommen nur noch mit der Signatur des Projekts.** Ab dieser
+  Fassung spielt die Aktualisierung nur einen neuen Stand ein, den der
+  Freigabeschlüssel `myelith-freigabe` signiert hat; wer den Zugang zu
+  GitHub übernimmt, bringt damit allein keinen Code mehr auf einen
+  Rechner. Dieses eine Update kommt noch ohne die Prüfung herein, weil die
+  Liste der Schlüssel bisher leer war, und sagt das beim Einspielen.
+
+Seit 0.11.0 außerdem:
 
 ⚠️ **Seit 0.11.0 gelten neue Regeln für die Abrechnung der Pods und für die
 Saat.** Eine Kette von 0.10.0 lässt sich nicht weiterführen; ein Knoten
@@ -26,10 +35,6 @@ beginnt sie neu.
 - **Eine Runde kostet Prompt und Ausgabe**, und der Klient kauft vor jeder
   Runde nur so viele Credits nach, wie sie braucht. Fällt eine Runde auf
   einen Epochenwechsel, versucht er es selbst noch einmal.
-- **Updates werden geprüft:** Ein neuer Stand wird nur eingespielt, wenn er
-  die Signatur eines Freigabeschlüssels aus `SYSTEM/install/freigabeschluessel`
-  trägt. Solange dort keiner steht, sagt die Aktualisierung, dass sie nicht
-  prüft.
 - **Schneller auf Apple ab M2:** Die Vorbereitung eines Prompts rechnet mit
   int8-Modellen bis zu 40 Prozent schneller, Token für Token dasselbe
   Ergebnis.

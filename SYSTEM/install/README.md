@@ -567,8 +567,12 @@ ALLOWED SIGNERS), und zwar aus der Liste des Stands, der schon da ist. Ein
 Zugang zu GitHub allein bringt also keinen Code auf die Maschine, und ein
 neuer Schlüssel kommt nur mit der Signatur eines bisherigen herein.
 Trägt der neue Stand keine gültige Signatur, wird nichts eingespielt;
-nachsehen lässt es sich mit `git verify-commit FETCH_HEAD`. ⚠️ Solange die
-Liste keinen Schlüssel enthält, prüft das Skript nicht und sagt es laut.
+nachsehen lässt es sich mit `git verify-commit FETCH_HEAD`. In der Liste
+steht seit dem 2026-11-18 der Schlüssel `myelith-freigabe`
+(`SHA256:H4yDjpfrRohpmmuhWFHMI5JXBt2bOb3KeEJ8JWNQ1Mw`). ⚠️ Ein Klon, dessen
+Stand noch keine Liste mit Schlüssel hat (älter als Myelith 0.11.1), prüft
+das eine Update auf diesen Stand nicht und sagt es laut; jedes weitere
+prüft er.
 
 ---
 

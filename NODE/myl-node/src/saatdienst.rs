@@ -53,6 +53,10 @@ impl Vorgang {
     }
 }
 
+/// Die eigenen Anteile unter einer Schluesselquelle: der Abdruck des
+/// Schluessels, aus dem sie gebildet sind, und je Sitz der Wert.
+type EigeneAnteile = ([u8; 32], Vec<(u64, Skalar)>);
+
 /// Der Dienst; haelt das Geheimnis und was er schon getan hat.
 pub struct Saatdienst {
     geheimnis: [u8; 32],
@@ -71,7 +75,7 @@ pub struct Saatdienst {
     /// Die eigenen Anteile je Schluesselquelle, nach Sitz, mit dem Abdruck
     /// des Schluessels, aus dem sie gebildet sind (nach einem Zweigwechsel
     /// kann es unter derselben Quelle ein anderer sein).
-    anteile: BTreeMap<u64, ([u8; 32], Vec<(u64, Skalar)>)>,
+    anteile: BTreeMap<u64, EigeneAnteile>,
     /// Nur im Pruefbau: teilt falsch aus ([`Saatdienst::falsch_austeilen`]).
     #[cfg(feature = "falscher_austeiler")]
     falsch: bool,

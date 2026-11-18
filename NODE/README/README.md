@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.133.1
+> **Version:** 0.133.2
 > **Datum:** 2026-11-18
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,18 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.133.2 (2026-11-18): Clippy der CI wieder grün
+
+- **Kein Verhalten geändert.** Der Zwischenspeicher der eigenen Anteile im
+  Saatdienst (seit 0.133.0) hatte den Typ `BTreeMap<u64, ([u8; 32],
+  Vec<(u64, Skalar)>)>`; Clippy (`type_complexity`) weist ihn ab, und mit
+  `-D warnings` fielen die drei Jobs der CI, die `myl-node` prüfen (Linux,
+  macOS, Windows). Der Wert hat jetzt einen Namen, `EigeneAnteile`.
+- 📌 Die Prüfung vor dem Commit hatte den Fehler im Protokoll, meldete aber
+  Rückgabe 0: Die Zeile schrieb `rc=$?` hinter ein `$(date)` im selben
+  `echo`, und die Ersetzung setzt `$?` neu. Den Rückgabewert also erst
+  sichern (`r=$?`), dann schreiben.
 
 ### v0.133.1 (2026-11-18): Die Proben von `kette.rs` und `knoten.rs` in eigenen Dateien
 

@@ -2,9 +2,15 @@
 # `--aktualisieren` ihn einspielt (`freigabe.sh`, `installieren-windows.ps1`).
 #
 # Format von ssh-keygen (ALLOWED SIGNERS), eine Zeile je Schluessel:
-#   freigabe-a namespaces="git" ssh-ed25519 AAAA...
-#   freigabe-b namespaces="git" ssh-ed25519 AAAA...
+#   <name> namespaces="git" ssh-ed25519 AAAA...
 #
 # Gilt immer die Liste des Stands, der schon da ist; ein neuer Schluessel
 # kommt also nur mit der Signatur eines bisherigen herein. Solange hier
 # kein Schluessel steht, wird nicht geprueft, und das Skript sagt es.
+#
+# myelith-freigabe: der Hauptschluessel des Projektinhabers (seit
+# 2026-11-18), Ed25519 mit Passphrase, nie auf einem Rechner ausserhalb
+# eines verschluesselten Laufwerks.
+# Fingerabdruck: SHA256:H4yDjpfrRohpmmuhWFHMI5JXBt2bOb3KeEJ8JWNQ1Mw
+# Pruefen: ssh-keygen -l -f <(awk '/^myelith-freigabe /{print $3, $4}' SYSTEM/install/freigabeschluessel)
+myelith-freigabe namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO6liUAIqXXQoYr+dU/ottEDn8Qu3Cw42oWQBEq1ZkOf

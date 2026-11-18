@@ -24,7 +24,7 @@
 #
 # Das Format der Liste ist das von `ssh-keygen` (ALLOWED SIGNERS), eine
 # Zeile je Schluessel:
-#   freigabe-a namespaces="git" ssh-ed25519 AAAA...
+#   myelith-freigabe namespaces="git" ssh-ed25519 AAAA...
 # `git verify-commit` liest sie ueber `gpg.ssh.allowedSignersFile`.
 
 FREIGABE_LISTE=SYSTEM/install/freigabeschluessel
