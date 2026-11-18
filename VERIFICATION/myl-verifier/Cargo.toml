@@ -1,6 +1,6 @@
 [package]
 name = "myl-verifier"
-version = "0.29.1"
+version = "0.29.2"
 edition = "2021"
 rust-version = "1.99"
 description = "Verifikations-Subsystem für Myelith (Whitepaper Kap. 6.4–6.9, Anhang A.4): Redundanzvergleich, Bisektions-Spiel, Kontrollsegmente. Nutzt INTEGER_LLMs Determinismus-Eigenschaft für wirtschaftliche Manipulationssicherung."
@@ -39,7 +39,7 @@ path = "src/lib.rs"
 # Gebraucht wird sie für den Liveness-Test aus Punkt 4.3: Die
 # Standby-Übernahme wohnt in `myl-pod`, die Zusage, die sie einhalten
 # muss, steht in Kap. 6.8 und damit in dieser Komponente.
-myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod" }
+myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod", default-features = false }
 
 # Testprofil, siehe die ausfuehrliche Begruendung in
 # `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`

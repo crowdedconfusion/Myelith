@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.29.1
+> **Version:** 0.29.2
 > **Datum:** 2026-11-14
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -145,6 +145,15 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.29.2 (2026-11-18): Der Pod ohne seine Standardmerkmale
+
+- Die Entwicklungsabhängigkeit `myl-pod` steht mit
+  `default-features = false`: Seit COMPUTE_PIPELINE 0.67.0 (2026-11-16) schaltet der Pod
+  `cuda` und `rocm` als Standard ein, und über diese Kante kamen sie auch
+  in den Testclient, der den Verifier einbindet (dort lehnt die Prüfung
+  des Rechenpfads einen Bau mit `cuda` ohne Karte ab). Die Liveness-Probe
+  braucht keinen Rechenweg des Pods. Code unverändert.
 
 ### v0.29.1 (2026-11-14): Ohne fremde Projekte als Begründung
 

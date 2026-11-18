@@ -291,10 +291,17 @@ jobs:
   # Gruppe statt bisher fuenf unter Windows und vier unter macOS, die
   # dieselben Abhaengigkeiten je einzeln uebersetzten. Unter macOS nur die
   # Kerne, denn dort laeuft die Entwicklung, und jede Minute zaehlt zehnfach.
+  #
+  # ⚑ **60 Minuten statt 40** (2026-11-18): Aendern sich die Sperrdateien,
+  #   baut der Job kalt, und dazu kamen die Merkmalsvarianten von Knoten und
+  #   Pod (`cuda`, `rocm` als Standard). Unter macOS brauchte der kalte Lauf
+  #   dann mehr als 39 Minuten und brach in der letzten Kiste ab, sonst 17;
+  #   ein Abbruch speichert keinen Zwischenstand, also baute auch der
+  #   naechste kalt. Ein warmer Lauf zahlt fuer die Grenze nichts.
   plattform:
     name: ${{ matrix.gruppe }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.75.0
+> **Version:** 0.75.1
 > **Datum:** 2026-11-16
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -543,6 +543,32 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.75.1 (2026-11-18): Pod und Knoten ohne ihre Standardmerkmale
+
+- ⛔️ **Der Konformitätsschritt der CI war rot** (Linux x86_64 und
+  Windows): Seit dem 16. (NODE 0.126.0, COMPUTE_PIPELINE 0.67.0) schalten `myl-node` und `myl-pod` `cuda` und
+  `rocm` als Standard ein, damit ein Miner seine Karte zur Laufzeit findet.
+  Über die Vereinigung der Merkmale trug damit jeder Bau des Testclients
+  `cuda`, und `hardware::rechenpfad_pruefen` lehnte ihn ohne Karte ab, wie
+  sie soll: Ein Bau mit `cuda` will die Karte messen, und ein Lauf darüber
+  zertifizierte sonst die CPU unter ihrem Namen.
+- **Die Sperre bleibt, wie sie ist.** Stattdessen bindet der Testclient
+  Pod und Knoten mit `default-features = false` ein (ebenso
+  `myl-verifier` den Pod, sonst kämen die Merkmale über ihn zurück).
+  Welche Rechenwege der Testclient trägt, bestimmen wieder seine eigenen
+  Merkmale und die Abhängigkeiten je Architektur, wie vor dem 16.;
+  `cargo tree` zeigt auf aarch64-macOS `cpu-simd` und `metal`, auf
+  x86_64 (Linux, Windows) `cpu-simd`, nirgends `cuda` oder `rocm`.
+- Der Konformitätsschritt der CI lokal gefahren: 24 Vektoren, vier
+  Abdrücke wie eingetragen.
+- **Die Plattformjobs der CI haben 60 Minuten statt 40.** Der kalte Lauf
+  unter macOS (geänderte Sperrdateien, dazu die neuen Merkmalsvarianten)
+  brach nach über 39 Minuten in der letzten Kiste ab, `CLIENT/myl-client`,
+  direkt nach deren Clippy; sonst dauert der Schritt 17. Dieselbe Kiste
+  unter den Bedingungen des Läufers nachgestellt (leeres Benutzerverzeichnis,
+  offene Eingabe, drei Fäden auf den sparsamen Kernen): alle Proben grün,
+  151 in der Bibliothek in 19 s, keine hängt.
 
 ### v0.75.0 (2026-11-17): Der Auftragslauf mit Lügner und Störer
 

@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.75.0"
+version = "0.75.1"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -30,7 +30,15 @@ ausliefern = "myl-test"
 [dependencies]
 integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
 integer-llm-kernels = { path = "../../INTEGER_LLM/kernels" }
-myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod" }
+# ⚑ **Ohne die Standardmerkmale von Pod und Knoten** (2026-11-18): Beide
+# schalten seit dem 2026-11-16 (NODE 0.126.0, COMPUTE_PIPELINE 0.67.0)
+# `cuda` und `rocm` ein, damit ein Miner seine
+# Karte zur Laufzeit findet. Im Testclient hiesse das: Jeder Bau traegt
+# `cuda`, und `hardware::rechenpfad_pruefen` lehnt ihn ohne Karte ab, wie
+# es soll (ein Bau mit `cuda` will die Karte messen). Welche Rechenwege
+# der Testclient traegt, bestimmen seine eigenen Merkmale und die
+# Abhaengigkeiten je Architektur weiter unten, wie vor dem 2026-11-16.
+myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod", default-features = false }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
@@ -40,7 +48,7 @@ myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
 # Der Knoten ist eine Bibliothek, keine fremde Datei: Der Testclient
 # startet ihn im eigenen Prozess. Ein Partner soll EIN Programm bauen
 # und starten, nicht zwei und dazwischen einen Pfad suchen.
-myl-node = { path = "../../NODE/myl-node" }
+myl-node = { path = "../../NODE/myl-node", default-features = false }
 myl-net = { path = "../../NETWORKING/myl-net" }
 # ⚑ **Nur fuer die Naht** (2026-09-03): Der Weg von der Tuer bis zum
 # Rechenwerk beruehrt fuenf Kisten, und keine sieht mehr als ihren
