@@ -3649,6 +3649,8 @@ fn main() {
             wallet_waehlen,
             wallet_verlauf,
             einstieg_setzen,
+            netz_setzen,
+            stimmsatzzeile,
             rechenwerke_auffrischen,
             mining_stand,
             mining_ablegen,
@@ -4294,6 +4296,9 @@ struct Walletlage {
     /// Wohin der Knoten beitritt, wie eingestellt (roh) und aufgeloest.
     einstieg_angabe: String,
     einstieg: Option<String>,
+    /// Das gewaehlte Netz und alle, die der Klient kennt (`myl mining netz`).
+    netz: String,
+    netze: Vec<String>,
     ordner: String,
 }
 
@@ -4323,6 +4328,8 @@ async fn wallet_lage() -> Result<Walletlage, String> {
         mining_eingetragen: lauf.as_ref().is_some_and(|(_, _, e)| *e),
         einstieg_angabe: e.mining.einstieg.unwrap_or_default(),
         einstieg: mining::einstieg(),
+        netz: mining::gewaehltes_netz().0.to_string(),
+        netze: mining::NETZE.iter().map(|(n, _)| n.to_string()).collect(),
         ordner: wallet::ordner().display().to_string(),
     })
 }
@@ -4429,6 +4436,24 @@ async fn wallet_verlauf(name: String) -> Result<Vec<String>, String> {
 #[tauri::command]
 async fn einstieg_setzen(angabe: String) -> Result<Option<String>, String> {
     myl_client::mining::einstieg_setzen(&angabe)
+}
+
+/// ⚑ **Setzt das Netz** (`mining.netz`, 2026-11-19), dieselbe Stelle wie
+/// `myl mining netz`. Bis dahin liess sich das Testnetz nur auf der
+/// Kommandozeile waehlen.
+#[tauri::command]
+async fn netz_setzen(name: String) -> Result<String, String> {
+    myl_client::mining::netz_setzen(&name)?;
+    Ok(myl_client::mining::gewaehltes_netz().0.to_string())
+}
+
+/// ⚑ **Die eigene Zeile fuer den Startsatz** (2026-11-19), wie
+/// `myl mining stimmsatzzeile`: aus dem Konsensschluessel, mit dem das
+/// Mining spaeter unterschreibt. Startet `myl-node` einmal mit
+/// `--stimmsatzzeile` (ueber `myl_client::mining::stimmsatzzeile`).
+#[tauri::command]
+async fn stimmsatzzeile() -> Result<String, String> {
+    myl_client::mining::stimmsatzzeile(100)
 }
 
 /// Was vor dem Knopf steht: der Plan und ob der Platz reicht.

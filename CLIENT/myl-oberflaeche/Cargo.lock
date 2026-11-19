@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.142.3"
+version = "0.143.0"
 dependencies = [
  "aes",
  "borsh",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.93.0"
+version = "0.94.0"
 dependencies = [
  "myl-client",
  "myl-local-agent",
@@ -2439,7 +2439,7 @@ dependencies = [
 
 [[package]]
 name = "myl-store"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2450,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.75.0"
+version = "0.75.1"
 dependencies = [
  "blst",
  "borsh",

@@ -16,14 +16,15 @@ liegen im Klon.
 Aufgerufen wird aus der Wurzel des Klons. Jedes Skript findet den Klon
 über seinen eigenen Ort, ein anderes Verzeichnis geht also auch.
 
-**Danach sind fünf Programme da:**
+**Danach sind sechs Programme da:**
 
 | Programm | wofür |
 |---|---|
 | `myelith` | der Agent in der Konsole: in ein Verzeichnis gehen, `myelith` tippen |
-| `myl` | das Bedieninstrument: `myl frage`, `myl agent`, `myl einstellungen`, `myl sinne` |
+| `myl` | das Bedieninstrument: `myl frage`, `myl agent`, `myl einstellungen`, `myl sinne`, `myl mining` |
 | `myl-oberflaeche` | das Fenster, unter macOS zusätzlich `Myelith.app` |
 | `myl-node` | der Knoten |
+| `myl-shard` | der Shard: rechnet für den Knoten seinen Teil des Netzmodells, in einem eigenen Prozess |
 | `myl-test` | der Testclient für Hardware- und Determinismusläufe |
 
 Welche Programme das sind, sagen die Kisten selbst (`ausliefern` unter
@@ -160,6 +161,7 @@ Informationen*, dann *Trotzdem ausführen*.
 | **Das Linux-Skript** | ✅ am 2026-10-21 aus einer entpackten Sicherheitskopie in einem frischen Debian 12 ohne Netz: ohne Fensterpakete vier Programme in 65 s, mit ihnen alle fünf in 103 s samt Menüeintrag. Andere Distributionen: nur die Paketnamen, nicht gefahren |
 | **Das Nix-Skript ohne Netz** | ✅ am 2026-10-21 der Werkzeugvorrat in einem frischen `nixos/nix`-Behälter ohne Netz eingespielt, `nix develop --offline` mit Rust 1.98, WebKitGTK 2.52, Python 3.12 (x86_64); der Bau aus der Kopie steht im Changelog. Auf einem echten NixOS noch nicht |
 | **Das Nix-Skript** | ⚠️ eingebaut und in Teilen ausgeführt, **auf einer echten NixOS-Anlage noch nicht gelaufen**. Die Paketnamen in `flake.nix` stammen aus der Dokumentation von Tauri und nixpkgs |
+| **Das Aktualisieren** | ✅ am 2026-11-18 mit dem echten Skript von GitHub, je ein frischer Klon auf einem Stand mit Schlüsselliste: unter macOS (eigenes `HOME`) und in einem Debian 12 (arm64, Behälter, mit den Fensterpaketen) „Signatur des neuen Stands: gueltig“, vorwärts auf den signierten Stand, alle sechs Programme samt Fenster gebaut und gelegt; ein unsignierter Folgestand abgewiesen (macOS). Unter Windows noch nicht von Hand |
 | **Das Windows-Skript** | ⚠️ **noch nicht auf Windows gelaufen**. Bis zum 2026-09-29 nannte es zwei Ordner, die es seit einem Umzug nicht mehr gab; eine Probe prüft seitdem auf jedem System, dass jeder Pfad in den drei Skripten im Klon liegt |
 
 ⚠️ **Die CI prüft den Bau, nicht die Skripte.** Sie packt den Vorrat mit

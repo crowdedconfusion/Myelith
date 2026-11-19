@@ -1,203 +1,236 @@
-# NODE — der Myelith-Knoten
+# NODE: der Myelith-Knoten (`myl-node`)
 
-> **Version:** 0.133.2
+> **Version:** 0.135.0
 > **Datum:** 2026-11-18
-> **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
-> Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
-> 1. September **schließt der Knoten die Epoche selbst ab**.
-> **423 Tests grün** (gezählt am 2026-10-28).
->
-> ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
-> Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
-> trug, solange eine Epoche ein Block war. Jede Frist „je Epoche"
-> bedeutete damit in Wahrheit „je Block".
+> **Status:** Läuft als Probekette und in Proben über mehrere Rechner.
+> Das geschlossene Testnetz `test-int4` ist im Knoten angelegt; es beginnt,
+> sobald der Startsatz seiner Validatoren im Release steht.
 
-## Aufgabe
+Der Knoten ist das Programm, mit dem ein Rechner am Myelith-Netz
+teilnimmt. Er hält die Verbindung zu den anderen Knoten, führt die Kette
+(Blöcke, Konten, Einsätze), stimmt als Validator über neue Blöcke ab und
+startet als Miner den Shard, der seinen Teil des Netzmodells rechnet.
+Gerechnet wird in einem eigenen Prozess (`myl-shard`), damit ein Absturz
+beim Rechnen den Konsens nicht anhält.
 
-Die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes
-Programm macht: Identität, Konfiguration, Netzanbindung über `myl-net`
-(L0), Nutzlastprüfung gegen `myl-consensus` (L1) und ein
-Betriebsprotokoll für die nachträgliche Fehlersuche.
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun: `myl mining` und der Reiter **Knoten** im Fenster starten und beenden den Knoten. |
+| **Betreiber** | Der Abschnitt [Betreiben](#betreiben): Netze, Rollen, Einrichten, Startsatz, Einstieg, Ports, Rückmeldung. |
+| **Entwicklung** | [So arbeitet der Knoten](#so-arbeitet-der-knoten), [Das Betriebsprotokoll](#das-betriebsprotokoll), [Struktur](#struktur). `myl-node --hilfe` nennt jeden Schalter. |
 
-## ⚑ Der Probelauf ist nicht das Testnetz
+## Betreiben
 
-Steht hier oben, weil eine Verwechslung teuer wäre. Was der Knoten heute
-fährt, ist eine **Trockenübung des Codes**: Der Zustand ist Wegwerfware,
-jeder Start beginnt bei null, die MYL sind Spielgeld, und der Startwert
-der Probekette lautet im Klartext `MYELITH-PROBELAUF-KEIN-TESTNETZ`.
-**Ein Probeblock kann deshalb niemals an eine echte Kette anschließen**,
+### Die Netze
+
+| Netz | `--netz` | Modell | Was die MYL dort gelten |
+|---|---|---|---|
+| Probekette | `probe` (Vorgabe) | Sparrow 0,6B int8, nur in Testbauten | nichts: jeder Start beginnt neu, der Startwert lautet `MYELITH-PROBELAUF-KEIN-TESTNETZ` |
+| Testnetz | `test-int4` | Raven 35B A3B int4, rund 19 GB | nichts: Das Testnetz kann mit einem Release neu beginnen |
+
+⛔️ **MYL aus der Probekette und aus dem geschlossenen Testnetz zählen
+nicht für die Erstverteilung** (Whitepaper Kap. 5); erst das offene
+Testnetz tut das. Ein Probeblock kann nie an eine echte Kette anschließen,
 und ein Test hält das fest.
 
-Wann das Testnetz beginnt, entscheidet das Projekt und nicht der
-Umstand, dass dieser Code läuft.
+Im Testnetz dauert ein Slot 2 Sekunden, eine Epoche 1 800 Blöcke (eine
+Stunde), ein Prüfpunkt kommt alle 150 Blöcke. Die Sperrfrist beträgt 7 Tage,
+die Vertrauensfrist rund 4,7 Tage; ein Validator, der einen Tag (24
+Epochen) nicht mitwirkt, ruht.
 
-## Warum es diese Komponente gibt
+### Rollen
 
-Bis zum 2026-08-24 hatte das Projekt dreizehn Komponenten, rund 1500
-Tests und **kein Programm, das einen Myelith-Knoten startet**. `myl-net`
-hatte im ganzen Repositorium **keinen einzigen Abnehmer**: Der Testclient
-hängt an neun Crates, an der Netzschicht nicht.
+| Rolle | Was läuft | Was sie tut |
+|---|---|---|
+| **Miner** | `myl mining`: Knoten und Shard | rechnet seinen Teil des Netzmodells und reicht Arbeit ein |
+| **Validator** | dieselben Programme, der Konsensschlüssel steht im Startsatz | stimmt über Blöcke ab und erzeugt sie in den Slots, für die er gezogen ist |
+| **Einstiegsknoten** | `myl-node` ohne Modell, lange laufend, öffentlich erreichbar | öffnet Neuen den Weg ins verteilte Adressbuch; seine Adresse steht in der Einstiegsliste des Release. Sonderrechte hat er keine |
 
-Das ist keine Ordnungsfrage, sondern die Ursache einer ganzen Fundklasse.
-**Fund 52** (der Vergütungspfad war unbenutzbar), **Fund 55** (der
-dokumentierte Prüf-Einstieg war über die Laufzeit nicht erreichbar),
-**Fund 56** (ein Relais ohne eigene Adresse antwortet ins Leere) und
-**Fund 57** (die Formprüfung für Blöcke filtert kaum) haben eines
-gemeinsam: Sie wurden sichtbar, als jemand die Teile zusammensteckte.
-Eine Naht, die niemand belastet, hält alles aus.
+**Hardware.** Ein Miner braucht für das Netzmodell rund 19 GB Platte, dazu
+die Kette (höchstens 2 GiB) und je nach Shard einen Teil des Modells im
+Arbeitsspeicher. Eine Karte von NVIDIA oder AMD rechnet mit, wenn sie ihre
+Selbstprüfung gegen die CPU besteht. Für einen Einstiegsknoten genügen vier
+Kerne x86_64, 16 GiB und eine NVMe. Der Knoten läuft unter macOS und Linux;
+unter Windows startet `myl mining` ihn noch nicht.
 
-## Was der Knoten heute ist, und was nicht
+### Einrichten und aktualisieren
 
-**Ist:** ein Netzknoten. Er findet Gegenstellen über Bootstrap und
-Kademlia, verbreitet und empfängt die sechs Protokoll-Topics, misst
-Latenzen, hält seine Verbindungsgrenzen ein, arbeitet hinter NAT über
-Relais, und schreibt alles mit.
-
-**Ist seit dem 2026-08-24 auch:** ein Blockproduzent. `src/kette.rs`
-bringt Kettenzustand, Mempool und Rundentakt: Der Erzeuger baut aus dem
-Mempool Blöcke, verkettet sie über den Vorgänger-Hash, wendet die
-Transaktionen auf seinen `LedgerState` an und schreibt die entstandene
-**Zustandswurzel** in den Block. Alle anderen rechnen nach und
-vergleichen.
-
-**Was das misst:** nicht „einigen sich die Knoten", sondern die Frage
-davor: **Kommen zwei Maschinen aus denselben Blöcken zum selben
-Zustand?** Das ist die Protokollhälfte derselben Frage, die der
-Determinismus-Test für die Inferenz stellt. Weicht eine Wurzel ab, ist
-irgendwo im Ledger-Pfad etwas nicht deterministisch, und das bricht den
-Konsens genauso wie ein abweichendes Inferenzergebnis.
-
-**Ist seit dem 2026-08-26 auch: BFT.** Die Knoten stimmen ab. Propose,
-Vote und Commit laufen über ein eigenes Gossip-Topic
-(`/myelith/consensus/1`), der Validator-Satz kommt aus einer
-**Genesis-Datei**, und jeder Knoten signiert mit einem BLS-Schlüssel, der
-von seiner Netzidentität getrennt ist.
-
-**Gemessen, nicht behauptet:** Fünf eigenständige Betriebssystemprozesse
-über libp2p/QUIC, alle fünf commiteten denselben Block, mit vollem
-Stimmgewicht 900 000 000 von 900 000 000 gegen eine Schwelle von
-600 000 001.
-
-**Das Stimmgewicht ist ungleich, und das ist Absicht.** Die
-Genesis-Verteilung des Probenetzes (250/230/200/120/100 MYL) ist so
-gebaut, dass drei von fünf Köpfen das Quorum je nach Auswahl verfehlen
-(420), es **exakt** treffen (600, reicht nicht) oder erreichen (680).
-Bei gleichen Gewichten wären Kopfzählung und Gewichtszählung numerisch
-dasselbe, und Fund A3 (der Zustandsautomat zählte Nachrichten statt
-Gewicht) liefe grün durch.
-
-**Ist seit dem 26. August auch: ausfallsicher gegen einen ausgefallenen
-Leader.** Läuft die Frist ab, wechselt der Knoten die Runde, und der
-nächste Leader schlägt vor. Wer nach einem Stimmen-Quorum gesperrt ist,
-schlägt den gesperrten Block vor und bringt sein **Polka-Zertifikat**
-mit, damit die anderen ihre Sperre gefahrlos lösen können.
-
-**Gemessen an fünf echten Prozessen:** Der Leader von Runde 0 mit
-`kill -9` beendet, die übrigen vier wechseln auf Runde 1 und commiten
-denselben Block.
-
-**Die Frist ist fest und wächst je Runde**, sie wird **nicht** aus
-gemessenen Latenzen abgeleitet. Die Latenzwerte kommen aus Attesten, und
-ein Timeout, der von dieser Fläche liest, gäbe einem Angreifer einen
-Hebel auf die Liveness (Audit A10, A12).
-
-⚑ **Wer allein vorauseilt, kommt seit dem 29. August zurück** (Fund 67).
-Ein Knoten, dessen Frist ablief, bevor die anderen ihre Runde begonnen
-hatten, stand danach dauerhaft vor dem Netz: Er verwarf jede Nachricht
-aus einer fremden Runde, also gerade die, die belegten, dass er der
-Irrende war. Die Safety hielt, seine eigene Liveness nicht.
-
-Der Rückweg ist ein **Commit-Zertifikat**, der Beleg eines Quorums, und
-er gilt ohne Rücksicht darauf, in welcher Runde der Empfänger steht.
-Angefordert wird er nicht: Wer außer Takt ist, gibt sich durch seine
-eigenen Nachrichten zu erkennen, und die Gegenseite antwortet darauf mit
-dem Beleg, jedem genau einmal. Im Normalbetrieb kostet das nichts.
-
-**In der Praxis weiterhin sinnvoll:** Knoten dicht beieinander starten
-oder `--bft-frist` über den Startversatz legen. Der Ausgleich holt einen
-Knoten zurück, er ersetzt nicht die Runde, die er verpasst hat.
-
-**Ist nicht: Blockinhalt im Konsens.** Der Propose trägt einen
-Block-*Hash*, nicht den Block. Was er bezeichnet, entscheidet die Kette,
-und deren Persistenz ist ein eigener offener Punkt.
-
-**Ist seit dem 26. August auch: neustartfähig.** Mit `--kette <datei>`
-führt der Knoten ein anhängendes Blockprotokoll. Beim Start spielt er es
-nach und **rechnet dabei jede Zustandswurzel neu**, durch dieselbe
-`Kette::uebernimm`, durch die auch Gossip-Blöcke gehen.
-
-**Gespeichert werden nur die Blöcke.** Höhe, letzter Hash und Zustand
-folgen daraus. Ein abgeleiteter Wert, den man zusätzlich ablegt, ist eine
-zweite Wahrheit, und sobald die beiden auseinanderlaufen, glaubt der
-Knoten der falschen.
-
-**Der Mempool überlebt bewusst nicht.** Wartende Transaktionen sind
-unbestätigt und kommen über den Gossip wieder; sie aufzuheben hieße, nach
-einem Tag Stillstand alte Transaktionen einzuspeisen, deren Absender
-längst andere geschickt hat.
-
-**Belegt an zwei laufenden Knoten:** Der Erzeuger wurde abgeräumt und aus
-seiner Datei neu aufgebaut, während der zweite durchlief. Beide standen
-danach bei derselben Zustandswurzel. **Der Vergleich gegen den
-durchlaufenden Knoten ist der Kern**; ein Vergleich gegen die eigene
-letzte Zustandsaufnahme wäre wertlos, weil sie Sekunden und Blöcke vor
-dem Abbruch liegt.
-
-⚑ **Ein Block kennt seine eigene Höhe nicht.** `Block` trägt `epoch`,
-`prev_block_hash`, `timestamp_ms` und `state_root`, aber kein Höhenfeld.
-Die Kette hängt allein am Vorgänger-Hash, jeder Knoten führt die Höhe
-selbst, und wer einen Block verpasst, **kann die Lücke nicht benennen**:
-Er merkt nur, dass der nächste nicht anschließt. Das muss man wissen,
-bevor man Synchronisierung baut.
-
-## Benutzung
-
-```
-myl-node --name alpha --port 4150
-myl-node --name beta  --port 4151 --bootstrap /ip4/…/tcp/4150/p2p/12D3Koo…
-myl-node --name relais --rolle relais --oeffentlich /ip4/203.0.113.5/tcp/4150
+```sh
+git clone https://github.com/crowdedconfusion/Myelith.git && cd Myelith
+sh SYSTEM/install/installieren-macos.sh   # oder installieren-linux.sh, installieren-nixos.sh
 ```
 
-**Mitstimmen bei BFT-Runden:**
+Das Skript baut aus dem Quelltext, ohne Netz, und legt die Programme nach
+`~/.local/bin`; Einzelheiten je System in `SYSTEM/install/README.md`.
+Aktualisiert wird mit `--aktualisieren` oder im Fenster unter
+Einstellungen. Eingespielt wird nur ein Stand, den der Freigabeschlüssel
+`myelith-freigabe` signiert hat (Fingerabdruck
+`SHA256:H4yDjpfrRohpmmuhWFHMI5JXBt2bOb3KeEJ8JWNQ1Mw`, steht in
+`SYSTEM/install/freigabeschluessel`); sonst spielt das Skript nichts ein und
+sagt es.
 
+### Das Netzmodell
+
+Der Shard sucht das Artefakt `raven-35b-a3b-int4` in den Modellorten;
+fehlt es, sagt `myl mining` das. Im geschlossenen Testnetz kommt es als
+Kopie vom Projekt. Wer lieber selbst baut: Gebaut wird es aus den Gewichten von
+Hugging Face, im Fenster unter Einstellungen, Modelle (rund 67 GB Download
+und mehrere Stunden Bau). Ein Artefakt darf auch von einem anderen
+Betreiber kopiert werden: **Im Netz rechnet nur ein Artefakt, dessen
+Abdruck auf der Netzliste steht**, und der Abdruck deckt über die Hashes in
+`theta_v.json` das ganze Artefakt. Eine Kopie mit anderem Inhalt lädt der
+Shard für das Netz nicht.
+
+### Als Miner
+
+```sh
+myl wallet neu <name>              # 12 Wörter: auf Papier, nicht in eine Datei
+myl mining netz test-int4
+myl mining start --kerne <n>       # Karten an oder aus: im Fenster, Reiter Knoten
+myl mining                         # Stand
+myl mining stop
 ```
-# Einmal je Betreiber: die eigene Zeile für die Genesis-Datei erzeugen
-myl-node --name alpha --genesiszeile 250000000
 
-# Die Zeilen einsammeln, Datei bauen, dann starten
-myl-node --name alpha --port 4150 --genesis genesis.txt
+Ohne eigene Angabe nimmt der Knoten die Einstiegsliste des Release. Eine
+eigene Adresse setzt `myl mining einstieg <multiadresse>`, zurück geht es
+mit `myl mining einstieg aus`. Der Shard misst sich beim Start ein und
+rechnet auf einer Karte erst ab der Stapelgröße, ab der sie schneller ist
+als die CPU; im Protokoll steht dazu die Zeile `Einmessung`.
 
-# Über ein WAN mit ungleichen Startzeiten: die Frist über den
-# Startversatz legen, damit niemand die erste Runde verpasst (Fund 67)
-myl-node --name alpha --port 4150 --genesis genesis.txt --bft-frist 30000
+### Der Startsatz
+
+Der Startsatz nennt die Validatoren beim Beginn einer Kette, je mit
+Konsensschlüssel, Besitznachweis und Gewicht. Er kommt mit dem signierten
+Release: Ohne `--stimmsatz` legt der Knoten ihn als `<netz>.stimmsatz`
+neben seine Schlüsseldatei und nimmt ihn. Eine Datei auf der
+Kommandozeile geht vor.
+
+Wer Validator werden soll, erzeugt einmal seine Zeile und schickt sie dem
+Projekt:
+
+```sh
+myl mining stimmsatzzeile           # für einen Knoten über myl mining
+myl-node --konsensschluessel <datei> --stimmsatzzeile 100   # für einen Knoten von Hand
 ```
 
-Die Genesis-Datei nennt den Netznamen und je eine Zeile
-`validator <pubkey-hex> <pop-hex> <stake>`. Die **Kennung wird aus dem
-Schlüssel abgeleitet**, nicht aufgeschrieben: Zwei Quellen für dieselbe
-Wahrheit widersprechen sich irgendwann. Der Hash der Datei liegt auf dem
-**Inhalt**, nicht auf den Bytes, also ändert eine umsortierte Zeile
-nichts.
+⚑ **Die Zeile muss aus dem Schlüssel kommen, mit dem der Knoten später
+unterschreibt.** `myl mining stimmsatzzeile` nimmt deshalb denselben
+Schlüssel wie `myl mining` (`konsens.key` im Datenordner des Minings).
 
-⚑ **Mindestens vier Validatoren.** Die Datei lehnt jeden Satz ab, in dem
-einer ein Drittel oder mehr hält, denn ein solches Netz hat keine
-BFT-Safety. Daraus folgt eine Mindestzahl: Drei Werte unter je einem
-Drittel ergeben nie ihre eigene Summe.
+- Ein Satz braucht mindestens vier Validatoren, und keiner darf ein Drittel
+  des Gewichts oder mehr halten; sonst hat das Netz keine BFT-Sicherheit,
+  und der Knoten startet nicht.
+- Die Zeile `start` ist kein Startzeitpunkt der Kette, sondern der Bezug
+  für die Vertrauensfrist: Ein Knoten ohne eigenen Stand beginnt nur ohne
+  Anker, solange das Netz jünger ist als diese Frist.
+- ⚠️ **Der Konsensschlüssel haftet.** Wer mit ihm zwei Blöcke für dieselbe
+  Stelle unterschreibt, wird bestraft: nie denselben Schlüssel auf zwei
+  Maschinen. Wer ihn verliert, verliert seinen Platz im Satz.
+- Steht für ein Netz noch kein Satz im Release, endet der Start mit „dieses
+  Release bringt für das Netz keinen Startsatz mit“.
 
-`--hilfe` nennt alle Angaben. Der Knoten horcht auf **TCP und QUIC**:
-QUIC ist der Pfad, auf dem Lochstanzen zuverlässig ist, TCP der, der
-auch durch Firewalls kommt, die UDP verwerfen.
+### Ein Einstiegsknoten
 
-**Die Schlüsseldatei bestimmt die Identität.** Bleibt sie erhalten,
-behält der Knoten seine Peer-Id über Neustarts, und nur dann lassen sich
-die Protokolle mehrerer Läufe zusammenführen.
+```sh
+myl-node --netz test-int4 --konsensschluessel <datei> --erzeuger \
+  --port 4150 --oeffentlich /dns4/<name>/tcp/4150 --zeugen-bereithalten \
+  --kette ~/myelith/kette.dat --protokolle ~/myelith/logs
+```
 
-**Wo sie liegt:** Über den Testclient in `TESTCLIENT/Schluessel/`, das
-seinen Inhalt selbst von der Versionsverwaltung ausschließt. Auf der
-Befehlszeile dort, wo `--schluessel` hinzeigt, sonst im aktuellen
-Verzeichnis; `*.key` steht deshalb auch in der Wurzel-`.gitignore`. Die
-Datei bekommt auf Unix die Rechte 0600. **Wer den Schlüssel hat, kann im
-Netz als dieser Knoten auftreten**, das ist keine Ordnungsfrage.
+- `--erzeuger` nur, wenn der Schlüssel dieses Knotens im Startsatz steht;
+  sonst bricht der Start ab. Ein Mitglied, das als Miner läuft, braucht
+  den Schalter nicht.
+- Port 4150 für TCP und für QUIC (UDP) in der Firewall öffnen; hinter einem
+  Router beide an den Rechner weiterleiten, denn der Knoten kennt kein
+  UPnP. Wechselt der Anschluss seine Adresse, braucht der Name einen
+  dynamischen DNS-Dienst.
+- Die eigene Multiadresse samt `/p2p/`-Anteil steht nach dem Start im
+  Protokoll; sie geht in die Einstiegsliste des nächsten Release. Eine
+  Adresse mit Namen statt Zahl übersteht einen Umzug ohne neues Release.
+  Ein gefälschter DNS-Eintrag kann keinen fremden Knoten unterschieben,
+  denn die Adresse trägt die Kennung des Knotens.
+
+### Nach dem Start
+
+- **Protokolle:** unter `--protokolle` (Vorgabe `logs`), höchstens 128 MiB
+  über alle Starts (`--protokoll-mb`). Über `myl mining` liegen sie unter
+  `<ort>/knoten/logs`, die Ausgabe des Starts in `knoten.log` im
+  Datenordner des Minings.
+- **Kette:** `kette.dat`, höchstens 2 GiB (`--kette-mb`); darüber wird an
+  einer Langzeitgrenze verdichtet.
+- **Nach langer Pause:** Ist der letzte bestätigte Prüfpunkt älter als die
+  Vertrauensfrist, hält der Knoten an und braucht einen jüngeren Anker
+  (`--anker` oder `--abzug`). Jeder volle Knoten nennt seinen am
+  Beobachtungsendpunkt unter `/anker` und in der Protokollzeile
+  `wechselbeleg`; besser bei mehreren
+  unabhängigen vergleichen.
+- **Neue Kette:** Kündigt `VERSION.md` eine neue Kette an, `kette.dat`
+  wegräumen und neu starten.
+- **Nach einem Neustart** erzeugt ein Validator erst, wenn er einen Block
+  des Netzes übernommen hat (oder zehn Sekunden lang keiner kam); im
+  Protokoll stehen dazu `erzeugung_wartet` und `erzeugung_frei`.
+- **Finalität:** Ein Prüfpunkt kommt alle 150 Blöcke und gilt als
+  bestätigt, sobald der nächste gerechtfertigt ist; ein Block ist also
+  nach fünf bis zehn Minuten endgültig.
+- **Beobachtung:** `127.0.0.1:4151` mit `/metriken` (Prometheus),
+  `/gesundheit` und `/bereit`. ⚠️ Ohne Zugangskontrolle: nicht über die
+  Rückschleife hinaus binden, ohne etwas davorzustellen.
+
+### Was zurückkommen soll
+
+- Nach dem ersten Tag: ob es läuft, die Ausgabe von `myl mining`,
+  Auffälliges im Protokoll.
+- Bei jedem Absturz: die letzte Protokolldatei und die Ausgabe von
+  `myl mining`.
+- Einmal die Hardware: Prozessor, Speicher, Karte samt Treiber.
+
+## So arbeitet der Knoten
+
+**Netz.** Der Knoten findet Gegenstellen über die Einstiegsliste,
+Kademlia und im lokalen Netz über mDNS, verbreitet und empfängt die
+Protokoll-Topics über Gossip, misst Latenzen, hält seine
+Verbindungsgrenzen ein und arbeitet hinter NAT über Relais. Er horcht auf
+**TCP und QUIC**: QUIC ist der Weg, auf dem Lochstanzen zuverlässig
+gelingt, TCP der, der auch durch Firewalls kommt, die UDP verwerfen.
+
+**Kette.** Jeder Block trägt die **Zustandswurzel**, die sein Erzeuger
+nach dem Anwenden der Transaktionen errechnet hat; alle anderen rechnen
+nach und vergleichen. Weicht eine Wurzel ab, ist irgendwo im Ledger etwas
+nicht deterministisch, und das bricht den Konsens genauso wie ein
+abweichendes Inferenzergebnis. Wer einen Block erzeugen darf, zieht ein
+Plan je Slot aus dem Satz der Epoche; jeder Block braucht die Unterschrift
+genau des gezogenen Mitglieds.
+
+**Abstimmung.** Propose, Vote und Commit laufen über ein eigenes Topic,
+gezählt wird **Gewicht, nicht Köpfe**, und jeder Validator signiert mit
+einem BLS-Schlüssel, der von seiner Netzidentität getrennt ist. Ein Leck
+darf nicht beide Ebenen zugleich treffen. Fällt ein Leader aus, wechselt
+der Knoten nach Ablauf der Frist die Runde; wer nach einem Stimmenquorum
+gesperrt ist, schlägt den gesperrten Block vor und bringt das Zertifikat
+mit, das die Sperre der anderen löst. **Die Frist ist fest und wächst je
+Runde**; sie wird nicht aus gemessenen Latenzen abgeleitet, denn die
+kommen aus Attesten, und ein Angreifer bekäme sonst einen Hebel auf die
+Lebendigkeit (Audit A10, A12). Ein Knoten, der allein vorausgeeilt ist, kommt über ein
+Commit-Zertifikat zurück, gleich in welcher Runde er steht.
+
+**Neustart.** Gespeichert werden nur die Blöcke (`--kette`). Beim Start
+spielt der Knoten sie nach und **rechnet jede Zustandswurzel neu**, durch
+dieselbe Prüfung, durch die auch Blöcke aus dem Netz gehen; Höhe, Zustand
+und letzter Hash folgen daraus. Ein abgeleiteter Wert, den man zusätzlich
+ablegte, wäre eine zweite Wahrheit. Der Mempool überlebt bewusst nicht:
+Wartende Transaktionen kommen über Gossip wieder.
+
+**Das Tor vor dem Netz.** Vor dem ersten Kontakt fährt der Knoten die
+Konformitätsvektoren der Rechenoperationen. Rechnet seine Maschine anders,
+startet er nicht: Ein solcher Knoten lieferte abweichende Segmente, würde
+dafür bestraft und verschmutzte bis dahin den Auftragsstrom.
+`--ohne-konformitaet` schaltet das ab, sichtbar in Kommandozeile und
+Protokoll.
+
+**Die Schlüsseldatei ist die Identität.** Bleibt `--schluessel` erhalten,
+behält der Knoten seine Peer-ID über Neustarts. Die Datei bekommt unter
+Unix die Rechte 0600; `*.key` steht in der `.gitignore`. **Wer den
+Schlüssel hat, kann im Netz als dieser Knoten auftreten.**
 
 ## Das Betriebsprotokoll
 
@@ -212,7 +245,7 @@ Aussage: Entweder ist die Datei beschädigt, oder der Knoten ist
 gestorben. Ohne sie ließe sich beides nicht von „es ist nichts passiert“
 unterscheiden.
 
-Die Arten im Protokoll: `start`, `horcht`, `horchadresse`, `bootstrap`,
+Die häufigsten Arten im Protokoll: `start`, `horcht`, `horchadresse`, `bootstrap`,
 `relais_reservierung`, `eigene_adresse`, `verbunden`, `getrennt`,
 `abgewiesen`, `lochstanzen`, `erreichbarkeit`, `gesendet`, `empfangen`,
 `verworfen`, **`block_erzeugt`**, **`block_uebernommen`**,
@@ -240,44 +273,164 @@ werden Aussagen über Verbindungen, und die trägt jede Seite selbst bei.
 
 ```
 NODE/
-├── README/                  diese Übersicht
+├── README/README.md        diese Übersicht samt Changelog
 └── myl-node/
-    └── src/
-        ├── lib.rs            Crate-Wurzel
-        ├── konfig.rs         Konfiguration, prüft sich beim Start selbst
-        ├── protokoll.rs      Betriebsprotokoll (JSONL)
-        ├── validator.rs      Nutzlastprüfung Blöcke/Transaktionen/
-        │                     Konsensnachrichten (L1)
-        ├── validatorsatz.rs  wer darf attestieren: Kennung → Schlüssel,
-        │                     Urteil mit Grund (Audit A10)
-        ├── genesis.rs        Validator-Satz zu Genesis: Datei, Hash auf
-        │                     dem Inhalt, Besitznachweis, Ein-Drittel-
-        │                     Schranke (23 Tests)
-        ├── schluessel.rs     BLS-Konsensschlüssel, getrennt von der
-        │                     Netzidentität; Dateirechte 0600 (12 Tests)
-        ├── konsens.rs        eine BFT-Runde aus Sicht eines Knotens:
-        │                     wann er selbst etwas sagen muss, samt
-        │                     Rundenwechsel und Zertifikat (22 Tests)
-        ├── nachschub.rs      Blocknachforderung: Bereich, Deckelung,
-        │                     Nachlieferung
-        ├── speicher.rs       Blockprotokoll auf der Platte: anhängend,
-        │                     abbruchfest, an die eigene Kette gebunden
-        │                     (11 Tests)
-        ├── knoten.rs         Start, Ereignisschleife, Zustandsaufnahme
-        └── main.rs           Kommandozeile
-    └── tests/
-        ├── zwei_knoten.rs    zwei Knoten, echte Sockets, Protokoll
-        │                     zurückgelesen (5 Tests)
-        ├── bft_ueber_das_netz.rs
-        │                     fünf Knoten, eine Runde, ein Block;
-        │                     Vorlauf-Puffer, Rundenwechsel und
-        │                     Protokollformat (6 Tests)
-        └── neustart.rs       Wiederanlauf aus der Kettendatei, Abbruch
-                              mitten im Schreiben, Vergleich gegen einen
-                              durchlaufenden Knoten (6 Tests)
+    ├── src/
+    │   ├── main.rs          Kommandozeile (`myl-node --hilfe`)
+    │   ├── konfig.rs        Konfiguration, prüft sich beim Start selbst
+    │   ├── knoten.rs        Start, Ereignisschleife, Zustandsaufnahme
+    │   ├── netz.rs          die Netze: Startwert, Modell, Einstieg, Startsatz, Blockzeit
+    │   ├── kette.rs         Kettenzustand, Mempool, Erzeugerplan, Prüfpunkte
+    │   ├── speicher.rs      die Kette auf der Platte: anhängend, abbruchfest
+    │   ├── stimmsatzdatei.rs  der Startsatz: Datei, Hash auf dem Inhalt, Ein-Drittel-Schranke
+    │   ├── schluessel.rs    Konsensschlüssel, getrennt von der Netzidentität
+    │   ├── konsens.rs       eine BFT-Runde samt Rundenwechsel und Zertifikat
+    │   ├── stimmbuch.rs, wechsel.rs, belegfolge.rs
+    │   │                    Stimmen je Prüfpunkt, Wechselbelege für Neue
+    │   ├── abzug.rs, nachschub.rs, voraus.rs, gehoert.rs
+    │   │                    Einstieg bei einer Epochengrenze, Aufholen, zu früh gekommene Blöcke
+    │   ├── archiv*.rs, teilablage.rs, zeugenablage.rs
+    │   │                    Geschichte mit Beweisen, kalt aus- und eingeführt; Zeugen
+    │   ├── konformitaetstor.rs  das Tor vor dem Netz
+    │   ├── validator.rs, validatorsatz.rs  Nutzlastprüfung, wer attestieren darf
+    │   ├── shardfuehrung.rs, ortsklient.rs, rechenweg.rs, frist.rs, stichprobe.rs
+    │   │                    der Shard als eigener Prozess, Aufträge, Fristen, Stichprobe
+    │   ├── tuer.rs, drossel.rs, relais.rs, saatdienst.rs, dateidienst.rs
+    │   │                    eigenes Gateway, Drossel, Relaisleitung, Saat, Dateidienst
+    │   ├── konsensrollen.rs, probe.rs  Prüfrollen gegen den Konsens, Probelauf
+    │   ├── beobachtung.rs   /metriken, /gesundheit, /bereit, /anker
+    │   └── protokoll.rs     das Betriebsprotokoll (JSONL)
+    └── tests/               Läufe mit echten Sockets: zwei Knoten, BFT über das
+                             Netz, Neustart, Nachholen, Abzug, Verdichtung,
+                             Auszahlung und weitere
 ```
 
 ## Changelog
+
+### v0.135.0 (2026-11-19): Erst aufholen, dann erzeugen; ohne Mesh weiter warten; Atteste ohne Strafe
+
+- ⛔️ **Befund der Generalprobe behoben:** Ein Validator, nach zwei Minuten
+  Pause neu gestartet, erzeugte 1,4 s nach dem ersten Kontakt in seinem
+  gezogenen Slot Block 151 auf seinem alten Kopf, während das Netz bei 198
+  stand; er hatte noch keinen fremden Block gehört. Alle wiesen ihn ab, der
+  Slot ging verloren. Dieselbe Klasse wie der Startwettlauf der Probekette
+  (0.125.0), dort über das Lernen des Erzeugers geschlossen.
+- ⚑ **`Knoten::aufholen_steht_aus`** (Regel in `Aufholen::urteil`): Auf
+  einem Netz mit Startsatz erzeugt ein Knoten nach dem Start erst, wenn
+  seine Kette seit dem Start gewachsen ist (das kann nur ein fremder Block
+  gewesen sein) oder seit dem ersten Kontakt `AUFHOLEN_SLOTS` (fünf) Slots
+  ohne fremden Block vergangen sind; dann ruht das Netz, etwa beim ersten
+  Block oder wenn alle zugleich neu starten. In beiden Fällen nur, wenn er
+  keinen höheren Kopf gehört hat als den eigenen (er holt sonst noch auf),
+  und höchstens `AUFHOLEN_HOECHSTENS_SLOTS` (150, fünf Minuten) lang. 📌 Die
+  erste Fassung prüfte die gehörte Höhe den ganzen Lauf über; kritisch
+  nachgeprüft setzte das einen Validator aus, solange eine Behauptung hängt
+  (etwa von einer Gegenstelle auf einem verworfenen Zweig). Vorbild: Blocksync
+  in CometBFT (erst aufholen, dann in den Konsens) und der
+  Doppelgängerschutz der Ethereum-Validatoren (nach dem Start eine Weile
+  nur zuhören). Ohne eigene Höhenabfrage im Protokoll gilt die Regel
+  passiv. Die Probekette bleibt außen vor; sie lernt ihren Erzeuger aus
+  Block 1, und ihre Proben bauen auf Zuruf.
+- Fünf Slots: Laufen drei von vier gleich schweren Validatoren, bleibt ein
+  Slot mit Wahrscheinlichkeit ein Viertel ohne fremden Block, fünf in Folge
+  mit rund einem Promille. Im Testnetz kostet das nach einem Neustart oder
+  am ersten Block zehn Sekunden.
+- Anleitung: Im geschlossenen Testnetz kommt das Netzmodell als Kopie vom
+  Projekt, der Bau aus den Gewichten bleibt der zweite Weg (Entscheidung
+  des Projektinhabers vom 2026-11-19); geprüft wird beides über den Abdruck.
+- Protokoll: `erzeugung_wartet` (Grund, Höhe, gehörte Höhe, Slot) einmal je
+  Wartezeit, `erzeugung_frei` danach.
+- 📌 **Die Zahl der Gegenstellen nur, solange die Regel gilt:** Die erste
+  Fassung fragte in jedem eigenen Slot `peers()` beim Netzprozess an, auch
+  auf der Probekette. Unter Last verzögerte das die Erzeugung; im Netzlauf
+  des Testclients (`der_netzbetrieb_traegt_mit_ungleichen_pods_und_stolpersteinen`)
+  streckten sich die Epochen, und die Zeitprobe meldete den Lügner zweimal
+  hintereinander nicht bis zum Ende der übernächsten Epoche. Jetzt nur noch
+  auf einem Netz mit Startsatz und bis zum Aufholen; die Probe ist danach
+  zweimal grün (345 und 358 s statt über 1 000).
+- ⛔️ **Ohne Mesh weiter warten statt beenden** (nachgestelltes Testnetz,
+  2026-11-19): `starte_konsens` beendete den Knoten mit Rückgabe 1, wenn nach
+  60 s kein Mesh für den Konsens stand. Ein Validator, nach einem Neustart
+  ohne Mesh, holte eine Minute lang Blöcke nach und war dann still weg. Jetzt
+  wartet er weiter, je 60 s mit einer Zeile, und beginnt die Runde, sobald
+  das Mesh steht; die Ereignisschleife läuft dabei weiter.
+- ⚑ **Latenz-Atteste unbekannter Aussteller sind nicht beurteilbar**
+  (`ProtokollValidator::nicht_beurteilbar`, NETWORKING 0.27.0): nicht
+  weitergereicht, aber ohne Strafe. Vorher verwarf jeder Knoten sie mit
+  Strafe; im nachgestellten Testnetz (Testverkehr, ohne `--teilnehmer`)
+  kannte niemand einen Aussteller, und die Meshes aller Topics zerfielen.
+  `myl mining` verschickt keine Atteste, im Betrieb hätte dieser Weg also
+  nicht ausgelöst; der Abbruch ohne Mesh dagegen schon, denn ein Mesh kann
+  auch aus anderen Gründen ausbleiben. Die Zeile `attest_verworfen` nennt
+  jetzt den Grund `nicht-beurteilbar`.
+- Proben (`knoten/aufholen_tests.rs`): der Fall der Generalprobe, ein
+  ruhendes Netz, hinter dem gehörten Kopf und die Probekette. Gegenlauf
+  (300 s, vier Validatoren, Ausfall nach 120 s für 60 s): Der zurückgekehrte
+  wartete bei Höhe 54 und erzeugte ab Höhe 80; keine Höhe mit zwei Blöcken
+  (vorher eine). Der erste Block kam nach zehn Sekunden Warten.
+- Anleitung („Betreiben“, „Nach dem Start“): Nach einem Neustart erzeugt
+  ein Validator erst, wenn er aufgeholt hat; ein Prüfpunkt kommt alle 150
+  Blöcke und gilt als bestätigt, wenn der nächste gerechtfertigt ist, also
+  nach fünf bis zehn Minuten.
+
+### v0.134.1 (2026-11-18): Der Kopf ist die Anleitung für Betreiber; Generalprobe des Testnetzes
+
+- **Neuer Kopf** für Nutzer, Betreiber und Entwicklung, mit dem Abschnitt
+  **„Betreiben“**: die beiden Netze und was ihre MYL gelten, die Rollen,
+  Hardware, Einrichten und signiertes Aktualisieren, das Netzmodell (bauen
+  oder kopieren, der Abdruck prüft beides), Miner über `myl mining`, der
+  Startsatz samt `myl mining stimmsatzzeile` (CLIENT 0.246.0), ein
+  Einstiegsknoten mit Ports, Weiterleitung und dynamischem DNS, Betrieb und
+  Rückmeldung. „So arbeitet der Knoten“ fasst den alten Abschnitt „Was der
+  Knoten heute ist“ zusammen.
+- Berichtigt, weil überholt: Die Benutzung nannte `--genesis` und
+  `--genesiszeile` (heute `--stimmsatz` und `--stimmsatzzeile`); „Ein Block
+  kennt seine eigene Höhe nicht“ stimmt seit dem 2026-08-27 nicht mehr (der
+  Blockkopf trägt die Höhe); die Struktur nannte elf von 39 Modulen und
+  `genesis.rs`, das es nicht mehr gibt. Der Abschnitt über die Entstehung
+  der Komponente am 2026-08-24 entfällt; er steht in den Einträgen unten.
+- 📌 **`start` im Startsatz ist kein Startzeitpunkt der Kette**, sondern der
+  Bezug für die Vertrauensfrist (`wechsel::einstieg_pruefen`); erzeugt wird
+  ab dem ersten Knoten. So steht es jetzt in der Anleitung.
+- ✅ **Generalprobe `test-int4` auf einer Maschine** (Freigabebau, 720 s):
+  vier Validatoren mit eigenem Startsatz, einer mit `--erzeuger` wie ein
+  Einstiegsknoten, drei wie Miner über `--konto` ohne `--erzeuger`, Einstieg
+  über `/dns4/localhost`, dazu ein Knoten außerhalb des Satzes. Nach 300 s
+  fiel ein Validator aus und kam nach 120 s mit seiner Kette zurück. Am Ende
+  alle fünf bei Höhe 347 mit derselben Zustandswurzel, Erzeuger 83, 91, 87
+  und 87 Blöcke, Prüfpunkt 150 bestätigt und 300 gerechtfertigt, auch über
+  den Ausfall (drei von vier Gewichten tragen). ⚠️ **Befund:** Der
+  zurückgekehrte Validator erzeugte in seinem ersten gezogenen Slot einen
+  Block auf seinem alten Kopf (Höhe 151, das Netz stand bei 198); alle
+  wiesen ihn ab, danach holte er auf. Kein Schaden, ein verlorener Slot;
+  die Behebung (erzeugen erst auf dem gehörten Kopf des Netzes) folgt.
+- Am Code nichts geändert.
+
+### v0.134.0 (2026-11-18): Der Startsatz kommt mit dem Release
+
+- ⛔️ **Fund:** `myl mining` gab dem Knoten nie `--stimmsatz` mit, und jedes
+  Netz außer der Probekette startet ohne Stimmsatzdatei nicht. Ein Miner kam
+  über den Klienten also in kein Testnetz; gefunden beim Entwurf der
+  Anleitung für Betreiber.
+- ⚑ **`Netz::stimmsatz`**: der Text einer Stimmsatzdatei je Netz, mit dem
+  Release ausgeliefert und damit vertraut wie Einstiegsliste und Anker (das
+  Release trägt die Signatur des Freigabeschlüssels). Ohne `--stimmsatz`
+  legt der Knoten ihn als `<netz>.stimmsatz` neben seine Schlüsseldatei und
+  nimmt ihn (`Netz::stimmsatz_ablegen`, aufgerufen in `main.rs` vor der
+  Vorgabe für den Konsensschlüssel, damit er sich wie ein Satz von der
+  Kommandozeile verhält). Ein unlesbarer Satz oder einer für ein anderes
+  Netz hält den Start an. Der Klient braucht dafür nichts.
+- **`test-int4` bringt noch keinen mit**: Wer im Startsatz steht, entscheidet
+  der Projektinhaber. Bis dahin sagt die Meldung beim Start auch das („dieses
+  Release bringt für das Netz keinen Startsatz mit“).
+- Proben `jeder_startsatz_im_release_ist_lesbar_und_gehoert_zu_seinem_netz`
+  (greift mit dem ersten Satz, verlangt auch `start`, A43) und
+  `der_startsatz_aus_dem_release_wird_abgelegt` (mit Gegenproben: ohne Satz
+  keine Datei, ein Satz für ein anderes Netz abgewiesen). Von Hand geprüft:
+  ohne Satz die neue Meldung; mit vorübergehend eingesetztem Satz aus vier
+  Schlüsseln liest der Knoten „4 Validatoren, Gesamtstake 400“, legt die
+  Datei ab und startet den Konsens; mit einem einzigen Validator weist die
+  Prüfung der Datei ihn ab (ein Drittel oder mehr in einer Hand).
 
 ### v0.133.2 (2026-11-18): Clippy der CI wieder grün
 

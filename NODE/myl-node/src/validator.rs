@@ -192,6 +192,19 @@ fn liest_sich_vollstaendig_als<T: BorshDeserialize>(daten: &[u8]) -> bool {
 }
 
 impl PayloadValidator for ProtokollValidator {
+    /// ⚑ **Ein Attest von einem unbekannten Aussteller ist nicht
+    /// beurteilbar, nicht falsch** (2026-11-19, nachgestelltes Testnetz):
+    /// Es geht nicht weiter, aber ohne Strafe für den Weiterleiter.
+    /// 📌 Bis hierher verwarf jeder Knoten es mit Strafe; da `myl mining`
+    /// kein `--teilnehmer` nennt, kannte im Testnetz niemand einen
+    /// Aussteller, jeder wertete jeden ab, und die Meshes zerfielen. Dieselbe
+    /// Überlegung wie bei den Anfechtungen unten: Wer aus Unkenntnis
+    /// verwirft, trifft im Scoring den ehrlichen Absender. Eine falsche
+    /// Unterschrift eines bekannten Ausstellers bleibt verworfen.
+    fn nicht_beurteilbar(&self, topic: GossipTopic, data: &[u8]) -> bool {
+        topic == GossipTopic::LatencyAttests && matches!(self.beurteile_attest(data), Attesturteil::UnbekannterAussteller)
+    }
+
     fn validate(&self, topic: GossipTopic, data: &[u8]) -> bool {
         match topic {
             GossipTopic::Blocks => liest_sich_vollstaendig_als::<Block>(data),

@@ -186,6 +186,15 @@ pub fn build_swarm(
                 .multiplex(yamux::Config::default())
                 .map(|(p, c), _| (p, StreamMuxerBox::new(c))))
         })?
+        // ⚑ **Namen statt Adressen** (2026-11-18): `/dns4/…` und `/dns6/…`
+        //   werden ueber die Einstellungen des Systems aufgeloest. Die
+        //   Einstiegsliste eines Netzes nennt Namen, damit ein Umzug kein
+        //   Release braucht. Ein falscher DNS-Eintrag schiebt keinen fremden
+        //   Knoten unter: Die Adresse traegt die Peer-ID, und der
+        //   Noise-Handshake prueft sie; er verhindert hoechstens die
+        //   Verbindung. 📌 Bis hierher fehlte das Merkmal `dns`, und eine
+        //   Adresse mit Namen wurde gelesen, aber nie gewaehlt.
+        .with_dns()?
         // Der Relais-Client kommt aus dem Builder, weil er einen eigenen
         // Transport mitbringt: Über ihn laufen die vermittelten
         // Verbindungen.

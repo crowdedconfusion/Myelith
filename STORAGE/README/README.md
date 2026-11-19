@@ -1,33 +1,24 @@
-# STORAGE — die Rolle Store und die Verfügbarkeitsschicht
+# STORAGE: was das Netz hält und wer dafür bezahlt wird (`myl-store`)
 
-> **Version:** 0.7.1
-> **Datum:** 2026-10-22
-> **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
-> **Speicherentgelt** stehen (`myl-store` v0.6.0, 29 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
-> sieben Entwurfsfragen sind entschieden, eine ausdrücklich nicht: Ob ein
-> Gegenstand vervielfältigt oder erasure-kodiert wird, ist Latenz gegen
-> Platz. **Die Platz-Zahl steht seit dem 2026-08-30**, die Latenz-Zahl
-> wartet auf echten Abrufverkehr.
->
-> ⚑ **Zwei Ablagen im Konsenszustand** (2026-08-31): Infrastruktur steht
-> einzeln darin, Wissen nur über eine Wurzel. Der Grund ist die Bauart
-> des Zustands-Commitments, das den ganzen Zustand serialisiert und
-> hasht: Eine unbegrenzt wachsende Menge würde jeden Block belasten.
->
-> ⚑ **Das Entgelt wird unabhängig vom Mining ausgezahlt** (Festlegung
-> des Projektinhabers, 2026-08-30). Ein Knoten kann Wissen halten, ohne
-> eine Token-Position zu rechnen. Drei Klassen: Protokollkritisches und
-> **Netzwerkwissen** trägt die Allgemeinheit und beides verfällt nie,
-> eine private Einlage zahlt ihr Einleger in Byte-Epochen und sie
-> verfällt. **Ohne Nachweis wird nichts abgebucht und nichts
-> ausgezahlt.**
->
-> ⚑ **Fund 106 (2026-08-30): Der entworfene Nachweis belegte keine
-> Speicherung.** Er verlangte Blatt und Merkle-Pfad, und die Blätter
-> dieses Baums **sind** die Teil-Hashes: Wer nur sie hält, antwortet für
-> immer richtig, bei 30 GB mit 0,87 MiB statt 30 GB. Die Antwort trägt
-> jetzt den Teil selbst. Das ist die Voraussetzung für jedes
-> Speicherentgelt, denn bezahlt werden darf nur, was bewiesen ist.
+> **Version:** 0.7.2
+> **Datum:** 2026-11-18
+> **Status:** Gegenstandsformat, Verfügbarkeitsnachweis, Speicherentgelt,
+> Speicherorte mit Kapazitätszusage und die Teilablage eines Artefakts
+> stehen; Speicherorte und Zusage nutzt `myl mining`. **Offen:** ob ein
+> Gegenstand vervielfältigt oder erasure-kodiert wird; das ist Latenz
+> gegen Platz, und die Latenzzahl wartet auf echten Abrufverkehr.
+
+Das Netz rechnet mit Dingen, die es irgendwoher bekommen muss:
+Skalenpakete, Teile des Modells, Nachschlagetabellen, künftig Wissen und
+Skills. Diese Komponente regelt, wer sie hält, wie das bewiesen wird und
+wer dafür bezahlt wird: **ohne Nachweis wird nichts abgebucht und nichts
+ausgezahlt.** Sie bildet die Netzrolle **Store** ab.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun. |
+| **Betreiber** | Wie viel Platz ein Knoten zusagt und wo: `myl mining start --volumen <GiB>` und die Speicherorte in `speicherorte.toml`. Das Entgelt wird unabhängig vom Mining ausgezahlt. |
+| **Entwicklung** | [Stand](#stand) und die Entwurfsfragen unten. |
 
 ## Aufgabe
 
@@ -120,6 +111,15 @@ Verfügbarkeitsnachweis samt Quittung und das Speicherentgelt.
 Mindestreplikation, die Bewertung einer Quittung und der Abruf.
 
 ## Changelog
+
+### v0.7.2 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-store` 0.7.2)
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der Kopf nennt, was `myl mining` davon nutzt (Speicherorte, Zusage, `--volumen`).
+- Am Code nichts geändert; die Kiste hebt ihre Fassung, weil Kopf und Manifest dieselbe Zahl tragen.
 
 *Nachgetragen am 2026-09-14.* Bis dahin führte dieses README keinen
 Changelog, und die Prüfung, die Kopfversion und Changelog vergleicht,

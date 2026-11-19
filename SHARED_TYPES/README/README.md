@@ -1,29 +1,28 @@
-# shared-types (`myl-types`)
+# SHARED_TYPES: die gemeinsamen Typen (`myl-types`)
 
-> **Version:** 0.75.0
+> **Version:** 0.75.1
 > **Datum:** 2026-11-18
-> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
-> Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
-> mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
-> GF(2⁸)**, ID-Newtypes, Kern-Structs
-> aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
-> (100.000 Iterationen), Konformitätspaket.
-> **298 Tests grün** über acht Testbinaries (gezählt am 2026-10-21; hier
-> stand bis dahin 226 über sieben, der Stand vom 2026-09-03).
+> **Status:** In Gebrauch bei jeder Kiste des Protokolls: Hash,
+> Merkle-Baum, VRF (bitgenau gegen die Vektoren aus RFC 9381), BLS12-381
+> mit Aggregation und Besitznachweis, Erasure-Codierung über GF(2⁸),
+> Kennungen und die Formate von Block, Segment und Nachrichten; dazu
+> Golden Vectors und ein Fuzz-Harness.
 
-Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
-für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
+Die Wörter, in denen die Teile von Myelith miteinander sprechen. Jede
+Komponente bezieht Hashes, Signaturen, Kennungen und die Formate auf der
+Leitung und in der Kette aus dieser einen Kiste, damit `Segment`,
+`PoIBundle` oder ein Blockkopf nie in zwei Komponenten verschieden
+definiert sind. Referenzimplementierung von Whitepaper Anhang A.1.
 
-## Aufgabe
-
-Ein einziges Crate, von dem alle anderen Komponenten (NETWORKING, CONSENSUS,
-VERIFICATION, TOKENOMICS, COMPUTE_PIPELINE, AGENT_LAYER, TRAINING) dieselben
-Basistypen beziehen, damit `Segment`, `PoIBundle`, Hashes und Signaturen
-niemals in zwei Komponenten inkompatibel definiert werden.
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun. |
+| **Betreiber** | Nichts zu tun. Ändert sich ein Format der Kette, kündigt `VERSION.md` eine neue Kette an. |
+| **Entwicklung** | Eine Bibliothek ohne Programm. Ein neues Feld auf der Leitung oder in der Kette beginnt hier; die Golden Vectors halten fest, dass sich ein Format nicht unbemerkt ändert. |
 
 ## Abhängigkeiten
 
-Keine — SHARED_TYPES ist die Basiskomponente des Protokolls.
+Keine: SHARED_TYPES ist die Grundlage des Protokolls.
 
 ## Struktur
 
@@ -49,6 +48,15 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.75.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-types` 0.75.1)
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der Satz unter Abhängigkeiten ohne Gedankenstrich.
+- Am Code nichts geändert; die Kiste hebt ihre Fassung, weil Kopf und Manifest dieselbe Zahl tragen.
 
 ### v0.75.0 (2026-11-18): Die Chiffre eines Anteils bindet ihren Wert (Fund A51)
 

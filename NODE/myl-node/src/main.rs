@@ -626,6 +626,18 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     if konfig.schluesseldatei.as_os_str() == "knoten.key" {
         konfig.schluesseldatei = PathBuf::from(format!("{}.key", konfig.name));
     }
+    // ⚑ **Der Startsatz aus dem Release** (2026-11-18): Ohne `--stimmsatz`
+    //   nimmt der Knoten den Satz, den das Release fuer sein Netz mitbringt,
+    //   abgelegt neben seiner Schluesseldatei. Vor der Vorgabe fuer den
+    //   Konsensschluessel darunter, damit er sich verhaelt wie ein Satz von
+    //   der Kommandozeile. Nicht fuer `--stimmsatzzeile`, das nur eine Zeile
+    //   fuer einen Satz ausgibt.
+    if konfig.stimmsatzdatei_pfad.is_none() && genesiszeile.is_none() {
+        let ordner = konfig.schluesseldatei.parent().map(PathBuf::from).unwrap_or_default();
+        if let Some(pfad) = konfig.netz.stimmsatz_ablegen(&ordner)? {
+            konfig.stimmsatzdatei_pfad = Some(pfad);
+        }
+    }
     // Aus demselben Grund bekommt auch der Konsensschlüssel den Namen.
     if konfig.stimmsatzdatei_pfad.is_some()
         && konfig.konsensschluesseldatei.is_none()
@@ -1172,15 +1184,25 @@ async fn starte_konsens(
     }
 
     // Auf das Mesh warten, sonst geht der Propose ins Leere.
-    let mesh = knoten
+    //
+    // ⚑ **Warten, nie aufgeben** (2026-11-19, nachgestelltes Testnetz).
+    // 📌 Bis hierher beendete sich der Knoten nach 60 s ohne Mesh mit
+    // Rückgabe 1. Ein Validator, der nach einem Neustart kein Mesh bekam,
+    // lief eine Minute, holte Blöcke nach und war dann still weg. Die
+    // Ereignisschleife läuft während des Wartens weiter (`warte_auf_mesh`
+    // treibt sie); es fehlt nur die Runde, und die beginnt, sobald das Mesh
+    // steht.
+    let mut mesh = knoten
         .warte_auf_mesh(myl_net::GossipTopic::Consensus, 1, Duration::from_secs(60))
         .await;
-    if mesh == 0 {
-        return Err(
-            "kein Mesh auf /myelith/consensus/1 nach 60 s. Ohne Mesh nimmt Gossipsub \
-             keine Nachricht an, und die Runde begänne im Leeren"
-                .to_string(),
+    while mesh == 0 {
+        eprintln!(
+            "myl-node: noch kein Mesh auf /myelith/consensus/1; der Knoten läuft weiter \
+             und beginnt die Runde, sobald es steht"
         );
+        mesh = knoten
+            .warte_auf_mesh(myl_net::GossipTopic::Consensus, 1, Duration::from_secs(60))
+            .await;
     }
 
     // Der Vorschlag hängt am Netz, nicht an der Runde: Ein Leader

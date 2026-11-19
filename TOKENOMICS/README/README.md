@@ -1,29 +1,25 @@
-# tokenomics (`myl-tokenomics`)
+# TOKENOMICS: wie MYL entstehen und vergehen (`myl-tokenomics`)
 
-> **Version:** 0.28.1
-> **Datum:** 2026-11-11
-> **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
-> vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
-> α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
-> Subventionsplan seit dem 1. September).
-> **243 Tests grün** (219 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
->
-> **Seit dem 27. August greift die Slashing-Staffelung wirklich.** Bis
-> dahin war sie eine Tabelle mit drei Stufen, von denen immer die erste
-> galt: Die Zahl der Vorverstöße war eine Eingabe, und niemand füllte
-> sie. Der Ledger führt sie jetzt, und `urteil_buchen_gestaffelt` setzt
-> Lesen, Bestimmen, Buchen und Vermerken in die einzige Reihenfolge, in
-> der sie zusammenpassen.
->
-> Gebaut sind damit: Prägefunktion und EMA, Verteilung nach Kap. 5.3, die
-> vTFE-Zuschreibungsregel, ganzzahliges `exp()` und Credit-Preisbildung,
-> Stake-Hinterlegung und Slashing-Matrix, die Sicherheitsbedingung
-> S_min als Prüffunktion, Anlaufphase, Genesis-Verteilungsmechanik und
-> der Self-Dealing-Schutz.
+> **Version:** 0.28.2
+> **Datum:** 2026-11-18
+> **Status:** In Gebrauch in der Kette: Prägung nach geprüfter Arbeit mit
+> Anlaufplan und Subvention, Burn gegen Inferenz-Credits mit Deckel,
+> Credit-Preis aus der Nachfrage, Einsatz und Bestrafung in Stufen nach
+> Vorverstößen, Korrelationsstrafe, Auszahlung an die Prüfer,
+> Trainingsabgabe und Genesis-Verteilung. Alles in Festkomma; `exp()`
+> rechnet über eine Tabelle.
 
-Prägefunktion, Burn-and-Mint-Kreislauf, Credit-Preisbildung,
-Staking/Slashing-Matrix, Ausgabestruktur und Genesis. Referenzimplementierung
-von Whitepaper Kap. 5 und Anhang B.1–B.4, B.7–B.8.
+Nutzer verbrennen MYL gegen Credits für Inferenz, Miner bekommen neu
+geprägte MYL nach geprüfter Arbeit. Hier stehen die Formeln dazu,
+ganzzahlig, damit jeder Knoten auf dieselbe Zahl kommt.
+Referenzimplementierung von Whitepaper Kap. 5 und Anhang B.1 bis B.4,
+B.7 und B.8.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Was eine Anfrage an das Netzmodell kostet, folgt aus dem Credit-Preis hier. Im Testnetz ist alles Spielgeld. |
+| **Betreiber** | Was ein Miner bekommt und was eine Verfehlung kostet. ⛔️ MYL aus Probekette und geschlossenem Testnetz zählen nicht für die Erstverteilung. |
+| **Entwicklung** | Kein Gleitkomma: 1 MYL sind 10⁶ Kleinstbeträge, vTFE skaliert mit 10⁻⁶. |
 
 ## Aufgabe
 
@@ -97,6 +93,15 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.28.2 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-tokenomics` 0.28.2)
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- ⛔️ Im Kopf: MYL aus Probekette und geschlossenem Testnetz zählen nicht für die Erstverteilung.
+- Am Code nichts geändert; die Kiste hebt ihre Fassung, weil Kopf und Manifest dieselbe Zahl tragen.
 
 ### v0.28.1 (2026-11-11): Prägung ohne Subvention erschöpfend
 

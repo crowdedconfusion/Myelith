@@ -62,6 +62,18 @@ pub struct Netz {
     /// Ein Neuling ohne eigene Kette beginnt beim jüngsten statt bei Block 0.
     /// Nur Höhen, die jeder Knoten auf Dauer behält (`abzug::ist_langzeit`).
     pub abzuege: &'static [(u64, [u8; 32])],
+    /// ⚑ **Der Startsatz aus dem Release** (2026-11-18): der Text einer
+    /// Stimmsatzdatei (Validatoren und `start`), wie ihn `--stimmsatz` liest.
+    /// Ohne `--stimmsatz` legt der Knoten ihn neben seine Schluesseldatei und
+    /// nimmt ihn ([`Netz::stimmsatz_ablegen`]). Vertraut wie Einstieg und
+    /// Anker: Er kommt mit einem Release, und ein Release traegt die Signatur
+    /// des Freigabeschluessels.
+    ///
+    /// 📌 **Warum** (Fund vom 2026-11-18, beim Entwurf der
+    /// Betreiberanleitung): Jedes Netz ausser der Probekette startet nur mit
+    /// einem Stimmsatz, und `myl mining` gab nie einen mit. Ein Miner kam
+    /// ueber den Klienten also in kein Testnetz.
+    pub stimmsatz: Option<&'static str>,
     /// ⚑ **Die Probeprägung** (Festlegung des Projektinhabers vom
     /// 2026-10-26): So viele Einheiten bekommt an jedem Epochenwechsel das
     /// Auszahlungskonto jedes angemeldeten, nicht gesperrten Miners, damit
@@ -179,6 +191,30 @@ impl Netz {
         self.abzuege.iter().any(|(h, b)| *h == hoehe && b == blockhash.as_bytes())
     }
 
+    /// **Legt den Startsatz aus dem Release ab**, als Datei
+    /// `<netz>.stimmsatz` im Ordner, und gibt ihren Pfad. `Ok(None)`, wenn
+    /// das Release fuer dieses Netz keinen mitbringt.
+    ///
+    /// Gelesen wird er vorher: Ein unlesbarer Satz oder einer fuer ein
+    /// anderes Netz ist ein Fehler des Release, und der Knoten startet dann
+    /// nicht, statt mit einem Satz zu laufen, den niemand meinte.
+    pub fn stimmsatz_ablegen(&self, ordner: &std::path::Path) -> Result<Option<std::path::PathBuf>, String> {
+        let Some(text) = self.stimmsatz else {
+            return Ok(None);
+        };
+        let datei = crate::stimmsatzdatei::Stimmsatzdatei::aus_text(text)
+            .map_err(|e| format!("der Startsatz des Netzes {} in diesem Release ist unlesbar: {e}", self.name))?;
+        if datei.netz != self.name {
+            return Err(format!(
+                "der Startsatz des Netzes {} in diesem Release gehoert zum Netz {}",
+                self.name, datei.netz
+            ));
+        }
+        let pfad = ordner.join(format!("{}.stimmsatz", self.name));
+        std::fs::write(&pfad, text).map_err(|e| format!("{}: {e}", pfad.display()))?;
+        Ok(Some(pfad))
+    }
+
     /// Das Netz zu einem Namen.
     pub fn aus_name(name: &str) -> Option<&'static Netz> {
         NETZE.iter().find(|n| n.name == name)
@@ -224,6 +260,8 @@ pub const PROBEKETTE: Netz = Netz {
     einstieg: &[],
     lokale_suche: false,
     abzuege: &[],
+    // Die Probekette lernt ihren Erzeuger aus Block 1.
+    stimmsatz: None,
     // Zehn MYL je Epoche: genug, dass ein Wallet in Minuten sichtbar
     // wächst, und rund, damit eine Abweichung auffällt.
     probepraegung: 10 * myl_tokenomics::UNITS_PER_MYL,
@@ -275,6 +313,9 @@ pub const TESTNETZ_INT4: Netz = Netz {
     lokale_suche: true,
     // Noch keiner: Das Testnetz hat noch keine dauerhafte Epochengrenze.
     abzuege: &[],
+    // ⚠️ Noch keiner: Wer im Startsatz steht, entscheidet der
+    //   Projektinhaber. Bis dahin braucht jeder Knoten `--stimmsatz`.
+    stimmsatz: None,
     probepraegung: 0,
     lernt_erzeuger: false,
     gebuehren: GEBUEHREN_VORLAEUFIG,
@@ -297,6 +338,64 @@ pub const NETZE: [Netz; 2] = [PROBEKETTE, TESTNETZ_INT4];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ein Startsatz aus vier Probeschluesseln fuer das Netz `name`.
+    fn startsatz(name: &str) -> &'static str {
+        let mut text = format!("netz {name}\nstart 1794700800000\n");
+        for k in ["a", "b", "c", "d"] {
+            text.push_str(&crate::schluessel::Konsensschluessel::probe(k).expect("Schluessel").genesiszeile(100).expect("Zeile"));
+            text.push('\n');
+        }
+        Box::leak(text.into_boxed_str())
+    }
+
+    fn ordner(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("myl-netz-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Ordner");
+        d
+    }
+
+    /// ⚑ **Jeder Startsatz, den ein Release mitbringt, ist lesbar und
+    /// gehoert zu seinem Netz.** Heute bringt keines einen mit; die Probe
+    /// greift mit dem ersten.
+    #[test]
+    fn jeder_startsatz_im_release_ist_lesbar_und_gehoert_zu_seinem_netz() {
+        for n in NETZE {
+            if let Some(text) = n.stimmsatz {
+                let datei = crate::stimmsatzdatei::Stimmsatzdatei::aus_text(text)
+                    .unwrap_or_else(|e| panic!("{}: {e}", n.name));
+                assert_eq!(datei.netz, n.name);
+                assert!(datei.start_ms.is_some(), "{}: ohne `start` kaeme ein Einsteiger nur mit Anker hinein (A43)", n.name);
+            }
+        }
+    }
+
+    /// ⚑ **Der Startsatz aus dem Release landet als Datei beim Knoten**,
+    /// genau so, wie `--stimmsatz` ihn liest. Gegenproben: ohne Satz keine
+    /// Datei, und ein Satz fuer ein anderes Netz wird abgewiesen.
+    #[test]
+    fn der_startsatz_aus_dem_release_wird_abgelegt() {
+        let d = ordner("ablage");
+        let netz = Netz { stimmsatz: Some(startsatz("test-int4")), ..TESTNETZ_INT4 };
+        let pfad = netz.stimmsatz_ablegen(&d).expect("abgelegt").expect("ein Pfad");
+        assert_eq!(pfad, d.join("test-int4.stimmsatz"));
+        let text = std::fs::read_to_string(&pfad).expect("lesen");
+        let datei = crate::stimmsatzdatei::Stimmsatzdatei::aus_text(&text).expect("lesbar");
+        assert_eq!(datei.stimmberechtigte().len(), 4);
+        assert_eq!(datei.start_ms, Some(1_794_700_800_000));
+
+        let ohne = ordner("ohne");
+        assert_eq!(TESTNETZ_INT4.stimmsatz_ablegen(&ohne), Ok(None));
+        assert_eq!(std::fs::read_dir(&ohne).expect("Ordner").count(), 0, "ohne Satz keine Datei");
+
+        let fremd = Netz { stimmsatz: Some(startsatz("probe")), ..TESTNETZ_INT4 };
+        let fehler = fremd.stimmsatz_ablegen(&ordner("fremd")).expect_err("ein Satz fuer ein anderes Netz");
+        assert!(fehler.contains("gehoert zum Netz probe"), "{fehler}");
+        for x in ["ablage", "ohne", "fremd"] {
+            let _ = std::fs::remove_dir_all(ordner(x));
+        }
+    }
 
     /// Der Eintrag eines Artefakts im Katalog, als Text bis zu seinem Ende.
     fn eintrag(name: &str) -> &'static str {

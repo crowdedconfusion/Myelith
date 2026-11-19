@@ -1,79 +1,102 @@
-# integer-llm
+# INTEGER_LLM: Inferenz ganz ohne Gleitkomma (`kernels`, `runtime`, `pipeline`, θ_v)
 
-> **Version:** 0.154.0 (θ_v 0.22.0; kernels 0.93.0, runtime 0.107.0, pipeline 0.15.4)
+> **Version:** 0.154.1 (θ_v 0.22.0; kernels 0.93.0, runtime 0.107.0, pipeline 0.15.4)
 > **Datum:** 2026-11-18
-> **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
-> Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
-> Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
-> ergibt andere Zahlen, und zwar nicht um Zehntel:
->
-> | Modell | 435 Positionen | 3558 Positionen |
-> |---|---|---|
-> | 0,6B (Skalen bis 2026-09-21) | +4,48 % | ⛔️ **+6,84 %, VERFEHLT** |
-> | 0,6B (berichtigte Skalen) | −1,64 % | ✅ **+2,92 %** |
-> | 4B | +1,65 % | noch nicht gemessen |
-> | 8B | +3,75 % | noch nicht gemessen |
-> | 30B-A3B | 10,42 gegen 10,48 | noch nicht gemessen |
->
-> ⛔️ **Das eingesetzte 0,6B verfehlte das Kriterium**, und die kleine
-> Stichprobe hat es verdeckt. Berichtigte Aktivierungsskalen bringen es
-> auf +2,92 %. ⚠️ **Nur das 0,6B war betroffen:** das 4B reproduziert
-> sein Skalenpaket exakt (0 von 542), das 8B stammt von heute.
->
-> 📌 **Vier Sequenzen tragen die Aussage nicht.** Sie liessen das alte
-> Artefakt von +4,48 auf +6,84 springen und das neue von −1,64 auf
-> +2,92. Der Kopf dieser Datei sagte bis zum 2026-09-21 „bei 435
-> Positionen ist ein halbes Prozent nicht aufloesbar"; der Fehler ist um
-> ein Vielfaches groesser. **Die Reihe gehoert neu gemessen, bevor
-> wieder eine Ordnung aus ihr gelesen wird.**
->
-> ⛔️ **Das dichte 14B (11,54) ist am 2026-09-12 entfallen**; seine
-> Messung bleibt als Aufzeichnung erhalten.
->
-> ⚑ **Seit dem 2026-09-11 liegt die Reihe vollständig in einer
-> Modellfamilie**, und erstmals trägt jede eingesetzte Grösse eine eigene
-> Messung. Vorher standen zwei Grössen in einer anderen Familie, ein
-> Grössenvergleich mass also immer auch einen Familienunterschied mit.
-> ⚑ **Der Boden des Schemas ist seit dem 2026-09-15 für die laufende
-> Reihe gemessen** (Fund 375), und die erste Messung wurde dabei
-> **zurückgezogen**. Über die 435 Positionen der Reihe kam beim 4B ein
-> Boden von −2,45 % heraus, also eine Quantisierung, die das Modell
-> verbessert. Über **13 797 Positionen** blieb davon −0,07 %; beim 0,6B
-> stehen +1,61 % statt +0,80 %. Kein Rechenfehler, eine zu kleine
-> Stichprobe.
->
-> ⛔️ **Der Umsetzungsverlust ist damit offen.** Er wäre der Abstand
-> minus der Boden, aber der Abstand steht auf 435 Positionen und der
-> belastbare Boden auf 13 797; über verschiedenem Text gerechnet ist
-> eine Differenz erfunden, und das Werkzeug weigert sich, sie zu bilden.
-> **Die daraus zuvor gemeldeten +3,65 % und +4,20 % gelten nicht.** Was
-> fehlt, ist der Ganzzahlpfad über denselben Umfang.
->
-> ⚑ **Was trotzdem feststeht:** Der Abstand allein sagt nicht, woher er
-> kommt. Er enthält das Verfahren und die Umsetzung, und **wer aus dem
-> Abstand auf das Quantisierungsschema schliesst, schliesst falsch.**
-> ⛔️ **Und beim 30B-Gemisch ist er negativ.** Die Messung lief am
-> 2026-09-16 durch (3 h 17 min, 435 Positionen, wie sein Ganzzahlwert):
-> Boden **−0,43 %**, Ganzzahlpfad −0,59 %, Differenz −0,16 %. Ein
-> negativer Boden kann nicht sein, Quantisierung vernichtet Information;
-> die Stichprobe trägt ihn nicht. Der ältere Wert **+0,84 % an der
-> abgelösten 7B** bleibt als Aufzeichnung und steht weiter unten im
-> dazugehörigen Ergebnisblock.
-> Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
-> Residual-Addition.
->
-> **Zuletzt am Rechenweg (2026-09-14):** Die Vorbereitung eines Prompts
-> von 219 Token dauert bitgleich **0,28 s beim 0,6B und 0,81 s beim 4B**
-> mit dem Feature `metal` (Apple-Silizium), 0,97 s und 3,52 s mit
-> `cpu-simd`. Der Client brauchte am Morgen desselben Tages 5,21 s beim
-> 0,6B, weil die gebündelte Vorbereitung nur im Messprogramm lief
-> (Fund 366) und der Client ohne `cpu-simd` baute (Fund 367).
->
-> **Zuletzt am Prüfstand statt am Modell (2026-08-22):** Fund 33 (ein
-> Prüflauf zertifizierte Backends, die nicht rechnen) und Fund 34 (die
-> Sperre dagegen führte `cpu-simd` auf x86_64 als Rechenpfad, wo keiner
-> existiert). Beide betreffen nicht die Zahlen, sondern die Aussage über
-> die Zahlen.
+> **Status:** Rechnet die Modelle des Katalogs bitgleich auf der CPU
+> (`reference`, `cpu-simd` mit NEON und AVX2), auf Apple-Grafik (`metal`)
+> und, nach bestandener Selbstprüfung, auf Karten von NVIDIA und AMD. Das
+> Netzmodell ist Raven 35B A3B in vier Bit je Expertengewicht. Die
+> Konformität (55 von 55 Vektoren) ist auf Apple-Silizium und unter
+> Rosetta mit AVX2 belegt; **offen ist der Beleg auf echter
+> x86_64-Hardware.**
+
+Der Kern des Projekts: Inferenz für große Sprachmodelle ohne eine einzige
+Gleitkommaoperation im Rechenpfad. Gewichte in int8 (oder in vier Bit je
+Gewicht, gruppenweise) mit Zweierpotenzskalen je Kanal, Aktivierungen und
+Residualstrom in int16, Akkumulator in int64, Division nur als
+Rechtsshift. Damit rechnen zwei beliebige Rechner bitgleich, und darauf
+ruht die Verifikation des Netzes (Whitepaper Kap. 6.2).
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Modelle holen und bauen im Fenster unter Einstellungen; was in einem Artefakt steht, zeigt `myl modell <artefakt>`. |
+| **Betreiber** | Das Netzmodell `raven-35b-a3b-int4`. Vor dem Netz fährt der Knoten die Konformitätsvektoren und startet nicht, wenn die Maschine anders rechnet. |
+| **Entwicklung** | [Erste Inferenz, Schritt für Schritt](#erste-inferenz--schritt-für-schritt), [Bauen und Testen](#bauen-und-testen). Konformität: `INTEGER_LLM_MODEL=sparrow-0.6b-int8 sh INTEGER_LLM/conformance/run.sh`, 55 Vektoren, 55 von 55 oder es zählt nicht. |
+
+## Messstand der Perplexität (zuletzt 2026-09-21)
+
+⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
+Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
+Positionen**; eine Messung ueber **32 Sequenzen, 3558 Positionen**
+ergibt andere Zahlen, und zwar nicht um Zehntel:
+
+| Modell | 435 Positionen | 3558 Positionen |
+|---|---|---|
+| 0,6B (Skalen bis 2026-09-21) | +4,48 % | ⛔️ **+6,84 %, VERFEHLT** |
+| 0,6B (berichtigte Skalen) | −1,64 % | ✅ **+2,92 %** |
+| 4B | +1,65 % | noch nicht gemessen |
+| 8B | +3,75 % | noch nicht gemessen |
+| 30B-A3B | 10,42 gegen 10,48 | noch nicht gemessen |
+
+⛔️ **Das eingesetzte 0,6B verfehlte das Kriterium**, und die kleine
+Stichprobe hat es verdeckt. Berichtigte Aktivierungsskalen bringen es
+auf +2,92 %. ⚠️ **Nur das 0,6B war betroffen:** das 4B reproduziert
+sein Skalenpaket exakt (0 von 542), das 8B stammt von heute.
+
+📌 **Vier Sequenzen tragen die Aussage nicht.** Sie liessen das alte
+Artefakt von +4,48 auf +6,84 springen und das neue von −1,64 auf
++2,92. Der Kopf dieser Datei sagte bis zum 2026-09-21 „bei 435
+Positionen ist ein halbes Prozent nicht aufloesbar"; der Fehler ist um
+ein Vielfaches groesser. **Die Reihe gehoert neu gemessen, bevor
+wieder eine Ordnung aus ihr gelesen wird.**
+
+⛔️ **Das dichte 14B (11,54) ist am 2026-09-12 entfallen**; seine
+Messung bleibt als Aufzeichnung erhalten.
+
+⚑ **Seit dem 2026-09-11 liegt die Reihe vollständig in einer
+Modellfamilie**, und erstmals trägt jede eingesetzte Grösse eine eigene
+Messung. Vorher standen zwei Grössen in einer anderen Familie, ein
+Grössenvergleich mass also immer auch einen Familienunterschied mit.
+⚑ **Der Boden des Schemas ist seit dem 2026-09-15 für die laufende
+Reihe gemessen** (Fund 375), und die erste Messung wurde dabei
+**zurückgezogen**. Über die 435 Positionen der Reihe kam beim 4B ein
+Boden von −2,45 % heraus, also eine Quantisierung, die das Modell
+verbessert. Über **13 797 Positionen** blieb davon −0,07 %; beim 0,6B
+stehen +1,61 % statt +0,80 %. Kein Rechenfehler, eine zu kleine
+Stichprobe.
+
+⛔️ **Der Umsetzungsverlust ist damit offen.** Er wäre der Abstand
+minus der Boden, aber der Abstand steht auf 435 Positionen und der
+belastbare Boden auf 13 797; über verschiedenem Text gerechnet ist
+eine Differenz erfunden, und das Werkzeug weigert sich, sie zu bilden.
+**Die daraus zuvor gemeldeten +3,65 % und +4,20 % gelten nicht.** Was
+fehlt, ist der Ganzzahlpfad über denselben Umfang.
+
+⚑ **Was trotzdem feststeht:** Der Abstand allein sagt nicht, woher er
+kommt. Er enthält das Verfahren und die Umsetzung, und **wer aus dem
+Abstand auf das Quantisierungsschema schliesst, schliesst falsch.**
+⛔️ **Und beim 30B-Gemisch ist er negativ.** Die Messung lief am
+2026-09-16 durch (3 h 17 min, 435 Positionen, wie sein Ganzzahlwert):
+Boden **−0,43 %**, Ganzzahlpfad −0,59 %, Differenz −0,16 %. Ein
+negativer Boden kann nicht sein, Quantisierung vernichtet Information;
+die Stichprobe trägt ihn nicht. Der ältere Wert **+0,84 % an der
+abgelösten 7B** bleibt als Aufzeichnung und steht weiter unten im
+dazugehörigen Ergebnisblock.
+Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
+Residual-Addition.
+
+**Zuletzt am Rechenweg (2026-09-14):** Die Vorbereitung eines Prompts
+von 219 Token dauert bitgleich **0,28 s beim 0,6B und 0,81 s beim 4B**
+mit dem Feature `metal` (Apple-Silizium), 0,97 s und 3,52 s mit
+`cpu-simd`. Der Client brauchte am Morgen desselben Tages 5,21 s beim
+0,6B, weil die gebündelte Vorbereitung nur im Messprogramm lief
+(Fund 366) und der Client ohne `cpu-simd` baute (Fund 367).
+
+**Zuletzt am Prüfstand statt am Modell (2026-08-22):** Fund 33 (ein
+Prüflauf zertifizierte Backends, die nicht rechnen) und Fund 34 (die
+Sperre dagegen führte `cpu-simd` auf x86_64 als Rechenpfad, wo keiner
+existiert). Beide betreffen nicht die Zahlen, sondern die Aussage über
+die Zahlen.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-Basis, **W8A16**: Gewichte int8 mit Per-Channel-Zweierpotenzskalen,
@@ -284,7 +307,7 @@ Modell mit dem Fehlerstand vor Fund 23/24 (+377 % Perplexität) hätte hier
 unbrauchbaren Text erzeugt. Fünf von acht bitidentischen Generierungen
 gegen eine Gleitkomma-Referenz sind ein starkes qualitatives Signal.
 
-## Erste Inferenz — Schritt für Schritt
+## Erste Inferenz, Schritt für Schritt
 
 Vom leeren Arbeitsverzeichnis zum ersten generierten Token. Alle Befehle
 von `INTEGER_LLM/` aus.
@@ -648,6 +671,16 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.154.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der alte Stand (Perplexität, Stichprobengröße, Boden des Schemas) steht unverändert unter „Messstand der Perplexität (zuletzt 2026-09-21)“, gleich nach dem Kopf.
+- „Erste Inferenz, Schritt für Schritt“ ohne Gedankenstrich in der Überschrift.
+- Am Code nichts geändert.
 
 ### v0.154.0 (2026-11-18): Der int8-Kern mit `sdot` und `usdot` (kernels 0.93.0)
 

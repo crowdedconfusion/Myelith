@@ -1,29 +1,27 @@
-# compute-pipeline (`myl-pod`, `myl-dispatcher`)
+# COMPUTE_PIPELINE: das Rechnen im Netz (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.72.1 (`myl-pod` 0.63.0, `myl-dispatcher` 0.11.2)
+> **Version:** 0.72.2 (`myl-pod` 0.63.0, `myl-dispatcher` 0.11.2)
 > **Datum:** 2026-11-18
-> **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
-> (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
-> Manipulationserkennung, `coordinator_loop` mit Pipelining über Sitzungen,
-> KV-Cache-Session-Affinität, erasure-codierte DA-Archivierung,
-> Ausfallsicherung mit Standby-Übernahme, Epochenübergang, seit dem
-> 26. August die **Verdrahtung mit dem Epochen-Scheduler** und seit dem
-> 1. September die **Nachbesetzung aus der Reserve des Netzes** (3.4)
-> samt **Gegenzeichnung und Frist** für die Ausfallmeldung (3.5) und der
-> **Staffelung nach dem Verstoß-Zähler** (3.6). **115 Tests grün.**
->
-> **Offen:** die Verbreitung der Meldung über Gossip (der zweite Teil von
-> 3.5) und der Pod-Lauf über getrennte Hosts.
->
-> **Seit dem 2026-10-15 der Dispatcher** (`COMPUTE_PIPELINE/dispatcher`,
-> Kiste `myl-dispatcher`): wer auf einer Maschine wie viel
-> Arbeitsspeicher, Grafikspeicher und Kerne bekommt, mit Vorrang Agent vor
-> Vision vor Sprache. Der Teil für das Netz (`network`) ist geplant, nicht
-> gebaut.
+> **Status:** In Gebrauch: der Shard (`myl-shard`) rechnet seinen
+> Ebenenbereich, ein Koordinator schickt mehrere Sitzungen zugleich durch
+> die Pipeline, der KV-Cache bleibt bei seiner Sitzung, Ausfälle werden aus
+> der Reserve nachbesetzt, die Arbeit geht als PoI-Bündel in die Kette.
+> Beim Start misst sich der Shard ein und nimmt eine Karte nur, wo sie
+> schneller ist. Der Dispatcher teilt Speicher, Grafikspeicher und Kerne
+> einer Maschine zwischen Agent, Sehen und Hören. **Offen:** ein Pod über
+> getrennte Maschinen in einem echten Netz.
 
-Pod-Orchestrierung über ein echtes Netzwerk: Pipeline-Routing,
-Pipelining über Sitzungen, KV-Cache-Verwaltung, spekulatives Decoding.
-Referenzimplementierung von Whitepaper Kap. 4 und Anhang A.3.
+Ein Pod aus mehreren Shard-Minern rechnet ein Modell gemeinsam, jeder
+seine Ebenen, und ein Koordinator reicht die Arbeit ein (Schicht L2). Die
+Rechenkerne selbst stehen in INTEGER_LLM; hier steht, wie sie über
+Maschinen verteilt werden. Referenzimplementierung von Whitepaper Kap. 4
+und Anhang A.3.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Wie der eigene Rechner zwischen Agent, Sehen und Hören aufgeteilt wird: `myl plan` und `myl eichen`. |
+| **Betreiber** | `myl mining` startet den Shard; er rechnet mit den freigegebenen Kernen und Karten und schreibt beim Start die Zeile `Einmessung`. |
+| **Entwicklung** | Für die Proben in `myl-pod` baut `cargo test --no-run`: Ein `cargo build` legt einen Shard ohne das Merkmal `pruefnetz` in denselben Ordner, und die Netzproben finden dann ihr Probemodell nicht. |
 
 ## Aufgabe
 
@@ -106,6 +104,15 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.72.2 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Neu für die Entwicklung im Kopf: warum in `myl-pod` `cargo test --no-run` baut und nicht `cargo build` (das Merkmal `pruefnetz`).
+- Am Code nichts geändert.
 
 ### v0.72.1 (2026-11-18): Die Messung zu Fund 655 steht in der Liste der CI
 

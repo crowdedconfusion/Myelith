@@ -381,3 +381,29 @@ async fn zwanzig_nodes_voll_konnektivitaet_unter_zehn_sekunden() {
         start.elapsed() - angenommen_nach
     );
 }
+
+/// ⚑ **Ein Einstieg mit Namen wird gewaehlt** (2026-11-18): Die
+/// Einstiegsliste eines Netzes nennt `/dns4/<name>/tcp/<port>/p2p/<id>`.
+/// Gegenprobe von Hand: Ohne `.with_dns()` im Aufbau des Transports
+/// scheitert die Wahl, und diese Probe bleibt bei null Peers stehen.
+///
+/// Nur unter Unix: `localhost` steht dort in `/etc/hosts`, das der Resolver
+/// liest; unter Windows loest der Systemdienst den Namen ohne Datei auf.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ein_einstieg_mit_namen_wird_gewaehlt() {
+    use libp2p::multiaddr::Protocol;
+    let a = TestNode::start(None).await;
+    let port = a
+        .listen_addr
+        .iter()
+        .find_map(|p| match p {
+            Protocol::Tcp(port) => Some(port),
+            _ => None,
+        })
+        .expect("TCP-Port");
+    let mit_namen: libp2p::Multiaddr = format!("/dns4/localhost/tcp/{port}/p2p/{}", a.peer_id).parse().expect("Multiaddr");
+    let b = TestNode::start(Some(mit_namen)).await;
+    b.wait_peers(1, Duration::from_secs(10)).await;
+    a.wait_peers(1, Duration::from_secs(10)).await;
+}

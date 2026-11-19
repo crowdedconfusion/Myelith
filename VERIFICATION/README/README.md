@@ -1,41 +1,25 @@
-# verification (`myl-verifier`)
+# VERIFICATION: wer falsch rechnet, fällt auf (`myl-verifier`)
 
-> **Version:** 0.29.2
-> **Datum:** 2026-11-14
-> **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
-> 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
-> 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
-> Bisektions-Spiel (Stufe 2) mit Checker-Modul, Challenge-Erzeugung,
-> Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik und die
-> Sicherheitssimulationen gegen Anhang B.2 und Kap. 6.8.
->
-> ⚑ **Die Kontrollsegmente sind seit dem 2026-09-02 fort** (Entscheidung
-> A1, rund 1 700 Zeilen: Mechanik, Spurdetektor und Messgerät). Dass
-> dieser Kopf sie bis zum 2026-09-03 noch führte, ist Fund 158. Der
-> Grabstein mit der vollständigen Begründung steht in
-> `myl-verifier/src/lib.rs`; `gamma` ist in die Stichprobenrate
-> aufgegangen.
-> **144 Tests grün** (111 Modultests, 19 adversariale, 9 Simulation, 3 Bisektion, 2 Doku-Tests).
->
-> ⚑ **Punkt 3.2 ist seit dem 2026-09-03 nicht mehr offen, sondern
-> gegenstandslos** (Fund 158). Die Ununterscheidbarkeit galt für
-> **eingeschleuste** Kontrollsegmente, die wie echte Arbeit aussehen
-> mussten. Die Stichprobe zieht **echte** Arbeitseinheiten, und die sind
-> von echter Arbeit nicht zu unterscheiden, **weil sie es sind**. Die
-> Anforderung entfällt, statt erfüllt zu werden.
->
-> **Der Satz „das Messgerät steht, der Verkehr fehlt" stand hier seit
-> dem 2026-08-27 und stimmt seit dem 2026-09-02 nicht mehr:** Das
-> Messgerät ist mit seinem Gegenstand gegangen.
->
-> ⚑ **Die adversariale Ebene fand Fund 42:** Das Bisektions-Spiel nannte
-> systematisch die **falsche Layer** und hätte damit den Betrüger
-> freigesprochen und den ehrlichen Checker geschlachtet. Behoben in
-> v0.4.0, siehe Changelog.
+> **Version:** 0.29.3
+> **Datum:** 2026-11-18
+> **Status:** In Gebrauch: Redundanzvergleich (Stufe 1), Bisektionsspiel
+> (Stufe 2) mit Prüfmodul, Schiedsrunde in der Kette und Bestrafung;
+> Nachrechnen als Prefill, Prüfung der Tokenwahl; Sicherheitssimulationen
+> gegen Anhang B.2 und Kap. 6.8. Die Stichprobe zieht echte Arbeit;
+> eingeschleuste Kontrollsegmente gibt es seit dem 2026-09-02 nicht mehr.
 
-Verifikations-Subsystem: Redundanzvergleich (Stufe 1) und
-Bisektions-Spiel (Stufe 2). Referenzimplementierung von Whitepaper Kap. 6.4–6.9
-und Anhang A.4.
+Woran das Netz merkt, dass jemand falsch gerechnet hat. Weil die
+Inferenz ganzzahlig und damit bitgenau wiederholbar ist, genügt ein
+Vergleich: Zwei Rechnungen sind gleich oder nicht. Weichen sie ab, engt
+ein Bisektionsspiel die Stelle auf eine Ebene ein, und eine
+Schiedsrechnung in der Kette entscheidet. Referenzimplementierung von
+Whitepaper Kap. 6.4 bis 6.9 und Anhang A.4.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun. |
+| **Betreiber** | Ein Shard, der anders rechnet, verliert Einsatz. Deshalb fährt der Knoten vor dem Netz die Konformitätsvektoren und startet nicht, wenn seine Maschine anders rechnet. |
+| **Entwicklung** | [Module](#module) und [Tests](#tests) unten. |
 
 ## Aufgabe
 
@@ -145,6 +129,15 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.29.3 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-verifier` 0.29.3)
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der alte Stand trug drei Absätze über die am 2026-09-02 entfernten Kontrollsegmente; der neue sagt es in einem Satz, die Begründung steht weiter in `myl-verifier/src/lib.rs` und im Changelog.
+- Am Code nichts geändert; die Kiste hebt ihre Fassung, weil Kopf und Manifest dieselbe Zahl tragen.
 
 ### v0.29.2 (2026-11-18): Der Pod ohne seine Standardmerkmale
 

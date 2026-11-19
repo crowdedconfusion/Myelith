@@ -1,31 +1,24 @@
-# governance (`myl-governance`)
+# GOVERNANCE: wer was ändern darf (`myl-governance`)
 
-> **Version:** 0.17.0
-> **Datum:** 2026-11-11
-> **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
-> Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
-> Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
-> Invarianten-Kopplung, die Kontrollsegment-Schranke aus Fund 58, die
-> Abstimmungsmechanik und das Modellmanifest.
-> **87 Tests grün** (37 Modultests, 6 Streitlast, 26 Akzeptanz, 18 Gleichstand).
->
-> **Was fehlt:** die Punkte 3.2 (Shadow-Phase) und 3.3 (koordinierter
-> Rollout). Beide brauchen laufende Pods, die zwei Modellversionen
-> gleichzeitig fahren; das ist Arbeit in COMPUTE_PIPELINE und
-> INTEGER_LLM und ohne Betrieb nicht messbar. Ein Häkchen dafür wäre
-> eine Behauptung.
->
-> ⚑ **Fund 50 beim ersten Gleichstands-Test:** Die Streitfrist stand auf
-> 7 Epochen mit dem Kommentar „entspricht 7 Tagen". Unter den
-> Stunden-Epochen, mit denen der Rest des Projekts rechnet, waren das
-> **7 Stunden**, ein Faktor 24 im Anfechtungsfenster.
->
-> ⚑ **Fund 49:** Die Self-Dealing-Grenze aus Anhang B.4 lässt sich in
-> **zwei je zulässigen Schritten** umgehen. Nicht behoben, als Tatsache
-> festgehalten, siehe Changelog.
+> **Version:** 0.17.1
+> **Datum:** 2026-11-18
+> **Status:** Parameter-Registry mit Rang (änderbar oder Verfassungsrang,
+> technisch durchgesetzt), Invarianten zwischen Parametern,
+> Abstimmungsmechanik und Modellmanifest. **Offen:** die Shadow-Phase und
+> der koordinierte Rollout eines neuen Modells; beide brauchen laufende
+> Pods, die zwei Modellversionen zugleich fahren.
+> ⚠️ **Bekannt und festgehalten:** Die Self-Dealing-Grenze aus Anhang B.4
+> lässt sich in zwei je zulässigen Schritten umgehen (Fund 49).
 
-Genesis-Modellwahl, Modell-Update-Prozess, Parameter-Governance.
+Welche Größen im Netz überhaupt änderbar sind, welche Verfassungsrang
+haben, wie abgestimmt wird und wie ein neues Netzmodell kommt.
 Referenzimplementierung von Whitepaper Kap. 10.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun. |
+| **Betreiber** | Die Werte, nach denen der eigene Knoten rechnet (Blockzeit, Fristen, Auslastungsziel), stehen hier mit ihrem Rang. Im Testnetz kommen sie mit dem Release. |
+| **Entwicklung** | [Wie ein Vorschlag geprüft wird](#wie-ein-vorschlag-geprüft-wird), [Die Invarianten](#die-invarianten). |
 
 ## Aufgabe
 
@@ -134,6 +127,15 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.17.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-governance` 0.17.1)
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Fund 49 (die Self-Dealing-Grenze in zwei Schritten umgangen) bleibt im Kopf: Er ist nicht behoben.
+- Am Code nichts geändert; die Kiste hebt ihre Fassung, weil Kopf und Manifest dieselbe Zahl tragen.
 
 ### v0.17.0 (2026-11-11): Auslastungsziel 0,8
 

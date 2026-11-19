@@ -1,39 +1,28 @@
-# networking (`myl-net`, `myl-siegel`)
+# NETWORKING: das Netz zwischen den Knoten (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.25.4
-> **Datum:** 2026-11-16
-> **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
-> **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
-> (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
-> Punkt 4.1 (Chaos-Tests; IP-Paketverlust seit dem 22. Oktober im Lauf mit
-> getrennten Prozessen unter `tc netem`, TESTCLIENT).
->
-> Phase 1: 20-Knoten-Vollkonnektivität unter 5 s, ungültige Nachrichten
-> werden nicht weiterverbreitet, sechs Gossip-Topics, Anfragekanal.
-> Phase 2: Paarlatenzmessung mit EMA-Glättung, Latenz-Atteste,
-> Geo- und AS-Diversität. Phase 3: verschlüsselte
-> Sitzungen zwischen Shard-Minern und über Gateways hinweg, mit
-> Schlüsselrotation je Epoche. **163 Tests grün.**
->
-> **Offen:** das **unabhängige kryptographische Review** des
-> Sitzungsschemas, Punkt 4.4 (Lasttest bei Zielnetzgröße) und der
-> IP-Paketverlust aus 4.1.
->
-> ⚑ **Fund 44:** Die Latenz-EMA rechnete in `f64`, obwohl der Kopf des
-> Crates seit dem ersten Tag Festkomma zusagt. Der Gleitkomma-Audit
-> konnte es nicht finden, weil `myl-net` mit **keiner Datei** in seiner
-> Liste stand. Beides behoben.
+> **Version:** 0.27.0
+> **Datum:** 2026-11-18
+> **Status:** In Gebrauch im Knoten: Gegenstellen finden (Einstiegsliste,
+> Kademlia, mDNS, Adressen mit Namen), Gossip, das nur Geprüftes
+> weitergibt, ein Anfragekanal, Latenzmessung mit Attesten,
+> Verbindungsgrenzen und Vielfalt nach Netz und Ort, NAT über AutoNAT,
+> Relais und Lochstanzen, verschlüsselte Sitzungen zwischen Shard-Minern
+> mit Schlüsselwechsel je Epoche. **Offen:** ein unabhängiges
+> kryptographisches Review des Sitzungsschemas und ein Lasttest in der
+> Zielgröße des Netzes.
 
-P2P-Gossip, latenzbasierte Topologie-Erkennung, verschlüsselte
-Aktivierungs-Streams. Referenzimplementierung von Whitepaper Kap. 3.2
-(L0 Networking Layer), Grundlage für die Latenzmessung aus Kap. 4.1/4.3.
+Die unterste Schicht (L0). Sie bringt Blöcke, Transaktionen und Atteste
+zu allen Knoten, misst laufend, wie weit die Knoten voneinander entfernt
+sind (daraus entstehen die Pods), und verschlüsselt die Ströme zwischen
+den Shard-Minern eines Pods. Gebaut auf libp2p mit TCP und QUIC.
+Referenzimplementierung von Whitepaper Kap. 3.2, Grundlage der
+Latenzmessung aus Kap. 4.1 und 4.3.
 
-## Aufgabe
-
-Die unterste Schicht (L0): Peer-Discovery, Gossip-Verbreitung von
-Blöcken/Transaktionen/Attestierungen, kontinuierliche Paarlatenzmessung für
-die Pod-Bildung sowie Ende-zu-Ende-verschlüsselte Punkt-zu-Punkt-Kanäle für
-Aktivierungs-Streams zwischen Shard-Minern (Kap. 9.2).
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun. |
+| **Betreiber** | Ein Port (Vorgabe 4150) für TCP und für UDP. Ein Knoten hinter NAT ohne Weiterleitung erreicht andere, ist selbst aber nur über ein Relais erreichbar. Ein Einstieg mit Namen (`/dns4/<name>/tcp/<port>/p2p/<kennung>`) übersteht einen Umzug; ein gefälschter DNS-Eintrag schiebt keinen fremden Knoten unter, denn der Handshake prüft die Kennung. |
+| **Entwicklung** | [Struktur](#struktur). Läufe mit getrennten Prozessen und Paketverlust unter `tc netem` fährt der Testclient. Kein Gleitkomma auch hier: Die Latenz-EMA rechnete bis Fund 44 in `f64`, heute in Festkomma. |
 
 ## Abhängigkeiten
 
@@ -109,6 +98,63 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.27.0 (2026-11-19): Was nicht beurteilbar ist, wird ignoriert, nicht bestraft (`myl-net` 0.27.0)
+
+- ⛔️ **Fund im nachgestellten Testnetz** (`TESTCLIENT/netzbedingungen/testnetzlauf.py`,
+  fünf Validatoren in getrennten Behältern): Nach wenigen Minuten hatte kein
+  Knoten mehr ein Mesh, in keinem Topic (99 bis 100 % der
+  Zustandsaufnahmen). Blöcke kamen nur noch über das Fluten des Erzeugers
+  an; ein Validator, der neu startete, bekam kein Mesh für den Konsens und
+  beendete sich nach 60 s (dort behoben in NODE 0.135.0).
+- **Ursache:** Jede Ablehnung der Nutzlastprüfung ging als `Reject` an
+  Gossipsub, auch eine, bei der die Anwendung nur nicht urteilen konnte.
+  Latenz-Atteste von einem Aussteller, den der Knoten nicht kennt, wurden so
+  bestraft (−5 je Nachricht); im Lauf nannte kein Knoten `--teilnehmer`,
+  also kannte niemand einen Aussteller, jede Bewertung fiel unter null, und
+  Gossipsub nimmt dann kein GRAFT mehr an. Verschickt werden Atteste heute
+  nur als Testverkehr (`--testverkehr`); `myl mining` tut das nicht, im
+  Betrieb hätte dieser Weg also nicht ausgelöst. Die Semantik war trotzdem
+  falsch: Jede Nachricht, die ein Knoten nur nicht beurteilen kann, hätte
+  dieselbe Strafe gezogen. Auf der Rückschleife fiel es nie auf, weil dort
+  keine Laufzeiten gemessen und also keine Atteste verschickt wurden.
+- ⚑ **Dreistufig:** `PayloadValidator::nicht_beurteilbar` (Vorgabe: nie)
+  und `Ablehnungsgrund::NichtBeurteilbar` („nicht-beurteilbar“);
+  `validation::annahme` macht daraus `Ignore` (nicht weitergeben, ohne
+  Strafe), nachweislich Falsches bleibt `Reject`. Das ist die Unterscheidung
+  aus Gossipsub v1.1, die das Scoring vor Unkenntnis schützt.
+- Probe `nicht_beurteilbares_wird_ignoriert_und_nicht_bestraft` samt
+  Gegenprobe (falsch bleibt `Reject`).
+
+### v0.26.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-net` 0.26.1)
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der Betreiber erfährt im Kopf, was der Port braucht und warum ein Einstieg mit Namen sicher ist; die Latenz in Festkomma (Fund 44) steht dort statt im alten Stand.
+- Am Code nichts geändert; die Kiste hebt ihre Fassung, weil Kopf und Manifest dieselbe Zahl tragen.
+
+### v0.26.0 (2026-11-18): Adressen mit Namen werden gewählt (`myl-net` 0.26.0)
+
+- ⛔️ **Fund:** `libp2p` war ohne das Merkmal `dns` eingebunden. Eine
+  Adresse `/dns4/…` wurde gelesen (die Adressvielfalt kannte sie schon),
+  aber nie gewählt. Die Einstiegsliste des Testnetzes soll Namen tragen,
+  damit ein Umzug des Einstiegsknotens kein Release braucht (Entscheidung
+  des Projektinhabers vom 18.).
+- **Merkmal `dns` und `.with_dns()` im Aufbau des Transports**, nach TCP
+  und QUIC: Namen löst der Resolver über die Einstellungen des Systems auf.
+  Die Pakete (`libp2p-dns`, `hickory-resolver`, unter Windows `ipconfig`)
+  lagen schon im Vorrat und in der Sperrdatei; der Bau mit `--locked`
+  brauchte keine neue Auflösung.
+- **Sicherheit:** Ein falscher DNS-Eintrag schiebt keinen fremden Knoten
+  unter, denn die Adresse trägt die Peer-ID und der Noise-Handshake prüft
+  sie; er kann höchstens die Verbindung verhindern (wie eine falsche
+  Adresse).
+- Probe `ein_einstieg_mit_namen_wird_gewaehlt` (`tests/testnet.rs`, unter
+  Unix): Knoten B wählt `/dns4/localhost/tcp/<port>/p2p/<A>` und beide
+  sehen einander. Gegenprobe von Hand: ohne `.with_dns()` bleibt sie nach
+  10 s bei null Peers stehen.
 
 ### v0.25.4 (2026-11-16): Das Bündel endet mit zwei Listen (Fund 706, `myl-net` 0.25.4)
 

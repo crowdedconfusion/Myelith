@@ -81,6 +81,54 @@ pub fn datenordner() -> PathBuf {
     neben_den_einstellungen("mining")
 }
 
+/// ⚑ **Der Konsensschluessel des Minings, eine Stelle** fuer den Start und
+/// fuer [`stimmsatzzeile`] (2026-11-18). 📌 Bis dahin bekam der Knoten ihn
+/// nur mit einem Wallet; ohne legte er `miner.konsens.key` im
+/// Arbeitsordner des Aufrufers an, also bei jedem Aufruf aus einem anderen
+/// Ordner einen neuen Schluessel, und aus dem Fenster unter macOS in `/`,
+/// wo er nichts anlegen kann. Die Zeile fuer den Startsatz eines Netzes
+/// muss aber genau den Schluessel nennen, mit dem der Knoten spaeter
+/// unterschreibt.
+pub fn konsensschluessel_pfad() -> PathBuf {
+    datenordner().join("konsens.key")
+}
+
+/// ⚑ **Ob der Knoten mit `--erzeuger` startet** (2026-11-18): nur auf der
+/// Probekette und nur ohne Einstieg, dort ist er sein eigener Erzeuger.
+/// 📌 Bis dahin auf jedem Netz ohne Einstieg. Auf einem Netz mit Startsatz
+/// bricht ein Knoten mit `--erzeuger` ab, wenn sein Schluessel nicht im
+/// Satz steht, und ein Mitglied braucht den Schalter nicht: Als Miner
+/// erzeugt es in den Slots, fuer die es gezogen ist.
+fn als_erzeuger(netzname: &str, mit_einstieg: bool) -> bool {
+    netzname == NETZE[0].0 && !mit_einstieg
+}
+
+/// ⚑ **Die eigene Zeile fuer den Startsatz eines Netzes**
+/// (`validator <schluessel> <besitznachweis> <gewicht>`), aus dem
+/// Konsensschluessel des Minings ([`konsensschluessel_pfad`]); fehlt er,
+/// legt der Knoten ihn an. Der Betreiber schickt die Zeile, und der
+/// Startsatz im Release nennt damit genau den Schluessel, mit dem
+/// `myl mining` spaeter unterschreibt.
+pub fn stimmsatzzeile(gewicht: u64) -> Result<String, String> {
+    let programm = knotenprogramm()
+        .ok_or("myl-node nicht gefunden; es entsteht mit dem Installationsskript oder mit `cargo build --release` in NODE/myl-node.")?;
+    let daten = datenordner();
+    std::fs::create_dir_all(&daten).map_err(|e| format!("{}: {e}", daten.display()))?;
+    let aus = std::process::Command::new(&programm)
+        .arg("--konsensschluessel")
+        .arg(konsensschluessel_pfad())
+        .arg("--stimmsatzzeile")
+        .arg(gewicht.to_string())
+        .current_dir(&daten)
+        .output()
+        .map_err(|e| format!("{}: {e}", programm.display()))?;
+    let text = String::from_utf8_lossy(&aus.stdout);
+    match text.lines().find(|z| z.starts_with("validator ")) {
+        Some(z) if aus.status.success() => Ok(z.trim().to_string()),
+        _ => Err(format!("myl-node gab keine Zeile: {}", String::from_utf8_lossy(&aus.stderr).trim())),
+    }
+}
+
 fn neben_den_einstellungen(name: &str) -> PathBuf {
     let e = Einstellungen::vorgabepfad();
     e.parent().map(|p| p.join(name)).unwrap_or_else(|| PathBuf::from(name))
@@ -599,17 +647,21 @@ pub fn starten(f: &Freigabe, von: &str) -> Result<Zustand, String> {
     let mut c = std::process::Command::new(&programm);
     let mut wechselschluessel: Option<zeroize::Zeroizing<String>> = None;
     c.arg("--name").arg(KNOTENNAME).arg("--port").arg("0").arg("--netz").arg(netzname);
-    // ⚑ Mit Einstieg tritt der Knoten bei; ohne ist er sein eigener Erzeuger
-    //   und baut erst, wenn jemand zuhoert.
-    match &einstieg {
-        Some(e) => c.arg("--bootstrap").arg(e),
-        None => c.arg("--erzeuger"),
-    };
+    // ⚑ Mit Einstieg tritt der Knoten bei; ohne ist er auf der Probekette
+    //   sein eigener Erzeuger und baut erst, wenn jemand zuhoert. Auf einem
+    //   anderen Netz nimmt er ohne Einstieg die Liste des Release.
+    if let Some(e) = &einstieg {
+        c.arg("--bootstrap").arg(e);
+    }
+    if als_erzeuger(netzname, einstieg.is_some()) {
+        c.arg("--erzeuger");
+    }
+    c.arg("--konsensschluessel").arg(konsensschluessel_pfad());
     // ⚑ Das Wallet wird Auszahlungskonto. Der Knoten arbeitet mit seinem
     //   eigenen Konsensschluessel; den Schluessel eines Wallets bekommt er
     //   nur, wenn die Kette noch ein anderes fuehrt und es zu wechseln gilt.
     if let Some(w) = &wallet {
-        c.arg("--konsensschluessel").arg(daten.join("konsens.key")).arg("--konto").arg(w.adresse_hex());
+        c.arg("--konto").arg(w.adresse_hex());
         if let Some(alt) = crate::wallet::eingetragen().filter(|a| a.name != w.name) {
             // ⚑ Ein Keystore wandert nicht als Datei: Offen geht der Schluessel
             //   ueber eine Roehre zum Knoten. Gesperrt bleibt das alte Konto
@@ -1353,6 +1405,26 @@ mod tests {
         assert!(zusammenfassung(&z, &fremd, 0).join("\n").contains("noch nicht als Miner angemeldet"));
         let alt = zusammenfassung(&z, &stand_aus("myelith_kette_hoehe 9\n"), 0).join("\n");
         assert!(!alt.contains("Epoche") && !alt.contains("Rolle"), "{alt}");
+    }
+
+    #[test]
+    fn erzeuger_nur_auf_der_probekette_ohne_einstieg() {
+        // ⚑ Auf einem Netz mit Startsatz braeche `--erzeuger` jeden Knoten
+        //   ab, dessen Schluessel nicht im Satz steht (2026-11-18).
+        assert!(als_erzeuger("probe", false), "Probekette ohne Einstieg: eigener Erzeuger");
+        assert!(!als_erzeuger("probe", true), "Probekette mit Einstieg: tritt bei");
+        assert!(!als_erzeuger("test-int4", false), "Testnetz: nie mit --erzeuger");
+        assert!(!als_erzeuger("test-int4", true));
+        assert_eq!(NETZE[0].0, "probe", "die Probekette steht vorn");
+    }
+
+    #[test]
+    fn der_konsensschluessel_liegt_im_datenordner() {
+        // 📌 Nicht im Arbeitsordner des Aufrufers: Dort entstand je Ordner
+        //   ein anderer Schluessel, und die Zeile fuer den Startsatz naennte
+        //   einen, mit dem der Knoten nie unterschreibt.
+        assert_eq!(konsensschluessel_pfad(), datenordner().join("konsens.key"));
+        assert!(konsensschluessel_pfad().is_absolute() || datenordner().is_relative());
     }
 
     #[test]

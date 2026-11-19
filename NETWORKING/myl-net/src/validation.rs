@@ -288,6 +288,23 @@ pub trait PayloadValidator {
     /// laufen bereits vorher — hier geht es um Konsensregeln
     /// (Blockstruktur, Attest-Signaturen, Epochengültigkeit).
     fn validate(&self, topic: GossipTopic, data: &[u8]) -> bool;
+
+    /// ⚑ **Ob eine Nachricht, die [`Self::validate`] nicht durchlässt, nur
+    /// nicht beurteilbar ist** statt nachweislich falsch (2026-11-19).
+    ///
+    /// Gossipsub v1.1 unterscheidet `Ignore` (nicht weitergeben, ohne Strafe)
+    /// von `Reject` (nicht weitergeben und den Weiterleiter abwerten). 📌 Bis
+    /// hierher ging jede Ablehnung als `Reject` hinaus. Ein Knoten, der den
+    /// Aussteller eines Latenz-Attests nicht kannte, wertete damit den
+    /// ehrlichen Absender ab; im nachgestellten Testnetz, in dem kein Knoten
+    /// `--teilnehmer` nennt, fiel jede Bewertung unter null, Gossipsub nahm
+    /// kein GRAFT mehr an, und die Meshes aller Topics zerfielen auf null.
+    /// Die Blöcke kamen nur noch über das Fluten des Erzeugers an.
+    ///
+    /// Vorgabe: nie; wer etwas nicht beurteilen kann, sagt es hier.
+    fn nicht_beurteilbar(&self, _topic: GossipTopic, _data: &[u8]) -> bool {
+        false
+    }
 }
 
 /// Ein Validator, der nichts zusätzlich prüft.
@@ -325,6 +342,10 @@ pub enum Ablehnungsgrund {
     Transportregel,
     /// Die Nutzlastprüfung der Anwendung hat abgelehnt.
     Nutzlastpruefung,
+    /// ⚑ Die Anwendung kann die Nachricht **nicht beurteilen**, etwa weil
+    /// sie den Aussteller nicht kennt (2026-11-19). Nicht weitergereicht,
+    /// aber ohne Strafe für die Gegenstelle (`Ignore` statt `Reject`).
+    NichtBeurteilbar,
 }
 
 impl Ablehnungsgrund {
@@ -334,6 +355,7 @@ impl Ablehnungsgrund {
             Self::FremdesTopic => "fremdes-topic",
             Self::Transportregel => "transportregel",
             Self::Nutzlastpruefung => "nutzlastpruefung",
+            Self::NichtBeurteilbar => "nicht-beurteilbar",
         }
     }
 }
@@ -354,9 +376,22 @@ pub fn beurteile(
         return Err(Ablehnungsgrund::Transportregel);
     }
     if !validator.validate(topic, data) {
+        if validator.nicht_beurteilbar(topic, data) {
+            return Err(Ablehnungsgrund::NichtBeurteilbar);
+        }
         return Err(Ablehnungsgrund::Nutzlastpruefung);
     }
     Ok(topic)
+}
+
+/// Was Gossipsub aus einem Urteil von [`beurteile`] macht: angenommen,
+/// ignoriert (nicht beurteilbar, ohne Strafe) oder verworfen.
+pub fn annahme(urteil: &Result<GossipTopic, Ablehnungsgrund>) -> MessageAcceptance {
+    match urteil {
+        Ok(_) => MessageAcceptance::Accept,
+        Err(Ablehnungsgrund::NichtBeurteilbar) => MessageAcceptance::Ignore,
+        Err(_) => MessageAcceptance::Reject,
+    }
 }
 
 pub fn report(
@@ -384,21 +419,12 @@ pub fn report_with(
     data: &[u8],
     validator: &dyn PayloadValidator,
 ) -> MessageAcceptance {
-    let ok = beurteile(topic_hash, data, validator).is_ok();
-    swarm.behaviour_mut().gossipsub.report_message_validation_result(
-        message_id,
-        source,
-        if ok {
-            MessageAcceptance::Accept
-        } else {
-            MessageAcceptance::Reject
-        },
-    );
-    if ok {
-        MessageAcceptance::Accept
-    } else {
-        MessageAcceptance::Reject
-    }
+    let wirkung = annahme(&beurteile(topic_hash, data, validator));
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .report_message_validation_result(message_id, source, wirkung);
+    wirkung
 }
 
 #[cfg(test)]
@@ -569,5 +595,31 @@ mod tests {
         }
         assert!(!AlleAblehnen.validate(GossipTopic::Blocks, b"x"));
         assert!(AcceptAllValidator.validate(GossipTopic::Blocks, b"x"));
+    }
+
+    /// ⚑ Nicht beurteilbar heisst `Ignore`, nicht `Reject` (2026-11-19):
+    /// Wer aus Unkenntnis verwirft, wertet im Scoring den ehrlichen
+    /// Weiterleiter ab. Nachweislich Falsches bleibt `Reject`.
+    #[test]
+    fn nicht_beurteilbares_wird_ignoriert_und_nicht_bestraft() {
+        struct Unbekannt;
+        impl PayloadValidator for Unbekannt {
+            fn validate(&self, _t: GossipTopic, _d: &[u8]) -> bool {
+                false
+            }
+            fn nicht_beurteilbar(&self, _t: GossipTopic, d: &[u8]) -> bool {
+                d == b"unbekannt"
+            }
+        }
+        // Blöcke: Die Transportregel prüft dort nur die Grösse.
+        let block = GossipTopic::Blocks.topic().hash();
+        let u = beurteile(&block, b"unbekannt", &Unbekannt);
+        assert_eq!(u, Err(Ablehnungsgrund::NichtBeurteilbar));
+        assert_eq!(annahme(&u), MessageAcceptance::Ignore);
+        let v = beurteile(&block, b"falsch", &Unbekannt);
+        assert_eq!(v, Err(Ablehnungsgrund::Nutzlastpruefung), "Gegenprobe: falsch bleibt falsch");
+        assert_eq!(annahme(&v), MessageAcceptance::Reject);
+        assert_eq!(annahme(&Ok(GossipTopic::Blocks)), MessageAcceptance::Accept);
+        assert_eq!(Ablehnungsgrund::NichtBeurteilbar.als_text(), "nicht-beurteilbar");
     }
 }

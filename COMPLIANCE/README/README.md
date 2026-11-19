@@ -1,7 +1,7 @@
-# compliance
+# COMPLIANCE: was Myelith dem Recht zusagt
 
-> **Version:** 0.10.1
-> **Datum:** 2026-11-14
+> **Version:** 0.10.2
+> **Datum:** 2026-11-18
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -9,9 +9,16 @@
 > Kennzeichnung geschriebener Texte, die Lizenz der Schrift der Wortmarke
 > und eine anwaltliche Prüfung.
 
-Alles, was Myelith gegenüber dem Recht zusagt und nachweist. Die
-öffentliche Einstiegsseite ist [`../README.md`](../README.md); hier steht,
-wie die Komponente gebaut ist und was sich an ihr geändert hat.
+Alles, was Myelith gegenüber dem Recht zusagt und nachweist: Kennzeichnung
+von KI-Inhalten, Schutzfilter, Lizenzen der Fremdkomponenten und Modelle.
+Die öffentliche Einstiegsseite ist [`../README.md`](../README.md); hier
+steht, wie die Komponente gebaut ist und was sich an ihr geändert hat.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Was Myelith zusagt und wie erzeugte Inhalte gekennzeichnet sind: die Einstiegsseite [`../README.md`](../README.md). |
+| **Betreiber** | Wer Myelith weitergibt: die Lizenzen der Fremdkomponenten in `NOTICES.md`, die Lizenzlage der Modelle unter `ethics/`. |
+| **Entwicklung** | Wer eine Abhängigkeit hinzufügt, erzeugt `NOTICES.md` neu (`werkzeuge/notices.py`); die CI prüft das. |
 
 ## Struktur
 
@@ -39,6 +46,15 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.10.2 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Neu im Kopf, für wen was gilt; der Stand blieb, er stimmte.
+- Am Code nichts geändert.
 
 ### v0.10.1 (2026-11-14): `rustix` 1.1.6 und `quinn-udp` 0.5.16 in der Lizenzliste
 

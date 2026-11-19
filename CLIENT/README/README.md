@@ -1,27 +1,53 @@
-# client (Nutzer-Client inkl. Wallet)
+# CLIENT: Myelith auf dem eigenen Rechner
 
-> **Version:** 0.245.1 (`myl-client` 0.142.3, `myl-oberflaeche` 0.93.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
-> **Datum:** 2026-11-18
-> **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
-> Gesprächsfenster mit Modellwahl, Agentenschleife und
-> Einstellungsseite; aus einem frischen Klon lassen sich darüber
-> Modelle laden und Artefakte bauen. Freigabebündel für macOS, Windows
-> und Linux, jedes mit Prüfsumme.
->
-> ❌ **Die Netzhälfte steht aus.** Knotenzustand, Läufe, Verifikations­
-> stufe je Segment und der Kapazitätsschalter warten auf ein
-> erreichbares Netz (Punkte 2.2 bis 2.5b).
+> **Version:** 0.247.0 (`myl-client` 0.143.0, `myl-oberflaeche` 0.94.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
+> **Datum:** 2026-11-19
+> **Status:** Alles, was auf dem eigenen Rechner läuft, ist da: Gespräch,
+> Agent, Loop, Module, Sehen, Hören und Sprechen, Modelle holen und bauen,
+> Updates nur mit der Signatur des Projekts. Mining und Testwallets laufen
+> auf der Probekette; das Testnetz `test-int4` ist wählbar und beginnt,
+> sobald sein Startsatz im Release steht.
 
-Die einzige Komponente des Projekts, mit der Menschen tatsächlich
-interagieren: MYL-Wallet, Inferenz-Schnittstelle,
-Session-Kontrakt-Verwaltung für Agenten-Nutzung, Staking- und
-Governance-Ansicht für Miner und Validatoren.
+Der Teil von Myelith, den Menschen bedienen. Drei Zugänge führen zu
+denselben Funktionen:
 
-📌 **Dieser Kopf stand bis zum 2026-09-09 auf „Konzeptphase, noch keine
-Umsetzung"**, während zwei Kisten mit sechzehn Prüfungen, einer
-Oberfläche und Freigabebündeln dastanden. Ein Statuseintrag, der aus
-einer überholten Annahme stammt, schickt den Nächsten in die Irre; er
-kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
+| Zugang | Was es ist |
+|---|---|
+| **Das Fenster** | `Myelith.app` unter macOS, der Menüeintrag „Myelith“ unter Linux, `myl-oberflaeche` überall: Gespräch, Agent, Einstellungen, Modelle, Mining |
+| **`myelith`** | der Agent im Terminal: in einen Ordner gehen, `myelith` tippen; dieser Ordner ist der Arbeitsordner |
+| **`myl`** | jede Funktion einzeln auf der Kommandozeile, auch für Skripte; `myl --hilfe` nennt alle |
+
+Alles rechnet auf dem eigenen Rechner mit einem eigenen Modell, ohne Konto
+und ohne Netz. Das Netzmodell über einen Knoten ist ein Zusatz, kein
+Muss.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | [Erste Schritte](#erste-schritte), dann [Was heute geht](#was-heute-geht). |
+| **Betreiber** | `myl mining` und `myl wallet`; die Anleitung steht im README von NODE unter „Betreiben“. |
+| **Entwicklung** | [Struktur](#struktur), [Ausliefern](#ausliefern), [Was der Agent sehen darf](#was-der-agent-sehen-darf). |
+
+## Erste Schritte
+
+```sh
+git clone https://github.com/crowdedconfusion/Myelith.git && cd Myelith
+sh SYSTEM/install/installieren-macos.sh   # Linux: installieren-linux.sh, Windows: installieren-windows.ps1
+```
+
+Was je System vorher da sein muss, steht in `SYSTEM/install/README.md`.
+Danach:
+
+1. **Ein Modell holen.** Im Fenster unter Einstellungen, *Modelle*: der
+   Katalog mit Größe, Lizenz und Platzbedarf. Vor dem Download steht da,
+   wie viel Platz der Bau braucht; ohne diesen Platz geht es nicht los.
+2. **Fragen.** Im Fenster, oder `myl frage <artefakt> "<text>"`.
+3. **Den Agenten arbeiten lassen.** `cd <ordner> && myelith`. Im manual
+   mode (Umschalt-Tab) wird jede schreibende Handlung vorgelegt und läuft
+   erst nach einer Bestätigung; Lesen und Suchen fragen nie.
+4. **Aktualisieren.** Im Fenster unter Einstellungen, oder
+   `sh SYSTEM/install/installieren-<system>.sh --aktualisieren`. Eingespielt
+   wird nur ein Stand mit der Signatur des Freigabeschlüssels
+   `myelith-freigabe`.
 
 ## Was heute geht
 
@@ -43,17 +69,17 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Der Sprachmodus** | Ein Knopf ersetzt den Verlauf durch ein Zeichen, dessen Ringe **mit dem Ton mitschwingen**; darunter steht die laufende Antwort. Wer spricht und zuhört, liest nicht mit |
 | **Eine eigene Stimme** | Auf der Einstellungsseite eine Aufnahme hochladen; sie wird zur Stimme. Whisper schreibt ihren Text gleich mit, weil CosyVoice damit besser trifft. ⛔️ Liegt eine Probe und spricht ein Programm, das nicht klonen kann, **steht das da** |
 | **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
-| **Vier Betriebsarten** | Chat und Agent laufen; im Reiter **Knoten** (Konsole: `/mining`) wird Mining eingestellt und gestartet, heute als Knoten im Probelauf ohne Testnetz, und der Reiter atmet, solange es läuft; Wallet steht mit seiner Begründung da und wartet auf das Netz |
+| **Vier Betriebsarten** | Chat und Agent laufen; im Reiter **Knoten** (Konsole: `/mining`) wird Mining eingestellt und gestartet, auf der Probekette oder im Testnetz (Netz wählen im Bereich Wallet oder mit `myl mining netz`), und der Reiter atmet, solange es läuft; Testwallets mit Spielgeld, Einstieg und die Zeile für den Startsatz im Bereich Wallet oder über `myl wallet` und `myl mining stimmsatzzeile` |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
 | **Einstellungen** | Fünf Bereiche, vierzehn Felder (dreizehn davon im Fenster: das Konsolen-Design wirkt dort nicht) in der Reihenfolge, in der jemand sucht (Sprache, Aktualisierung, Modelle, was dieser Rechner hergibt, dann Modell und Agent), und dazu ein Schieberegler je gefundenem Rechenwerk, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
 | **Sprache** | Deutsch oder Englisch, umschaltbar in den Einstellungen und sofort wirksam. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind |
-| **Aus einem frischen Klon einrichten** | Drei Skripte unter `SYSTEM/install/`, je eines für macOS, NixOS und Windows, mit einer Anleitung je System daneben. Sie prüfen erst, bauen dann, und laden nichts nach |
-| **Nach Aktualisierungen sehen** | Auf der Einstellungsseite: Gefragt wird, ob `origin` Änderungen hat, die dieser Klon nicht hat. Eingespielt wird mit `git merge --ff-only` und dem Installationsskript der Plattform |
+| **Aus einem frischen Klon einrichten** | Ein Skript je System unter `SYSTEM/install/` (macOS, Linux, NixOS, Windows), mit einer Anleitung je System daneben. Sie prüfen erst, bauen dann, und laden nichts nach |
+| **Nach Aktualisierungen sehen** | Auf der Einstellungsseite: Gefragt wird, ob `origin` Änderungen hat, die dieser Klon nicht hat. Eingespielt wird nur ein Stand, dessen Spitze ein Freigabeschlüssel aus `SYSTEM/install/freigabeschluessel` signiert hat, dann mit `git merge --ff-only` und dem Installationsskript der Plattform |
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über dreiundachtzig Befehle. ⚠️ **Mit fünf Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
+über fünfundachtzig Befehle. ⚠️ **Mit sechs Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole; `stimmsatzzeile` startet `myl-node` einmal mit `--stimmsatzzeile`, wie `myl mining stimmsatzzeile`. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -98,7 +124,8 @@ Binaries und das Bündel in einem Zug will, baut sie einzeln mit
 
 ⚠️ **Was die Freigabe nicht leistet:** Die Bündel werden gebaut, aber
 **nicht geöffnet**, denn ein Fenster braucht eine Anzeige und die hat
-kein Runner. Nichts ist signiert. Nichts ist reproduzierbar; zwei Läufe
+kein Runner. Die Bündel selbst sind nicht signiert; signiert ist der Stand
+im Repositorium, den die Installationsskripte beim Aktualisieren prüfen. Nichts ist reproduzierbar; zwei Läufe
 geben verschiedene Summen. Die Summen belegen, dass eine
 heruntergeladene Datei die ist, die gebaut wurde, nicht, dass jemand
 anders denselben Bau nachvollziehen kann.
@@ -182,6 +209,68 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.247.0 (2026-11-19): Netz und Zeile für den Startsatz im Fenster (`myl-oberflaeche` 0.94.0)
+
+- **Im Bereich Wallet:** eine Auswahl des Netzes (`probe`, `test-int4`),
+  dieselbe Stelle wie `myl mining netz`, und ein Knopf „Zeile für den
+  Startsatz“, wie `myl mining stimmsatzzeile`, mit dem Hinweis, dass die
+  Zeile nur öffentliche Teile enthält und der Schlüssel auf diesem Rechner
+  bleibt. Bis hierher ging beides nur auf der Kommandozeile.
+- Neue Befehle `netz_setzen` und `stimmsatzzeile`; der zweite startet
+  `myl-node` einmal mit `--stimmsatzzeile` und steht deshalb unter den
+  Ausnahmen, die einen Unterprozess starten (jetzt sechs, 85 Befehle).
+- 📌 Ohne Einstieg sagte das Fenster „Der Knoten erzeugt allein und baut
+  erst, wenn jemand zuhört“, auch für das Testnetz. Seit CLIENT 0.246.0
+  stimmt das nur auf der Probekette; im Testnetz steht jetzt „Der Knoten
+  nimmt die Einstiegsliste des Release“.
+- Proben des Fensters 93 grün (Anmeldung der Befehle, Zahlwort im README),
+  Clippy grün.
+
+### v0.246.0 (2026-11-18): Mining unterschreibt immer mit demselben Schlüssel, und die Zeile für den Startsatz kommt aus ihm (`myl-client` 0.143.0)
+
+- ⛔️ **Fund beim Durchgehen des Wegs für Betreiber:** `myl mining` gab dem
+  Knoten den Konsensschlüssel `<datenordner>/konsens.key` nur mit einem
+  gewählten Wallet. Ohne Wallet legte der Knoten `miner.konsens.key` im
+  Arbeitsordner des Aufrufers an: bei jedem Aufruf aus einem anderen Ordner
+  ein neuer Schlüssel, und aus dem Fenster unter macOS in `/`, wo er nichts
+  anlegen kann. Jetzt immer `--konsensschluessel <datenordner>/konsens.key`
+  (`mining::konsensschluessel_pfad`).
+- ⛔️ **`--erzeuger` nur noch auf der Probekette ohne Einstieg**
+  (`mining::als_erzeuger`). Bis hierher bekam ihn jeder Knoten ohne
+  Einstieg. Auf einem Netz mit Startsatz bricht ein Knoten mit
+  `--erzeuger` ab, wenn sein Schlüssel nicht im Satz steht; ein Mitglied
+  braucht den Schalter nicht, es erzeugt als Miner in den Slots, für die
+  es gezogen ist. Ohne Einstieg nimmt der Knoten dort die Liste des
+  Release.
+- **Neu: `myl mining stimmsatzzeile [GEWICHT]`** (Vorgabe 100) gibt die
+  eigene Zeile für den Startsatz eines Netzes aus, mit genau dem
+  Schlüssel, mit dem `myl mining` später unterschreibt; fehlt er, entsteht
+  er. Vorher blieb nur `myl-node --stimmsatzzeile`, und das legte den
+  Schlüssel unter einem anderen Namen in einen anderen Ordner: Ein
+  Betreiber hätte einen Schlüssel eingereicht, mit dem sein Miner nie
+  unterschreibt.
+- Die Hilfe sagt bei `myl mining` nicht mehr „im Probelauf“: Das Netz wählt
+  `myl mining netz`.
+- Proben: `erzeuger_nur_auf_der_probekette_ohne_einstieg`,
+  `der_konsensschluessel_liegt_im_datenordner`. Von Hand mit eigenem `HOME`:
+  zweimal dieselbe Zeile, Schlüssel unter `mining/konsens.key`, Gewicht 0
+  abgewiesen.
+- **Der Kopf ist für Nutzer geschrieben:** drei Zugänge (Fenster, `myelith`,
+  `myl`), eine Tabelle, was wer hier findet, und „Erste Schritte“ vom Klon
+  bis zum Update. Der alte Stand („die Netzhälfte steht aus“, mit
+  Punktnummern des Plans) und die Notiz über den Kopf vom 2026-09-09
+  entfallen.
+- Berichtigt, weil überholt: Mining lief laut Tabelle „im Probelauf ohne
+  Testnetz“ (heute wählbar mit `myl mining netz`), es gab „drei Skripte“
+  (heute eines je System, Linux eingeschlossen), das Aktualisieren nannte
+  die Prüfung der Signatur nicht, und „Nichts ist signiert“ unter
+  Ausliefern gilt nur noch für die Bündel.
+- `SYSTEM/install/README.md`: Die Skripte legen sechs Programme ab, nicht
+  fünf (`myl-shard` fehlte in der Liste). Neue Zeile „Das Aktualisieren“
+  unter „Wie gut das belegt ist“: am 2026-11-18 mit dem echten Skript unter
+  macOS und in einem Debian 12 (arm64) jeweils gültig geprüft und
+  eingespielt, alle sechs Programme samt Fenster gebaut.
 
 ### v0.245.1 (2026-11-18): Der erste Freigabeschlüssel steht in der Liste
 

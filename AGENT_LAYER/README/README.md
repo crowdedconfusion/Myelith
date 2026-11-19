@@ -1,17 +1,27 @@
-# agent-layer
+# AGENT_LAYER: vom Modell zum Agenten (`myl-agent`, `myl-local-agent`, `book2skill`)
 
-> **Version:** 0.74.0 (`myl-agent` 0.10.0, `myl-local-agent` 0.58.0, `book2skill` 0.7.0)
+> **Version:** 0.74.1 (`myl-agent` 0.10.0, `myl-local-agent` 0.58.0, `book2skill` 0.7.0)
 > **Datum:** 2026-11-18
-> **Status:** Manifeste, Herkunftsstufe, Registratur, der
-> **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
-> v0.7.0 die **Segmentkette**, seit v0.8.0 die Herkunft im
-> **Gedächtnis**. 59 Tests. ⚑ **Was jetzt fehlt, ist keine
-> Zusicherung mehr, sondern eine Laufzeit:** Nichts führt einen Plan
-> aus.
+> **Status:** Der Agent auf dem eigenen Rechner läuft: Werkzeuge,
+> Werkzeugkisten, Skills, Loop, Notaus, Gedächtnis, und Befehle wie
+> Schreibzugriffe unter der Sandbox des Betriebssystems. Für das Netz
+> stehen Manifeste, Herkunftsstufen, der Session-Kontrakt mit Durchsetzung
+> im Ledger, Plan und Segmentkette; Aufträge an das Netzmodell gehen über
+> die Tür eines Knotens.
 
-Session-Kontrakte, Schadensbegrenzung, Dual-LLM-Trennung gegen
-eingeschleuste Anweisungen, Segmentketten-Verifikation, Agentengedächtnis.
-Referenzimplementierung von Whitepaper Kap. 8 (L3 Agent Layer).
+Was aus einem Sprachmodell einen Agenten macht, der handelt, ohne mehr zu
+dürfen als zugesagt. Budget, Empfängerliste und Zeitfenster stehen
+außerhalb des Modells im Session-Kontrakt und werden von der Kette
+durchgesetzt, nicht vom Agenten selbst. Zwei Hälften, und die Trennung
+steht im Namen: Was mit `myl-` beginnt, gehört zum Protokoll; was mit
+`local-` beginnt, wirkt nur auf dem eigenen Rechner. Referenzimplementierung
+von Whitepaper Kap. 8.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Werkzeugkisten (`local-toolkits/`), Skills (`local-skills/`), auto und manual mode, die Sandbox: beschrieben im README von CLIENT. Aus einem Buch wird ein Skill mit `myl buch` (`book2skill`). |
+| **Betreiber** | Nichts zu tun. |
+| **Entwicklung** | [Netz und Ort: die Trennung](#netz-und-ort-die-trennung), [Struktur von `myl-agent`](#struktur-von-myl-agent). |
 
 ## Aufgabe
 
@@ -71,6 +81,15 @@ umbenannt, weil er in jedem `use` steht.
   was die Ausgabe eines Schritts einer geltenden Kette ist.
 
 ## Changelog
+
+### v0.74.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der alte Stand nannte nur die Hälfte für das Netz; der neue nennt beide, den Agenten auf dem eigenen Rechner (Sandbox, Loop, Skills) zuerst.
+- Am Code nichts geändert.
 
 ### v0.74.0 (2026-11-18): Geschrieben wird unter der Grenze des Betriebssystems (`myl-local-agent` 0.58.0)
 

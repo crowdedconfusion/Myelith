@@ -1,9 +1,25 @@
-# gateway (`myl-gateway`)
+# GATEWAY: die Tür zum Netzmodell (`myl-gateway`)
 
-> **Version:** 0.16.0
-> **Datum:** 2026-11-17
-> **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
-> nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
+> **Version:** 0.16.1
+> **Datum:** 2026-11-18
+> **Status:** Die eigene Tür eines Knotens auf der Rückschleife
+> (Vorgabe `127.0.0.1:4160`): `/v1/models`, `/v1/completions` und
+> `/v1/chat/completions`. Zugang über eine Vollmacht aus einem
+> Sitzungskontrakt der Kette; Guthaben und Höchstbetrag werden vor dem
+> Rechnen geprüft, und jede Anfrage hinterlässt einen Beleg. Gerechnet
+> wird über den Knoten im Shard. **Ein öffentliches Gateway** mit TLS,
+> Zugang für Fremde und Ratenbegrenzung **gibt es noch nicht.**
+
+Der Weg, auf dem eine Anfrage das Netzmodell erreicht. Die Tür spricht
+das Format, das viele Werkzeuge schon kennen, prüft, ob die Anfrage
+bezahlt ist, gibt sie an den Knoten und schreibt fest, was geliefert
+wurde. Whitepaper Kap. 3.3 führt Gateways als eine der Rollen im Netz.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | `myl frage --tuer HOST:PORT --agent NAME TEXT` und `myl sitzung --tuer`; die Vollmacht entsteht mit `myl wallet sitzung`. |
+| **Betreiber** | Die Tür bindet nur an die Rückschleife. Nach außen gebunden würde ein Überlastangriff gegen die Tür einer gegen den Konsens. `--ohne-tuer` schließt sie; `myl mining` startet den Knoten so. |
+| **Entwicklung** | Keine HTTP-Bibliothek, handgeschriebenes HTTP: Begründung und Grenzen in den Abschnitten unten. |
 
 ## ⚑ Die Rolle stand im Papier und hatte keine Komponente (Fund 87)
 
@@ -83,6 +99,15 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.16.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- ⛔️ **Der alte Stand war überholt:** „an einen Pod gibt sie noch nichts“. Die Tür im Knoten gibt Aufträge über die Ortsleitung an den Shard (`--ortsleitung`); offen ist das öffentliche Gateway. Der Kopf nennt die drei Wege unter `/v1`.
+- Am Code nichts geändert.
 
 ### v0.16.0 (2026-11-17): Zusagen werden vorgemerkt, Aufrufe nur angebotener Werkzeuge
 

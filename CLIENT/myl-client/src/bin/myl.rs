@@ -67,10 +67,13 @@ myl: lokaler Betrieb von Myelith
   myl gedaechtnis [ordner] [suchtext] [--vergessen NR] [--auftrag TEXT]
                                   Das Gedaechtnis des Ordners: was es weiss, Suche, eine Erinnerung vergessen
   myl mining [start [--ort PFAD] [--volumen GIB] [--kerne N] [--gewichte]|stop]
-                                  Mining im Probelauf: Stand, starten (Knoten laeuft weiter), beenden
+                                  Mining: Stand, starten (Knoten laeuft weiter), beenden
   myl mining einstieg [ADRESSE|DATEI|aus]
   myl mining netz [probe|test-int4]
                                   Wohin der Knoten beitritt (etwa einstieg.txt des Probenetzes)
+  myl mining stimmsatzzeile [GEWICHT]
+                                  Die eigene Zeile fuer den Startsatz eines Netzes (Vorgabe 100),
+                                  mit dem Konsensschluessel, mit dem dieser Knoten unterschreibt
   myl wallet [neu NAME|wiederherstellen NAME|waehle NAME|verlauf NAME]
                                   Testwallets: Liste, neu (12 Woerter nach BIP-39), aus Woertern, auswaehlen
   myl wallet credits NAME MYL | sitzung NAME AGENT [BUDGET] [EPOCHEN] | widerrufen NAME SITZUNG
@@ -393,6 +396,26 @@ fn mining(args: &[String]) -> i32 {
                 1
             }
         },
+        Some("stimmsatzzeile") => {
+            let gewicht = match args.get(1).map(|g| g.parse::<u64>()) {
+                None => 100,
+                Some(Ok(g)) if g > 0 => g,
+                _ => {
+                    eprintln!("myl mining stimmsatzzeile: das Gewicht ist eine ganze Zahl ueber null");
+                    return 2;
+                }
+            };
+            match mining::stimmsatzzeile(gewicht) {
+                Ok(zeile) => {
+                    println!("{zeile}");
+                    0
+                }
+                Err(f) => {
+                    eprintln!("myl mining: {f}");
+                    1
+                }
+            }
+        }
         Some("netz") => {
             if let Some(name) = args.get(1) {
                 if let Err(f) = mining::netz_setzen(name) {

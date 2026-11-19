@@ -1,4 +1,4 @@
-0.11.1
+0.12.0
 
 # Myelith: die aktuelle Fassung und was sie ändert
 
@@ -12,34 +12,32 @@ Darunter steht ein einziger Abschnitt: was sich mit der aktuellen Fassung
 ändert. Er wird mit jeder neuen Fassung ersetzt, ältere Fassungen stehen
 hier nicht. Das Programm zeigt ihn vor dem Update.
 
-## 0.11.1 (2026-11-18)
+## 0.12.0 (2026-11-19)
 
-- **Updates kommen nur noch mit der Signatur des Projekts.** Ab dieser
-  Fassung spielt die Aktualisierung nur einen neuen Stand ein, den der
-  Freigabeschlüssel `myelith-freigabe` signiert hat; wer den Zugang zu
-  GitHub übernimmt, bringt damit allein keinen Code mehr auf einen
-  Rechner. Dieses eine Update kommt noch ohne die Prüfung herein, weil die
-  Liste der Schlüssel bisher leer war, und sagt das beim Einspielen.
+- **Bereit für Betreiber des Testnetzes.** `myl mining stimmsatzzeile`
+  gibt die eigene Zeile für den Startsatz aus, mit genau dem Schlüssel, mit
+  dem das Mining unterschreibt; im Fenster steht sie im Bereich Wallet,
+  zusammen mit der Wahl des Netzes (`probe` oder `test-int4`). Die Anleitung
+  steht im Repositorium in `NODE/README/README.md` unter „Betreiben“. Der
+  Startsatz selbst kommt mit einem späteren Release.
+- **Mining unterschreibt immer mit demselben Schlüssel**, gespeichert im
+  Datenordner des Minings. Wer bisher ohne Wallet gemint hat, bekommt dabei
+  einmal einen neuen Schlüssel; auf der Probekette ändert das nichts.
+- **Der Knoten ist robuster:** Nach einem Neustart holt er erst auf und
+  erzeugt dann; steht nach dem Start kein Netz um ihn, wartet er, statt sich
+  zu beenden; Einstiegsadressen dürfen einen Namen tragen
+  (`/dns4/<name>/...`); den Startsatz eines Netzes bringt das Release mit.
+- **Das Netz bestraft keine Gegenstelle mehr** für eine Nachricht, die ein
+  Knoten nur nicht beurteilen kann.
 
-Seit 0.11.0 außerdem:
+Aus 0.11.1 und 0.11.0, falls übersprungen:
 
-⚠️ **Seit 0.11.0 gelten neue Regeln für die Abrechnung der Pods und für die
-Saat.** Eine Kette von 0.10.0 lässt sich nicht weiterführen; ein Knoten
-beginnt sie neu.
-
-- **Befehle des Agenten laufen in einer Sandbox des Betriebssystems**
-  (Seatbelt unter macOS, Landlock unter Linux): schreiben nur im
-  Arbeitsordner, kein Netz, nicht lesen im übrigen Benutzerordner. Auch was
-  die Dateiwerkzeuge schreiben, geht durch sie. Abschalten mit
-  `agent.sandbox`; die Startzeile sagt, was gilt.
-- **Eine Runde kostet Prompt und Ausgabe**, und der Klient kauft vor jeder
-  Runde nur so viele Credits nach, wie sie braucht. Fällt eine Runde auf
-  einen Epochenwechsel, versucht er es selbst noch einmal.
-- **Schneller auf Apple ab M2:** Die Vorbereitung eines Prompts rechnet mit
-  int8-Modellen bis zu 40 Prozent schneller, Token für Token dasselbe
-  Ergebnis.
-- **Mining nimmt, was freigegeben ist** (Kerne, Grafikkarten), und misst
-  beim Start, wo jede Matrix am schnellsten läuft.
-- **Sicherheit:** Steuerzeichen des Modells in gelesenen Texten oder
-  Webseiten schreiben keine eigene Runde mehr in den Verlauf, und die
-  Dateiwerkzeuge folgen keinem Verweis, der nach ihrer Prüfung entstand.
+- **Updates kommen nur mit der Signatur des Projekts** (Freigabeschlüssel
+  `myelith-freigabe`).
+- ⚠️ **Seit 0.11.0 gelten neue Regeln für die Abrechnung der Pods und für
+  die Saat.** Eine Kette von 0.10.0 lässt sich nicht weiterführen; ein Knoten
+  beginnt sie neu.
+- Befehle des Agenten laufen in einer Sandbox des Betriebssystems; eine
+  Runde kostet Prompt und Ausgabe; schneller auf Apple ab M2; Mining nimmt,
+  was freigegeben ist; Steuerzeichen und Verweise können den Agenten nicht
+  mehr umlenken.

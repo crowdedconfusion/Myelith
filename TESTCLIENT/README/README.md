@@ -1,31 +1,25 @@
-# testclient (`myl-testclient`)
+# TESTCLIENT: das Messgerät (`myl-testclient`, Programm `myl-test`)
 
-> **Version:** 0.75.1
-> **Datum:** 2026-11-16
-> **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
-> (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
-> dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
-> Fremdmaschinen-Automatik, 4.1 der Konformitätslauf als fünfte Stufe,
-> 4.2 die Maschinenbeschreibung im Protokoll). Offen bleibt in Phase 2
-> der Lauf selbst, also die zweite Architektur, und 2.3 (bestätigte
-> Ergebnisse ablegen). 281 Tests grün,
-> alle Läufe gegen die echten Artefakte verifiziert. Der
-> Fremdmaschinen-Test ist auf einem nachgebauten frischen Klon gefahren
-> (aarch64/macOS); Windows und der Weg über Modellbeschaffung und
-> Artefaktbau stehen weiter aus.
->
-> **Drei Funde am Messgerät selbst (2026-08-22).** Sie betreffen nicht das
-> Netz, sondern das Werkzeug, mit dem es geprüft wird, und alle drei
-> hätten einen bestandenen Nachweis geliefert, den es nicht gab:
-> **Fund 34** meldete `cpu-simd` als eigenen Rechenpfad auf x86_64, wo
-> keiner existiert; **Fund 35** urteilte `NACHWEIS` über einen Lauf, der
-> nach einem von sechs Prompts abgebrochen war; **Fund 36** hashte nur die
-> erzeugten Token und übersah damit Rechenabweichungen, solange kein
-> Argmax kippte. Einzelheiten unten.
+> **Version:** 0.76.0
+> **Datum:** 2026-11-18
+> **Status:** `myl-test` fährt Hardware-, Determinismus- und
+> Konformitätsläufe mit einem Protokoll, das zwischen Maschinen und
+> Modellständen vergleichbar bleibt; `vergleich` urteilt über zwei
+> Protokolle. Dazu Pod-Läufe, Netzläufe mit getrennten Knoten (auch unter
+> Paketverlust mit `tc netem`), Auftragsläufe mit Lügner und Störer und
+> das geschlossene Testnetz über Stunden (`netzbedingungen/testnetzlauf.py`).
+> **Offen:** der Vergleich mit einer zweiten Architektur auf echter
+> x86_64-Hardware und das Ablegen bestätigter Ergebnisse.
 
-Terminal-Testclient: Hardwaretests auf heterogener Hardware und
-geshardete Inferenz: jeder Lauf mit einem Protokoll, das zwischen
-Maschinen und Modellständen vergleichbar bleibt.
+Wer wissen will, ob ein Rechner bitgleich rechnet wie ein anderer, fährt
+`myl-test` auf beiden und vergleicht die Protokolle. Die Antwort ist
+`NACHWEIS`, `ABWEICHUNG` oder `UNVERGLEICHBAR`, jeweils mit Grund.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun. |
+| **Betreiber** | Wer seine Maschine prüfen will: `myl-test hardware`, `myl-test determinismus`, dann `myl-test vergleich`; die [Anleitung für Tests mit mehreren Beteiligten](#anleitung-für-tests-mit-mehreren-beteiligten) steht unten. |
+| **Entwicklung** | Drei Funde betrafen das Messgerät selbst und hätten einen Nachweis geliefert, den es nicht gab: `cpu-simd` als Rechenpfad auf x86_64, wo keiner existierte (Fund 34), ein Urteil über einen abgebrochenen Lauf (Fund 35), ein Hash nur über die erzeugten Token (Fund 36). |
 
 ## Aufgabe
 
@@ -543,6 +537,59 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.76.0 (2026-11-18): Das geschlossene Testnetz, nachgestellt (`myl-testclient` 0.76.0)
+
+- **Neu: `netzbedingungen/testnetzlauf.py`.** Die bisherigen Netzläufe
+  fahren alle Knoten in einem Behälter auf der Probekette mit gerafftem
+  Takt. Dieser stellt das geschlossene Testnetz nach, wie es mit echten
+  Betreibern anläuft: Netz `test-int4` mit seinem Takt (2 s je Slot),
+  ein Startsatz aus fünf gleich schweren Validatoren, ein Einstiegsknoten
+  mit `--erzeuger` unter einem Namen (`/dns4/einstieg/...`), ein zweiter
+  Einstieg, drei Validatoren wie Miner über `--konto` mit Testverkehr; je
+  Knoten ein eigener Behälter mit eigener Schnittstelle und `tc netem`
+  (Laufzeit, Streuung und Verlust je Ort). Störungen nach Plan: Neustart,
+  Absturz (`kill -9`), ein abgeschnittener Validator, eine Spaltung zwei zu
+  drei, ein Einsteiger von null, Ausfall des Einstiegs mit einem
+  Einsteiger in dieser Zeit, schlechtes Netz (Laufzeit dreifach, 5 %
+  Verlust), ein Validator ohne seine Kette, zwei zugleich neu gestartet.
+  Jede Minute: Höhe, bestätigter Prüfpunkt, Gegenstellen, CPU, Speicher,
+  Kette und Protokoll je Knoten. `--kurz` rafft den Plan auf rund
+  zwölf Minuten.
+- **Neu: `netzbedingungen/testnetzauswertung.py`**: Einigkeit (Endhöhe,
+  Block, Wurzel, Gabeln), BFT-Runden, Warten vor dem Erzeugen, Aufholzeit
+  je Störung, Abstand der Finalität, Speicher und Wachstum je Stunde; als
+  `auswertung.md` neben die Protokolle.
+- Erster kurzer Lauf (12 min, mit NODE 0.135.0): alle sieben Knoten am Ende
+  bei Höhe 327 mit demselben Block und derselben Wurzel, fünf Höhen mit
+  zwei Blöcken (während Abschneiden und Spaltung, danach aufgelöst),
+  aufgeholt nach jeder Störung in 0 bis 5 s, Prüfpunkt 150 überall
+  bestätigt; je Knoten rund 11 MiB Speicher und unter 1 % CPU, Kette
+  0,45 MB und Protokoll rund 1,6 MB je Stunde.
+- **Der erste lange Lauf fand zwei Fehler** (nach 25 und 40 Minuten): Die
+  Meshes aller Knoten zerfielen, und ein Validator beendete sich nach einem
+  Neustart ohne Mesh selbst (behoben in NETWORKING 0.27.0 und NODE 0.135.0).
+  Die Auswertung nennt seitdem das Mesh je Knoten.
+- **Langer Lauf mit den Behebungen** (330 min, 9 517 Blöcke, fünf
+  Epochen, alle Störungen): alle sieben Knoten am Ende bei derselben Höhe
+  mit demselben Block und derselben Wurzel; 130 Höhen mit zwei Blöcken, alle
+  aus Abschneiden und Spaltung und danach aufgelöst; aufgeholt nach jeder
+  Störung in 1 bis 10 s; Einsteiger von null nach 5 s an der Spitze, auch
+  während der Einstieg fehlte (über den zweiten); Mesh im Median 4 bis 6;
+  bestätigt im Median nach 233 Blöcken (7,8 min), höchstens nach 313;
+  12 bis 22 MiB und 0,5 % CPU je Knoten, Kette 0,47 MB und Protokoll rund
+  1,5 MB je Stunde.
+- Am Code der Kiste nichts geändert; die Kiste hebt ihre Fassung mit den
+  neuen Werkzeugen.
+
+### v0.75.2 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-testclient` 0.75.2)
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Die Funde 34 bis 36 am Messgerät stehen knapp in der Tabelle statt im Stand.
+- Am Code nichts geändert; die Kiste hebt ihre Fassung, weil Kopf und Manifest dieselbe Zahl tragen.
 
 ### v0.75.1 (2026-11-18): Pod und Knoten ohne ihre Standardmerkmale
 

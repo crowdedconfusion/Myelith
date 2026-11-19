@@ -1,94 +1,43 @@
-# training (`myl-train`)
+# TRAINING: das Netzmodell fortschreiben (`myl-train`)
 
-> **Version:** 0.4.6 (`myl-train` 0.3.1)
-> **Datum:** 2026-10-23
-> **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
-> gebaut, und beide sind genau die, die **nicht** am ganzzahligen
-> Rückwärtspass hängen:
->
-> - **Datenprovenienz** (v0.1.0): Merkle-verankerte Korpora,
->   Segmentreferenz per Beweis, gebündelte Beweise, VRF-gesteuerte
->   Zuweisung. Steht in der Planung hinten, weil er inhaltlich dorthin
->   gehört, ist aber technisch unabhängig.
-> - **Wachstumsoperator, Bitbudget und Tiefenwachstum** (v0.2.0):
->   ganzzahlige Aufteilung, Identitätsebene, Digestvergleich vor und
->   nach.
->
-> **Der Rückwärtspass ist seit dem 2026-09-04 kein Wartegrund mehr**
-> (INTEGER_LLM `kernels` 0.34.0, `runtime` 0.25.0). Ein Kreis aus
-> Vorwärtspass, Mitschnitt der Zwischenwerte, Gradient und Optimierer
-> schliesst sich über **beide Blöcke** einer Ebene: über den ganzen
-> MLP-Block und über den Aufmerksamkeitsblock samt RoPE, Softmax,
-> Kopfgewichtung und gruppierter Aufmerksamkeit. Gemessen auf echten
-> Gewichten und auf einem Experten eines Expertengemischs. Was fehlt,
-> ist der Zusammenbau zur ganzen Ebene und die Schleife über eine
-> Folge. **Die Zuordnung bleibt wie bisher:** Die Rechenkerne stehen in
-> INTEGER_LLM, die Arbeitsklasse und die Aggregation stehen hier.
->
-> ⚑ **Der Aufmerksamkeitsblock rechnet über eine Folge**, und das ist
-> Bedingung und nicht Bequemlichkeit: Bei einer einzigen Position
-> liefert der Softmax exakt eins, seine Ableitung ist exakt null, und
-> Q und K bekämen keinen Gradienten.
->
-> ⚑ **Eine Lernrate passt nicht zu allen Ebenen** (Fund 172). Ebene 0
-> von Qwen2.5-0,5B trägt sechs Bit mehr Ausgabeskala als die mittleren
-> Ebenen, derselbe Schritt wirkt dort vierundsechzigmal schwächer, und
-> ihre typischen Werte liegen dicht unter der `i16`-Grenze. Die
-> Obergrenze für die Rate ist damit nicht die Konvergenz, sondern die
-> Sättigung. Das ist die nächste inhaltliche Frage der Blockskalierung.
->
-> **Die eine Messung ist gemacht.** Punkt 0.1 ist beantwortet:
-> Das Schema **trägt**, sofern die Gewichte stochastisch gerundet werden
-> (+0,67 % gegen die Gleitkomma-Referenz; mit Rundung zur nächsten Stufe
-> +29,9 %). Dazu 0.2: Ein Trainingsschritt **ohne Gleitkommazustand**
-> geht, mit ganzzahligem Master und zählerbasiertem Würfel, +0,75 %.
-> Protokolle:
-> [`entscheidung_0-1.md`](../tests/diag/results/entscheidung_0-1.md) und
-> [`entscheidung_0-2.md`](../tests/diag/results/entscheidung_0-2.md).
-> Das Konzept daraus steht in
-> [`Konzept-Wachstum.md`](Konzept-Wachstum.md): der Trainingsschritt,
-> seine Verifikation, die Aggregation und ein Modell, das wächst.
-> **Was am Expertengemisch anders ist**, steht daneben in
-> [`Konzept-Gemischtraining.md`](Konzept-Gemischtraining.md): der
-> Router und sein absorbierender Zustand, die gemessene Schieflage der
-> Experten, das Wachstum in der dritten Achse und die vierte
-> Shardachse.
-> Die Planung steht damit; ihr erster Punkt liegt in INTEGER_LLM,
-> nicht hier: Solange Vorwärts- und Rückwärtspass in Gleitkomma
-> rechnen, ist der Gradient geräteabhängig und mit ihm jedes Δm.
+> **Version:** 0.4.7 (`myl-train` 0.3.1)
+> **Datum:** 2026-11-18
+> **Status:** Gebaut sind Datenprovenienz (Merkle-verankerte Korpora,
+> Beweise je Segment, Zuweisung über VRF), der Wachstumsoperator mit
+> Bitbudget und Tiefenwachstum und die Buchkette (aus einem Buch wird
+> Material). Auf einem Rechner schreibt der ganzzahlige Rückwärtspass aus
+> INTEGER_LLM schon Tatsachen in ein Modell, bitgleich und geshardet.
+> **Training als Arbeit im Netz gibt es noch nicht.**
 
-Trainings als nachrangige Arbeitsklasse, lokale Verlustblöcke,
-Datenprovenienz, robuste Aggregation, Modellwachstum.
-Referenzimplementierung von Whitepaper Kap. 7.
+Wie das Netz sein Modell weiterlernen kann, ohne Inferenz zu verdrängen
+und ohne über Inhalte zu urteilen: Training als nachrangige Arbeit,
+Herkunft der Daten statt Bewertung des Inhalts, robuste Zusammenführung,
+ein Modell, das wächst. Referenzimplementierung von Whitepaper Kap. 7;
+das Whitepaper nennt diese Komponente selbst die am wenigsten
+abgesicherte.
 
-## Warum hier nur ein Punkt steht
+**Was gemessen ist.** Ganzzahliges Training trägt, wenn die Gewichte
+stochastisch gerundet werden: +0,67 % gegen die Gleitkomma-Referenz, mit
+Rundung zur nächsten Stufe dagegen +29,9 %. Ein Schritt ganz ohne
+Gleitkommazustand, mit ganzzahligem Master und zählerbasiertem Würfel,
+liegt bei +0,75 %. Protokolle:
+[`entscheidung_0-1.md`](../tests/diag/results/entscheidung_0-1.md) und
+[`entscheidung_0-2.md`](../tests/diag/results/entscheidung_0-2.md). Das
+Konzept daraus: [`Konzept-Wachstum.md`](Konzept-Wachstum.md) (Schritt,
+Verifikation, Aggregation, Wachstum) und
+[`Konzept-Gemischtraining.md`](Konzept-Gemischtraining.md) (was am
+Expertengemisch anders ist). ⚑ Eine Lernrate passt nicht zu allen Ebenen
+(Fund 172): Ebene 0 trägt mehr Ausgabeskala, und die Grenze für die Rate
+ist dort die Sättigung, nicht die Konvergenz. Offen ist, ob die
+Blockskalierung aus Anhang B.6.2 den Gradienten trägt: Er hat einen
+größeren und wandernden Wertebereich als die Aktivierungen, und schon der
+Residualstrom brauchte eine Skala je Kanal (Fund 20).
 
-Whitepaper Kap. 7 setzt voraus, dass „die ganzzahlige Ausführung aus
-Kapitel 6 unverändert auf den Rückwärtspass überträgt". Das ist eine
-**Annahme, keine Messung** — und sie trägt alles: Ohne bit-exakten
-ganzzahligen Rückwärtspass gibt es keine verifizierbare Trainingsarbeit,
-ohne die keine Vergütung, ohne die kein Modellwachstum.
-
-Es gibt einen konkreten Grund für Zweifel, und er stammt aus der eigenen
-Erfahrung des Projekts. **Fund 20** hat gezeigt, dass der Residualstrom
-eine Skala **je Kanal** braucht, weil einzelne Kanäle um Größenordnungen
-aus der Verteilung ragen (Massive Activations); eine Skala je Tensor
-löschte die feinskalierten Kanäle aus. Gradienten haben typischerweise
-einen **größeren** Dynamikbereich als Aktivierungen — und über die
-Trainingsschritte hinweg einen wandernden. Ob die Block-Skalierung aus
-Anhang B.6.2 das trägt, ist offen.
-
-Die Planung hatte 22 Punkte in vier Phasen, die alle darauf ruhten. Am
-2026-08-19 wurde sie auf die Messung zurückgeschnitten, die das
-entscheidet. Die alte Fassung bleibt als Vorüberlegung erhalten, ohne
-Statusmarken: Sie geht nicht verloren, wird aber nach dem Ergebnis neu
-geschnitten, möglicherweise anders.
-
-**Die Methode ist erprobt:** In der 7B-Fehlersuche haben zwei
-PyTorch-Referenzsimulationen in Stunden entschieden, was vorher tagelang
-im falschen Code gesucht wurde. Sie trennen „trägt das Verfahren?" von
-„ist unsere Implementierung richtig?" — und nur die erste Frage steht
-hier an. Deshalb: erst simulieren, dann bauen.
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun. |
+| **Betreiber** | Nichts zu tun; Trainingsarbeit kommt später als eigene, nachrangige Arbeitsklasse. |
+| **Entwicklung** | Ein Trainingslauf belegt nur mit `--normiert`, einer Haltemenge aus `BENCHMARKS/Training/` und einem Rauschnullpunkt (`trainingsguete`); erst der Abstand zum Rauschen zählt. |
 
 ## Aufgabe
 
@@ -145,6 +94,15 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.4.7 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der Abschnitt „Warum hier nur ein Punkt steht“ beschrieb den Zuschnitt des Plans vom 2026-08-19 und entfällt; die Messung, die er verlangte, steht mit ihrem Ergebnis im Kopf, die offene Frage der Blockskalierung (Fund 20, Fund 172) ebenso.
+- Am Code nichts geändert.
 
 ### v0.4.6 (2026-10-23): pypdf ohne bekannte Schwachstellen (Fund 601)
 

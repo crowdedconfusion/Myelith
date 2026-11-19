@@ -216,6 +216,72 @@ fn erzeugerliste_aus(kette: &crate::kette::Kette, liste: &crate::validator::Erze
     }
 }
 
+/// ⚑ Wie viele Slots ein Knoten nach dem ersten Kontakt höchstens auf einen
+/// fremden Block wartet, bevor er selbst erzeugt
+/// ([`Knoten::aufholen_steht_aus`]). Fünf: Laufen drei von vier gleich
+/// schweren Validatoren, bleibt ein Slot mit Wahrscheinlichkeit ein Viertel
+/// ohne fremden Block, fünf in Folge mit rund einem Promille; im Testnetz
+/// kostet das zehn Sekunden nach einem Neustart.
+pub const AUFHOLEN_SLOTS: u64 = 5;
+
+/// ⚑ Wie lange ein Knoten nach dem ersten Kontakt hoechstens wartet, auch
+/// wenn er den gehoerten Kopf nicht erreicht: 150 Slots, ein Abstand der
+/// Pruefpunkte (im Testnetz fuenf Minuten). Danach erzeugt er; eine
+/// haengende Behauptung setzt ihn so nie dauerhaft aus.
+pub const AUFHOLEN_HOECHSTENS_SLOTS: u64 = 150;
+
+/// Der Stand des Aufholens nach dem Start.
+#[derive(Debug, Default)]
+struct Aufholen {
+    /// Die eigene Höhe beim ersten Erzeugungsversuch.
+    start_hoehe: Option<u64>,
+    /// Wann zuerst eine Gegenstelle da war.
+    erster_kontakt: Option<std::time::Instant>,
+    /// Aufgeholt; danach gilt nur noch die gehörte Höhe.
+    fertig: bool,
+    /// Ob das Warten im Protokoll steht (einmal je Wartezeit).
+    gemeldet: bool,
+}
+
+impl Aufholen {
+    /// Das Urteil zu [`Knoten::aufholen_steht_aus`]: `None` heisst
+    /// erzeugen, sonst der Grund des Wartens. `frist` gilt fuer ein ruhendes
+    /// Netz, `obergrenze` fuer jedes Warten.
+    ///
+    /// ⚑ **Nur in der Startphase** (kritisch nachgeprueft am 2026-11-19): Eine
+    /// Regel „hinter dem gehoerten Kopf nie“ fuer den ganzen Lauf setzte einen
+    /// Validator aus, solange eine Behauptung haengt, etwa von einer
+    /// Gegenstelle auf einem verworfenen Zweig; die Vorbilder (Blocksync,
+    /// Doppelgaengerschutz) gelten ebenfalls nur beim Start. Und weil eine
+    /// Behauptung auch in der Startphase haengen kann, endet das Warten
+    /// spaetestens nach `obergrenze`.
+    fn urteil(
+        &mut self,
+        hoehe: u64,
+        gehoert: u64,
+        peers: usize,
+        jetzt: std::time::Instant,
+        frist: std::time::Duration,
+        obergrenze: std::time::Duration,
+    ) -> Option<&'static str> {
+        if self.fertig {
+            return None;
+        }
+        let start = *self.start_hoehe.get_or_insert(hoehe);
+        if peers == 0 && self.erster_kontakt.is_none() {
+            return Some("noch keine Gegenstelle nach dem Start");
+        }
+        let vergangen = jetzt.duration_since(*self.erster_kontakt.get_or_insert(jetzt));
+        let gewachsen = hoehe > start;
+        let vorn = gehoert <= hoehe;
+        if (gewachsen && vorn) || (vorn && vergangen >= frist) || vergangen >= obergrenze {
+            self.fertig = true;
+            return None;
+        }
+        Some(if vorn { "nach dem Start erst einen Block des Netzes abwarten" } else { "hinter dem gehoerten Kopf des Netzes" })
+    }
+}
+
 /// Ein laufender Knoten.
 pub struct Knoten {
     konfig: KnotenKonfig,
@@ -401,6 +467,11 @@ pub struct Knoten {
     /// Verkehr bekommen; ohne diese Zahl waere „bereit" nicht von „hat
     /// noch nichts gehoert" zu unterscheiden.
     hoechste_gehoerte: u64,
+    /// ⚑ **Aufholen vor dem Erzeugen** (Generalprobe `test-int4`,
+    /// 2026-11-18): die Höhe beim Start, der erste Kontakt zu einer
+    /// Gegenstelle und ob der Knoten seither aufgeholt hat. Siehe
+    /// [`Self::aufholen_steht_aus`].
+    aufholen: Aufholen,
     /// ⚑ **Woher sie kommt** (Fund 634): je Gegenstelle die behauptete Höhe,
     /// widerlegbar durch eine leere Nachlieferung, verfallend mit der
     /// Trennung. `hoechste_gehoerte` ist die höchste geltende.
@@ -976,7 +1047,8 @@ impl Knoten {
             None if !konfig.netz.lernt_erzeuger => {
                 return Err(KnotenFehler::Kette(format!(
                     "das Netz {} braucht eine Stimmsatzdatei (--stimmsatz): Jeder Block braucht die \
-                     Unterschrift eines Mitglieds, und nur eine Probekette lernt ihren Erzeuger aus Block 1",
+                     Unterschrift eines Mitglieds, nur eine Probekette lernt ihren Erzeuger aus Block 1, \
+                     und dieses Release bringt fuer das Netz keinen Startsatz mit",
                     konfig.netz.name
                 )));
             }
@@ -1608,6 +1680,7 @@ impl Knoten {
             abrechnungsnonce: (0, 0),
             kontoschluessel,
             hoechste_gehoerte: 0,
+            aufholen: Aufholen::default(),
             gehoert: crate::gehoert::Gehoert::default(),
             latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
@@ -2554,7 +2627,74 @@ impl Knoten {
         if slot <= self.stimmbuch.slot || self.kette.eigener_slot(slot, slot) != Some(slot) {
             return None;
         }
+        // ⚑ **Die Gegenstellen nur fragen, solange die Regel gilt** (2026-11-19).
+        //   📌 `peers()` ist eine Anfrage an den Netzprozess; in jedem eigenen
+        //   Slot gestellt, verzögerte sie unter Last die Erzeugung, die
+        //   Epochen der Probekette streckten sich, und im Netzlauf des
+        //   Testclients meldete die Zeitprobe den Lügner zweimal nicht mehr
+        //   rechtzeitig. Die Probekette wartet nie, und nach dem Aufholen
+        //   urteilt die Regel ohne die Zahl.
+        let peers = if self.konfig.netz.lernt_erzeuger || self.aufholen.fertig { 0 } else { self.peers().await };
+        if let Some(grund) = self.aufholen_steht_aus(peers, std::time::Instant::now()) {
+            if !self.aufholen.gemeldet {
+                self.aufholen.gemeldet = true;
+                self.protokoll.schreibe(
+                    Eintrag::neu("erzeugung_wartet")
+                        .text("grund", grund)
+                        .zahl("hoehe", self.kette.hoehe() as i64)
+                        .zahl("gehoert", self.hoechste_gehoerte as i64)
+                        .zahl("slot", slot as i64),
+                );
+            }
+            return None;
+        }
+        if self.aufholen.gemeldet {
+            self.aufholen.gemeldet = false;
+            self.protokoll.schreibe(
+                Eintrag::neu("erzeugung_frei")
+                    .zahl("hoehe", self.kette.hoehe() as i64)
+                    .zahl("slot", slot as i64),
+            );
+        }
         Some(self.erzeuge_block_im(Some(slot)).await)
+    }
+
+    /// ⚑ **Erst aufholen, dann erzeugen** (Generalprobe `test-int4`,
+    /// 2026-11-18). 📌 Ein Validator, nach zwei Minuten Pause neu gestartet,
+    /// erzeugte 1,4 s nach dem ersten Kontakt in seinem gezogenen Slot
+    /// Block 151 auf seinem alten Kopf, während das Netz bei 198 stand; er
+    /// hatte noch keinen fremden Block gehört. Alle wiesen ihn ab, der Slot
+    /// ging verloren. Dieselbe Klasse wie der Startwettlauf der Probekette
+    /// (0.125.0), dort über das Lernen des Erzeugers geschlossen.
+    ///
+    /// Vorbild sind Blocksync in CometBFT (erst aufholen, dann in den
+    /// Konsens) und der Doppelgängerschutz der Ethereum-Validatoren (nach dem
+    /// Start eine Weile nur zuhören). Ohne eigene Höhenabfrage im Protokoll
+    /// gilt passiv: Ein Knoten auf einem Netz mit Startsatz erzeugt nach dem
+    /// Start erst, wenn
+    ///
+    /// - seine Kette seit dem Start gewachsen ist (das kann nur ein fremder
+    ///   Block gewesen sein, denn er selbst erzeugt ja noch nicht), oder
+    /// - seit dem ersten Kontakt [`AUFHOLEN_SLOTS`] Slots ohne fremden Block
+    ///   vergangen sind: Dann ruht das Netz, etwa beim allerersten Block oder
+    ///   wenn alle zugleich neu starten, und einer muss anfangen.
+    ///
+    /// In beiden Fällen nur, wenn er keinen höheren Kopf gehört hat als den
+    /// eigenen (er holt sonst noch auf); höchstens [`AUFHOLEN_HOECHSTENS_SLOTS`]
+    /// lang. Danach gilt die Regel nicht mehr: Ein späteres Zurückfallen
+    /// kostet einen Slot, eine hängende Behauptung kostete sonst alle.
+    ///
+    /// Die Probekette bleibt aussen vor: Sie lernt ihren Erzeuger aus
+    /// Block 1, und ihre Proben bauen auf Zuruf.
+    fn aufholen_steht_aus(&mut self, peers: usize, jetzt: std::time::Instant) -> Option<&'static str> {
+        let slot = self.konfig.slot_ms();
+        let frist = std::time::Duration::from_millis(slot.saturating_mul(AUFHOLEN_SLOTS));
+        let obergrenze = std::time::Duration::from_millis(slot.saturating_mul(AUFHOLEN_HOECHSTENS_SLOTS));
+        // Die Probekette lernt ihren Erzeuger aus Block 1 und wartet nie.
+        if self.konfig.netz.lernt_erzeuger {
+            return None;
+        }
+        self.aufholen.urteil(self.kette.hoehe(), self.hoechste_gehoerte, peers, jetzt, frist, obergrenze)
     }
 
     /// Führt eine Nachrichtenprobe aus: echtes Objekt bauen,
@@ -9198,3 +9338,6 @@ mod abweisung_tests;
 
 #[cfg(test)]
 mod vorausspeicher_tests;
+
+#[cfg(test)]
+mod aufholen_tests;

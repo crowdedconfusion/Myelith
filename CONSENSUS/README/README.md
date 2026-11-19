@@ -1,44 +1,27 @@
-# consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
+# CONSENSUS: Abstimmung, Kette und Epochenplan (`myl-consensus`, `myl-ledger`, `myl-scheduler`)
 
-> **Version:** 0.91.0 (`myl-consensus` 0.52.1, `myl-scheduler` 0.19.2,
+> **Version:** 0.91.1 (`myl-consensus` 0.52.1, `myl-scheduler` 0.19.2,
 > `myl-ledger` 0.61.0)
 > **Datum:** 2026-11-18
-> **Status:** Design-Entscheidungen getroffen (malachite hinter
-> trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
-> Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
-> Phase 2 ✅ abgeschlossen (`myl-ledger` v0.1.1–v0.1.5,
-> `myl-scheduler` v0.2.1–v0.2.9); **Phase 3 ✅ vollständig**
-> (`myl-consensus` v0.3.1–v0.5.0): signiertes, stimmgewichtetes BFT mit
-> VRF-rotierender Komiteewahl, Double-Signing-Beweis und seit v0.5.0
-> Rundenwechsel mit Sperrmechanik — Safety **und** Liveness, die
-> Akzeptanz-Testmatrix über 21 simulierte Validatoren läuft;
-> **Phase 4 ✅ vollständig** (4.1 PoI-Bündel-Einreichung,
-> 4.2 Epochenabschluss, 4.3 DA-Schicht).
-> ⚑ **Phase 1 hatte am 2026-08-28 zwei Lücken und hat jetzt keine
-> mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
-> unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
-> Konto.
-> **512 Tests grün** (272 `myl-consensus`, 131 `myl-scheduler`,
-> 109 `myl-ledger`), über alle Testbinaries gezählt.
->
-> ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
-> dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
-> ihre Höhe deshalb in `epoch` — eine Doppelbelegung, an der jede Frist
-> „je Epoche" in Wahrheit „je Block" bedeutete.
->
-> **Seit dem 27. August führt der Ledger eine Verstoßhistorie je Konto**
-> (`myl-ledger` v0.3.0). Sie ist Konsensfeld und die Voraussetzung der
-> Slashing-Staffelung aus Kap. 5.5: Wer wiederholt auffällt, verliert
-> mehr.
->
-> **Seit dem 26. August laufen die BFT-Runden über ein echtes Netz.**
-> Die Verdrahtung liegt in der Komponente NODE; hier kam die Form auf
-> der Leitung dazu (`Konsensnachricht`) und die Bindung der
-> Zertifikatsrunde an die Signatur des Vorschlags.
+> **Status:** In Gebrauch im Knoten: BFT mit Gewicht nach Einsatz,
+> Rundenwechsel mit Sperre und Zertifikat, Beweis für Doppelsignaturen,
+> ein Erzeugerplan je Slot, Prüfpunkte und Wechselbelege für die
+> Finalität; der Ledger mit Konten, Einsätzen, Sitzungskontrakten,
+> unterschriebenen Anweisungen (Fund 85) und einer Verstoßhistorie je Konto; der
+> Epochenplan, der Miner zu Pods fügt; PoI-Bündel, Epochenabschluss und
+> Verfügbarkeitsschicht. Festgelegt sind Blockzeit 2 s, Streitfrist
+> 7 Tage und Reed-Solomon mit k = 8, m = 4.
 
-BFT-Blockproduktion, Proof-of-Inference-Aggregation, Staking/Slashing,
-Ledger-Zustandsübergänge, deterministischer Epochen-Scheduler.
-Referenzimplementierung von Whitepaper Kap. 3.5 und Anhang A.2/A.5.
+Wer darf den nächsten Block schreiben, wann ist er endgültig, und was
+steht danach in den Konten? Diese Komponente beantwortet das, unabhängig
+davon, wie lange eine Inferenz dauert (Schicht L1).
+Referenzimplementierung von Whitepaper Kap. 3.5 und Anhang A.2 und A.5.
+
+| Wer | Was hier wichtig ist |
+|---|---|
+| **Nutzer** | Nichts zu tun: Was ein Wallet anzeigt, steht im Ledger. |
+| **Betreiber** | Validatoren stimmen nach diesen Regeln ab. ⚠️ Der Konsensschlüssel haftet: Zwei Unterschriften für dieselbe Stelle sind ein Beweis, und er kostet Einsatz. |
+| **Entwicklung** | Drei Kisten: `myl-consensus` (Abstimmung, Erzeugerplan, Prüfpunkte), `myl-ledger` (Zustand und Übergänge), `myl-scheduler` (Epochenplan, Pods). Verdrahtet werden sie im Knoten (NODE). |
 
 ## Aufgabe
 
@@ -107,6 +90,15 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.91.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
+
+- **Der Kopf ist für Nutzer, Betreiber und Entwicklung geschrieben:** ein Absatz in
+  einfachen Worten, eine Tabelle, was wer hier findet, und ein Stand, der nennt,
+  was heute in Gebrauch ist und was offen ist. Punktnummern des Plans und
+  gezählte Tests fallen aus dem Kopf; sie alterten schneller als der Text.
+- Der alte Stand erzählte die Phasen vom August; der neue nennt, was der Knoten heute davon nutzt, samt Erzeugerplan, Prüfpunkten und Wechselbelegen.
+- Am Code nichts geändert.
 
 ### v0.91.0 (2026-11-18): Ein Polynom je Runde, nicht je Epoche (Fund A51, `myl-ledger` 0.61.0)
 

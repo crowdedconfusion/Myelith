@@ -345,6 +345,10 @@ const TEXTE = {
     "wallet.anders": (n) => `Mining zahlt noch an ${n}; das ausgewählte gilt ab dem nächsten Start.`,
     "wallet.mit_einstieg": (a) => `Tritt bei: ${a}`,
     "wallet.ohne_einstieg": "Kein Einstieg: Der Knoten erzeugt allein und baut erst, wenn jemand zuhört.",
+    "wallet.ohne_einstieg_liste": "Kein eigener Einstieg: Der Knoten nimmt die Einstiegsliste des Release.",
+    "wallet.netz": "Netz",
+    "wallet.zeile": "Zeile für den Startsatz",
+    "wallet.zeile.hinweis": "Diese Zeile dem Projekt schicken; sie enthält nur öffentliche Teile. Der Schlüssel bleibt auf diesem Rechner, nie auf einem zweiten.",
     "wallet.ordner": (o) => `Die Schlüssel liegen unverschlüsselt unter ${o}.`,
     "modus.terminal.name": "Terminal",
     "modus.terminal.was": "Befehle",
@@ -734,6 +738,10 @@ const TEXTE = {
     "wallet.anders": (n) => `Mining still pays ${n}; the selected one applies from the next start.`,
     "wallet.mit_einstieg": (a) => `Joins: ${a}`,
     "wallet.ohne_einstieg": "No entry: the node produces alone and only builds once someone listens.",
+    "wallet.ohne_einstieg_liste": "No own entry: the node uses the entry list of the release.",
+    "wallet.netz": "Network",
+    "wallet.zeile": "Line for the start set",
+    "wallet.zeile.hinweis": "Send this line to the project; it holds only public parts. The key stays on this computer, never on a second one.",
     "wallet.ordner": (o) => `The keys are stored unencrypted under ${o}.`,
     "modus.terminal.name": "Terminal",
     "modus.terminal.was": "Commands",
@@ -3126,7 +3134,10 @@ function wallet_zeichnen(l) {
     zeile = t("wallet.mining", l.mining_wallet, (w && w.guthaben) || "0");
   }
   stand.dataset.laeuft = l.mining_wallet ? "ja" : "nein";
-  stand.textContent = zeile + "\n" + (l.einstieg ? t("wallet.mit_einstieg", l.einstieg) : t("wallet.ohne_einstieg"));
+  // ⚑ Ohne Einstieg erzeugt der Knoten nur auf der Probekette allein; auf
+  //   einem Netz mit Startsatz nimmt er die Liste des Release.
+  const ohne = l.netz === "probe" ? t("wallet.ohne_einstieg") : t("wallet.ohne_einstieg_liste");
+  stand.textContent = zeile + "\n" + (l.einstieg ? t("wallet.mit_einstieg", l.einstieg) : ohne);
 
   const liste = $("walletliste");
   liste.replaceChildren();
@@ -3211,6 +3222,16 @@ function wallet_zeichnen(l) {
   }
   const ein = $("wallet-einstieg");
   if (document.activeElement !== ein) ein.value = l.einstieg_angabe;
+  const netz = $("wallet-netz");
+  if (document.activeElement !== netz) {
+    netz.replaceChildren(...l.netze.map((n) => {
+      const o = document.createElement("option");
+      o.value = n;
+      o.textContent = n;
+      return o;
+    }));
+    netz.value = l.netz;
+  }
   $("walletordner").textContent = t("wallet.ordner", l.ordner);
 }
 
@@ -3331,6 +3352,29 @@ async function wallet_wiederherstellen(ereignis) {
     $("walletmeldung").textContent = String(f);
   }
   wallet_laden();
+}
+
+/// ⚑ Das Netz waehlen, wie `myl mining netz` (2026-11-19).
+async function wallet_netz_setzen() {
+  try {
+    await invoke("netz_setzen", { name: $("wallet-netz").value });
+    $("walletmeldung").textContent = "";
+  } catch (f) {
+    $("walletmeldung").textContent = String(f);
+  }
+  wallet_laden();
+}
+
+/// ⚑ Die Zeile fuer den Startsatz zeigen, wie `myl mining stimmsatzzeile`.
+async function wallet_zeile_zeigen() {
+  const aus = $("wallet-zeile-text");
+  try {
+    aus.textContent = await invoke("stimmsatzzeile");
+    aus.hidden = false;
+    $("walletmeldung").textContent = t("wallet.zeile.hinweis");
+  } catch (f) {
+    $("walletmeldung").textContent = String(f);
+  }
 }
 
 async function wallet_einstieg_setzen(ereignis) {
@@ -6165,6 +6209,8 @@ $("entwurf-schritt2").addEventListener("submit", wallet_entwurf_bestaetigen);
 $("entwurf-abbrechen1").addEventListener("click", wallet_entwurf_abbrechen);
 $("entwurf-abbrechen2").addEventListener("click", wallet_entwurf_abbrechen);
 $("walleteinstieg").addEventListener("submit", wallet_einstieg_setzen);
+$("wallet-netz").addEventListener("change", wallet_netz_setzen);
+$("wallet-zeile").addEventListener("click", wallet_zeile_zeigen);
 
 $("terminalform").addEventListener("submit", async (e) => {
   e.preventDefault();
