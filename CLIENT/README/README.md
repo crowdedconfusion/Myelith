@@ -1,6 +1,6 @@
 # CLIENT: Myelith auf dem eigenen Rechner
 
-> **Version:** 0.247.0 (`myl-client` 0.143.0, `myl-oberflaeche` 0.94.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
+> **Version:** 0.247.1 (`myl-client` 0.143.0, `myl-oberflaeche` 0.94.1, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
 > **Datum:** 2026-11-19
 > **Status:** Alles, was auf dem eigenen Rechner läuft, ist da: Gespräch,
 > Agent, Loop, Module, Sehen, Hören und Sprechen, Modelle holen und bauen,
@@ -209,6 +209,17 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.247.1 (2026-11-19): Die Bündelversion folgt der Kiste (`myl-oberflaeche` 0.94.1)
+
+- ⛔️ **CI zu `27fe4f1d` rot** („Kisten klient“ unter Linux, „plattform-klient“
+  unter Windows): `die_buendelversion_ist_die_kistenversion`. Die Fassung
+  des Fensters wurde in 0.247.0 nach den grünen Proben gehoben, nur in der
+  `Cargo.toml`; `tauri.conf.json` blieb auf 0.93.0. Beide stehen jetzt auf
+  0.94.1. Das Werkzeug, das Fassungen hebt, zieht die Bündelversion seitdem
+  selbst mit.
+- 📌 Nach dem Heben einer Fassung die Proben der Kiste noch einmal fahren,
+  nicht nur die Sperrprobe.
 
 ### v0.247.0 (2026-11-19): Netz und Zeile für den Startsatz im Fenster (`myl-oberflaeche` 0.94.0)
 
