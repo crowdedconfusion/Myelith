@@ -232,6 +232,19 @@ pub enum Meldung<'a> {
 /// Modell nachweislich wieder auf Kurs.
 pub const HOECHSTZAHL_BERICHTIGUNGEN: usize = 2;
 
+/// **Wie viele Antworten hintereinander an der Tokengrenze abbrechen
+/// dürfen**, bevor der Lauf endet; gezählt getrennt von den abgelehnten
+/// Aufrufen ([`HOECHSTZAHL_BERICHTIGUNGEN`]).
+///
+/// 📌 **Fund 718 (Simulation vom 2026-11-20):** Bis dahin fielen beide in
+/// einen Zähler. Das 35B hatte die Dienstreise gelöst (Hin- und Rückfahrt,
+/// Preis), zwei Antworten endeten beim Überlegen an der Grenze von 512
+/// Token, dann rief es `write_file` mit den Feldern einer Vorlage; das war
+/// der dritte vergebliche Schritt, und der Lauf endete, bevor das Modell
+/// die Berichtigung lesen konnte. Getrennt hat jede Art ihre eigene
+/// Kostenschranke, und keine verbraucht die Gelegenheiten der anderen.
+pub const HOECHSTZAHL_ABSCHNITTE: usize = 2;
+
 /// **Wie oft eine Antwort weitergeschrieben wird**, die mitten in einem
 /// Werkzeugaufruf an der Laenge endete (Fund 569).
 ///
@@ -427,6 +440,9 @@ impl<'a> Lauf<'a> {
         // ⚑ **Wie viele Runden hintereinander nichts lief.** Siehe
         //   [`HOECHSTZAHL_BERICHTIGUNGEN`] und Fund 444.
         let mut vergebliche: usize = 0;
+        // ⚑ Wie viele Antworten hintereinander an der Tokengrenze endeten
+        //   (Fund 718, [`HOECHSTZAHL_ABSCHNITTE`]).
+        let mut abschnitte: usize = 0;
         // ⚑ **Wie oft jeder Schritt kam**, je Fingerabdruck. Siehe
         //   [`KREIS_HINWEIS_AB`].
         let mut gesehen: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
@@ -585,7 +601,17 @@ impl<'a> Lauf<'a> {
                 //   (`huelle_aufloesen`).
                 let v = huelle_aufloesen(angebot, &v).unwrap_or(v);
                 if let Err(f) = argumente_pruefen(angebot, &v) {
-                    let text = f.to_string();
+                    let mut text = f.to_string();
+                    // Fund 718: das Werkzeug nennen, zu dem das Feld gehört.
+                    if let crate::werkzeug::Argumentfehler::FeldUnbekannt { name, .. } = &f {
+                        let andere = crate::werkzeug::wer_das_feld_kennt(name, self.kasten.angebote(), &v.name);
+                        if !andere.is_empty() {
+                            text.push_str(&format!(
+                                ". `{name}` gehoert zu {}; das ist ein eigener Aufruf",
+                                andere.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+                            ));
+                        }
+                    }
                     melden(Meldung::Abgelehnt { name: &v.name, grund: &text });
                     entschieden.push((
                         v.clone(),
@@ -731,6 +757,13 @@ impl<'a> Lauf<'a> {
                 //   wieder auf Kurs; ein spaeterer Patzer faengt von
                 //   vorn an.
                 vergebliche = 0;
+                abschnitte = 0;
+            } else if abgeschnitten_ohne_vorschlag {
+                // Fund 718: eine eigene Schranke für Abschnitte.
+                abschnitte += 1;
+                if abschnitte > HOECHSTZAHL_ABSCHNITTE {
+                    break Ende::Steckengeblieben { versuche: abschnitte };
+                }
             } else {
                 vergebliche += 1;
                 // ⛔️ **Die Kostenschranke bleibt.** Ein Modell, das

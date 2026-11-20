@@ -60,6 +60,15 @@ pub enum NodeCommand {
     },
     /// Anzahl der aktuell verbundenen Peers abfragen.
     PeerCount(oneshot::Sender<usize>),
+    /// ⚑ **Die Anker fuer den naechsten Start** (Audit A9): hoechstens
+    /// [`crate::anker::ANKER_HOECHSTENS`] ausgehende Verbindungen, die seit
+    /// [`crate::anker::ANKER_MINDESTALTER`] stehen, aus verschiedenen
+    /// Netzgruppen, als Adresse mit `/p2p/`. Der Knoten legt sie in eine
+    /// Datei und waehlt sie beim Start zuerst.
+    Anker(oneshot::Sender<Vec<Multiaddr>>),
+    /// Die Gegenstellen in der Routingtabelle von Kademlia (Diagnose, und
+    /// die Probe der Fuehler aus A9).
+    Routingtabelle(oneshot::Sender<Vec<PeerId>>),
     /// Eine Zustandsaufnahme abfragen.
     ///
     /// Mehr als [`NodeCommand::PeerCount`], und der Unterschied ist der
@@ -335,6 +344,16 @@ pub enum NodeEvent {
         eingehend: bool,
         grund: String,
     },
+    /// ⚑ **Ein Fuehler ist fertig** (Audit A9, [`crate::fuehler`]): Eine
+    /// Gegenstelle, die sich eingehend gemeldet hat, wurde unter einer ihrer
+    /// Adressen angewaehlt. Gelungen heisst: Sie steht jetzt in der
+    /// Routingtabelle, die Fuehlerverbindung ist wieder zu. Fuehler
+    /// erscheinen nicht als `Verbunden` oder `Getrennt`.
+    Fuehler {
+        peer: libp2p::PeerId,
+        gelungen: bool,
+        grund: String,
+    },
 }
 
 /// Treibt den Swarm, bis der Kommando-Kanal geschlossen wird.
@@ -422,8 +441,83 @@ pub async fn run_node_mit(
     tokio::pin!(kad_naechste);
     let mut kad_angestossen = false;
     let mut vorrang: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
+    // ⚑ A9: Fuehler fuer eingehende Gegenstellen und die Buchfuehrung der
+    //   ausgehenden Verbindungen (fuer die Einordnung von `identify` und die
+    //   Anker).
+    let mut fuehler = crate::fuehler::Fuehler::default();
+    let mut ausgehend: std::collections::HashMap<
+        libp2p::swarm::ConnectionId,
+        (PeerId, Multiaddr, std::time::Instant),
+    > = std::collections::HashMap::new();
+    // Der eigene Swarm der Fuehler. ⚠️ Laesst er sich nicht bauen, traegt
+    // der Knoten wie vor A9 jede genannte Adresse ein und sagt es einmal.
+    let mut fuehlerschwarm = match crate::fuehler::schwarm() {
+        Ok(s) => Some(s),
+        Err(grund) => {
+            let _ = events.send(NodeEvent::Fuehler {
+                peer: *swarm.local_peer_id(),
+                gelungen: false,
+                grund: format!("ohne Fuehler: {grund}"),
+            });
+            None
+        }
+    };
+    // Aufgegebene Fuehler: Kommt die Wahl spaeter doch zustande, wird sie
+    // geschlossen; jede Wahl endet in genau einem Ereignis, dort fallen sie
+    // heraus.
+    let mut fuehler_aufgegeben: std::collections::HashSet<libp2p::swarm::ConnectionId> =
+        std::collections::HashSet::new();
+    let mut fuehler_aufraeumen = tokio::time::interval(crate::fuehler::FUEHLER_FRIST);
+    fuehler_aufraeumen.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = fuehler_aufraeumen.tick() => {
+                for id in fuehler.abgelaufen(std::time::Instant::now()) {
+                    if let Some(peer) = fuehler.beendet(&id) {
+                        fuehler_aufgegeben.insert(id);
+                        let _ = events.send(NodeEvent::Fuehler { peer, gelungen: false, grund: "keine Antwort in der Frist".into() });
+                    }
+                }
+                if let Some(fs) = fuehlerschwarm.as_mut() {
+                    fuehler_starten(fs, &mut fuehler);
+                }
+            }
+            ereignis = async {
+                match fuehlerschwarm.as_mut() {
+                    Some(fs) => fs.select_next_some().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let Some(fs) = fuehlerschwarm.as_mut() else { continue };
+                match ereignis {
+                    SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } => {
+                        // ⚑ A9: Unter dieser Adresse antwortet genau diese
+                        //   Gegenstelle (Noise hat die Kennung geprueft). Die
+                        //   Adresse geht in die Tabelle, die Verbindung zu.
+                        fs.close_connection(connection_id);
+                        if fuehler_aufgegeben.remove(&connection_id) {
+                            continue;
+                        }
+                        if fuehler.beendet(&connection_id).is_some() {
+                            if let libp2p::core::ConnectedPoint::Dialer { address, .. } = &endpoint {
+                                swarm.behaviour_mut().kad.add_address(&peer_id, ohne_p2p(address));
+                            }
+                            let _ = events.send(NodeEvent::Fuehler { peer: peer_id, gelungen: true, grund: "erreichbar".into() });
+                            fuehler_starten(fs, &mut fuehler);
+                        }
+                    }
+                    SwarmEvent::OutgoingConnectionError { connection_id, error, .. } => {
+                        if fuehler_aufgegeben.remove(&connection_id) {
+                            continue;
+                        }
+                        if let Some(peer) = fuehler.beendet(&connection_id) {
+                            let _ = events.send(NodeEvent::Fuehler { peer, gelungen: false, grund: error.to_string() });
+                            fuehler_starten(fs, &mut fuehler);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             _ = &mut kad_naechste => {
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 kad_naechste.as_mut().reset(tokio::time::Instant::now() + kad_abstand);
@@ -447,6 +541,28 @@ pub async fn run_node_mit(
                     }
                     NodeCommand::PeerCount(reply) => {
                         let _ = reply.send(swarm.connected_peers().count());
+                    }
+                    NodeCommand::Routingtabelle(reply) => {
+                        let mut peers = Vec::new();
+                        for eimer in swarm.behaviour_mut().kad.kbuckets() {
+                            for e in eimer.iter() {
+                                peers.push(*e.node.key.preimage());
+                            }
+                        }
+                        let _ = reply.send(peers);
+                    }
+                    NodeCommand::Anker(reply) => {
+                        let jetzt = std::time::Instant::now();
+                        let kandidaten: Vec<crate::anker::Kandidat> = ausgehend
+                            .iter()
+                            .map(|(_, (peer, addr, seit))| crate::anker::Kandidat {
+                                peer: *peer,
+                                addr: addr.clone(),
+                                alter: jetzt.duration_since(*seit),
+                            })
+                            .collect();
+                        let gruppen = swarm.behaviour().adressvielfalt.as_zuordnung();
+                        let _ = reply.send(crate::anker::waehlen(&kandidaten, gruppen.as_deref()));
                     }
                     NodeCommand::Zustand(reply) => {
                         let peers = swarm.connected_peers().count();
@@ -488,6 +604,9 @@ pub async fn run_node_mit(
                         for p in neu.difference(&vorrang) {
                             swarm.behaviour_mut().grenzen.bypass_peer_id(p);
                         }
+                        // A9: Für Pod-Mitglieder gilt auch die Grenze je
+                        // Netzgruppe nicht.
+                        swarm.behaviour_mut().adressvielfalt.vorrang_setzen(neu.iter().copied());
                         vorrang = neu;
                     }
                     NodeCommand::Sperren {
@@ -630,13 +749,33 @@ pub async fn run_node_mit(
                         }
                     }
                     SwarmEvent::Behaviour(MylBehaviourEvent::Identify(
-                        libp2p::identify::Event::Received { peer_id, info, .. },
+                        libp2p::identify::Event::Received { peer_id, connection_id, info },
                     )) => {
                         let kad_protokoll = libp2p::StreamProtocol::new(crate::discovery::KAD_PROTOCOL);
                         if info.protocols.contains(&kad_protokoll) {
                             // 📌 Fund 594: nicht die Rueckschleife eines anderen.
-                            for addr in crate::discovery::fuer_das_adressbuch(info.listen_addrs) {
-                                swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                            let adressen = crate::discovery::fuer_das_adressbuch(info.listen_addrs);
+                            if ausgehend.contains_key(&connection_id) {
+                                // Selbst gewaehlt: Die Adressen gelten wie bisher.
+                                for addr in adressen {
+                                    swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                                }
+                            } else if ausgehend.values().any(|(p, _, _)| *p == peer_id) {
+                                // Schon selbst gewaehlt, ueber eine andere
+                                // Verbindung: Kademlia kennt die Adresse.
+                                // 📌 Ohne diesen Zweig fuehlte der Knoten
+                                //   zurueck, sobald der Fuehler der Gegenseite
+                                //   bei ihm eingehend ankam.
+                            } else if let Some(fs) = fuehlerschwarm.as_mut() {
+                                // ⚑ A9: Eingehend gemeldet. Erst fuehlen, dann
+                                //   eintragen (Audit A9, Marcus et al. 2018).
+                                if fuehler.vormerken(peer_id, adressen, std::time::Instant::now()) {
+                                    fuehler_starten(fs, &mut fuehler);
+                                }
+                            } else {
+                                for addr in adressen {
+                                    swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                                }
                             }
                             if !kad_angestossen {
                                 kad_angestossen = swarm.behaviour_mut().kad.bootstrap().is_ok();
@@ -651,14 +790,18 @@ pub async fn run_node_mit(
                             let _ = swarm.disconnect_peer_id(peer_id);
                         }
                     }
-                    SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+                    SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } => {
+                        if let libp2p::core::ConnectedPoint::Dialer { address, .. } = &endpoint {
+                            ausgehend.insert(connection_id, (peer_id, ohne_p2p(address), std::time::Instant::now()));
+                        }
                         let _ = events.send(NodeEvent::Verbunden {
                             peer: peer_id,
                             addr: endpoint.get_remote_address().clone(),
                             eingehend: !endpoint.is_dialer(),
                         });
                     }
-                    SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+                    SwarmEvent::ConnectionClosed { peer_id, connection_id, cause, .. } => {
+                        ausgehend.remove(&connection_id);
                         let _ = events.send(NodeEvent::Getrennt {
                             peer: peer_id,
                             grund: match cause {
@@ -671,14 +814,14 @@ pub async fn run_node_mit(
                         let _ = events.send(NodeEvent::Abgewiesen {
                             peer: None,
                             eingehend: true,
-                            grund: error.to_string(),
+                            grund: mit_ursachen(&error),
                         });
                     }
                     SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                         let _ = events.send(NodeEvent::Abgewiesen {
                             peer: peer_id,
                             eingehend: false,
-                            grund: error.to_string(),
+                            grund: mit_ursachen(&error),
                         });
                     }
                     SwarmEvent::Behaviour(MylBehaviourEvent::Gossipsub(
@@ -730,4 +873,49 @@ pub async fn run_node_mit(
             }
         }
     }
+}
+
+/// Startet wartende Fuehler, solange Platz ist (A9).
+///
+/// ⚑ **Nur unter den genannten Adressen** und mit `Always`: Die Gegenstelle
+/// ist ja schon (eingehend) verbunden, und gefragt ist, ob sie unter ihrer
+/// eigenen Angabe erreichbar ist. Adressen aus anderen Quellen nimmt die Wahl
+/// nicht dazu.
+fn fuehler_starten(swarm: &mut Swarm<libp2p::swarm::dummy::Behaviour>, fuehler: &mut crate::fuehler::Fuehler) {
+    let jetzt = std::time::Instant::now();
+    while let Some((peer, adressen)) = fuehler.naechster(jetzt) {
+        let wahl = libp2p::swarm::dial_opts::DialOpts::peer_id(peer)
+            .addresses(adressen)
+            .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
+            .build();
+        let id = wahl.connection_id();
+        if swarm.dial(wahl).is_ok() {
+            fuehler.gestartet(id, peer, jetzt);
+        }
+    }
+}
+
+/// Eine Adresse ohne ihren `/p2p/`-Anteil, wie Kademlia sie fuehrt.
+fn ohne_p2p(addr: &Multiaddr) -> Multiaddr {
+    addr.iter().filter(|p| !matches!(p, libp2p::multiaddr::Protocol::P2p(_))).collect()
+}
+
+/// Ein Fehler samt seinen Ursachen, durch „: “ getrennt.
+///
+/// 📌 libp2p nennt eine abgewiesene Wahl nur „Dial error“; der Grund (etwa
+/// „Netzgruppe … voll“) steckt in der Ursache. Im Lauf vom 2026-11-19 stand
+/// so 210-mal „Dial error“ im Protokoll, und die Auswertung fand keine volle
+/// Gruppe.
+fn mit_ursachen(fehler: &dyn std::error::Error) -> String {
+    let mut text = fehler.to_string();
+    let mut ursache = fehler.source();
+    while let Some(u) = ursache {
+        let teil = u.to_string();
+        if !text.contains(&teil) {
+            text.push_str(": ");
+            text.push_str(&teil);
+        }
+        ursache = u.source();
+    }
+    text
 }

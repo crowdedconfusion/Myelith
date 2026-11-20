@@ -35,19 +35,23 @@
     #   Ohne Flakes zeigt dies auf ein selbst gebautes Paket.
     paket = pkgs.myl-node or (throw "services.myl-server.paket setzen: das Paket mit bin/myl-node");
 
+    # ← Das Netz. Vorgabe test-int4; die Probekette (probe) ist nur fuer
+    #   einen Versuch auf einer Maschine.
+    netz = "test-int4";
+
     # ← Der eine Port nach aussen. Genau diesen im Router weiterleiten
-    #   (Router-Anleitung.md). Standard 4001.
-    p2pPort = 4001;
+    #   (Router-Anleitung.md). Standard 4150.
+    p2pPort = 4150;
 
     # ← Wenn dieser Server von aussen erreichbar ist, seine oeffentliche
     #   Adresse. Bei dynamischer IP ueber DynDNS, siehe Anleitung.
     oeffentlicheAdressen = [
-      # "/dns4/mein-server.example/tcp/4001"
+      # "/dns4/mein-server.example/tcp/4150"
     ];
 
     # ← Ein Bootstrap-Knoten fuer den ersten Einstieg ins Netz.
     bootstrap = [
-      # "/dns4/bootstrap.example/tcp/4001/p2p/12D3Koo..."
+      # "/dns4/bootstrap.example/tcp/4150/p2p/12D3Koo..."
     ];
 
     # ← Der Identitaetsschluessel. ⛔️ Diese Datei gehoert Root, Rechte 0400,
@@ -55,9 +59,10 @@
     #   Einmalig offline erzeugen (Router-Anleitung.md, Abschnitt „Schluessel").
     identitaetCredential = "/etc/myl-server/identitaet.key";
 
-    # ← Der Konformitaetsnachweis. Fuer einen echten Betrieb setzen;
-    #   `null` laeuft mit --ohne-konformitaet und ist nur fuer einen Probelauf.
+    # ← Die Op-Vektoren. `null`: die neben dem Programm (das Paket der Flake
+    #   bringt sie mit). `ohneKonformitaet = true` nur fuer einen Probelauf.
     konformitaetspfad = null;
+    # ohneKonformitaet = false;
 
     # ── Nur fuer einen STIMMBERECHTIGTEN Knoten (Governance) ──────────────
     #   ⛔️ Hoechste Sorgfalt. Der Konsensschluessel ist
@@ -66,11 +71,13 @@
     #   sonst nichts tut, und seine Tuer bleibt ausnahmslos auf der
     #   Rueckschleife.
     # konsensCredential = "/etc/myl-server/konsens.key";
-    # stimmsatzdatei = "/var/lib/myl-server/stimmsatz.json";
+    # ← Den Startsatz bringt das Release mit; eine eigene Datei nur fuer
+    #   einen Versuch.
+    # stimmsatzdatei = "/var/lib/myl-server/satz.stimmsatz";
     #
-    # ⚠️ **Bloecke erzeugt in der ueblichen Aufstellung genau einer**, die
-    #   Anlaufstelle, und nicht jeder stimmberechtigte Knoten. Wer es ohne
-    #   Absprache einschaltet, laesst zwei Knoten dieselbe Runde eroeffnen.
+    # ← Nur wenn der Konsensschluessel dieses Knotens im Startsatz steht:
+    #   Dann erzeugt er in den Slots, fuer die er gezogen ist. Sonst bricht
+    #   der Start ab.
     # erzeuger = true;
 
     # ── Betrieb ───────────────────────────────────────────────────────────
@@ -82,9 +89,9 @@
     beobachtungPort = 4151;
 
     # ← Wie oft eine Zustandsaufnahme ins Protokoll geht, in Sekunden.
-    #   Das ist die Rate, mit der `/var/lib/myl-server/protokolle` waechst;
-    #   fuer einen Server, der Monate laeuft, ist sie die wichtigere Zahl.
-    aufnahmeSekunden = 300;
+    #   Im selben Takt setzt der Knoten /metriken und /bereit neu; die
+    #   Protokolle deckelt der Knoten selbst (128 MiB).
+    aufnahmeSekunden = 60;
   };
 
   # ─────────────────────────────────────────────────────────────────────

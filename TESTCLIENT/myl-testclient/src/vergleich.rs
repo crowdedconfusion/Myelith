@@ -105,6 +105,9 @@ pub struct Protokoll {
     pub hardware: String,
     pub theta_v: String,
     pub artefakt_digest: String,
+    /// ⚑ Der Name des Modells (`Artefakt modell`), Teil des Gruppenschlüssels.
+    /// Leer bei Protokollen, die ihn nicht nennen.
+    pub modell: String,
     /// Vergleichswerte in der Reihenfolge des Protokolls.
     pub ergebnisse: Vec<(String, String)>,
     pub abgeschlossen: bool,
@@ -269,11 +272,13 @@ impl Urteil {
 }
 
 /// Eine Gruppe von Protokollen, die verglichen werden dürfen: gleicher
-/// Befehl, gleiche Einstellungs-Kennung.
+/// Befehl, gleiche Einstellungs-Kennung, **gleiches Modell**.
 #[derive(Debug, Clone)]
 pub struct Gruppe {
     pub befehl: String,
     pub einstellungen_id: String,
+    /// Der Modellname der Gruppe (leer bei älteren Protokollen).
+    pub modell: String,
     pub protokolle: Vec<Protokoll>,
     pub urteil: Urteil,
     /// Vergleichswert je Name: Digest → Bezeichnungen der Läufe.
@@ -378,6 +383,7 @@ pub fn protokoll_lesen(datei: &Path) -> Option<Protokoll> {
             "artifact" => match hole("key").as_str() {
                 "theta_v" => p.theta_v = hole("value"),
                 "artefakt_digest" => p.artefakt_digest = hole("value"),
+                "modell" => p.modell = hole("value"),
                 // Ältere Protokolle trugen die Einstellungs-Kennung hier
                 // statt in `run_started`. Sie sollen lesbar bleiben.
                 "einstellungen_id" if p.einstellungen_id.is_empty() => {
@@ -406,24 +412,35 @@ pub fn protokoll_lesen(datei: &Path) -> Option<Protokoll> {
     Some(p)
 }
 
-/// Gruppiert nach Befehl und Einstellungs-Kennung und urteilt je Gruppe.
+/// Gruppiert nach Befehl, Einstellungs-Kennung und Modell und urteilt je
+/// Gruppe.
+///
+/// ⛔️ **Das Modell gehört in den Schlüssel** (2026-11-19). Seit Testpläne an
+/// kein Modell gebunden sind, tragen Läufe zweier Modelle mit demselben Plan
+/// dieselbe Einstellungs-Kennung. Beim Proben des Miettags (sparrow und
+/// pigeon, Mac gegen x86) landeten sie in einer Gruppe, und das Urteil hieß
+/// „UNVERGLEICHBAR (Modellstand)“, obwohl jedes Modell für sich bitgleich
+/// war. ⚑ **Der Name, nicht der Abdruck:** Dasselbe Modell, auf zwei
+/// Maschinen verschieden gebaut, bleibt in einer Gruppe und wird dort als
+/// abweichender Modellstand benannt.
 pub fn gruppieren(protokolle: Vec<Protokoll>) -> Vec<Gruppe> {
-    let mut nach_schluessel: BTreeMap<(String, String), Vec<Protokoll>> = BTreeMap::new();
+    let mut nach_schluessel: BTreeMap<(String, String, String), Vec<Protokoll>> = BTreeMap::new();
     for p in protokolle {
         nach_schluessel
-            .entry((p.befehl.clone(), p.einstellungen_id.clone()))
+            .entry((p.befehl.clone(), p.einstellungen_id.clone(), p.modell.clone()))
             .or_default()
             .push(p);
     }
 
     nach_schluessel
         .into_iter()
-        .map(|((befehl, einstellungen_id), protokolle)| {
+        .map(|((befehl, einstellungen_id, modell), protokolle)| {
             let werte = werte_sammeln(&protokolle);
             let urteil = urteilen(&protokolle, &werte);
             Gruppe {
                 befehl,
                 einstellungen_id,
+                modell,
                 protokolle,
                 urteil,
                 werte,
@@ -576,9 +593,10 @@ pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
     let mut alles_gut = true;
     for g in gruppen {
         println!(
-            "  ── {} · Einstellungen {} · {} Protokolle ──",
+            "  ── {} · Einstellungen {}{} · {} Protokolle ──",
             g.befehl,
             g.einstellungen_id,
+            if g.modell.is_empty() { String::new() } else { format!(" · Modell {}", g.modell) },
             g.protokolle.len()
         );
         for p in &g.protokolle {
@@ -977,8 +995,10 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         let _ = writeln!(t);
         let _ = writeln!(
             t,
-            "## {} · Einstellungen `{}`",
-            g.befehl, g.einstellungen_id
+            "## {} · Einstellungen `{}`{}",
+            g.befehl,
+            g.einstellungen_id,
+            if g.modell.is_empty() { String::new() } else { format!(" · Modell `{}`", g.modell) }
         );
         let _ = writeln!(t);
         let _ = writeln!(t, "### Beteiligte Läufe");
@@ -1321,6 +1341,49 @@ mod tests {
         let gruppen = gruppieren(einlesen(dir).expect("lesbar"));
         assert_eq!(gruppen.len(), 1, "eine Gruppe erwartet");
         gruppen[0].urteil.clone()
+    }
+
+    /// Ein Protokoll mit Modellname und Artefaktabdruck.
+    fn mit_modell(dir: &Path, teilnehmer: &str, arch: &str, fp: &str, modell: &str, artefakt: &str, digest: &str) {
+        let mut log = RunLog::mit_ziel(LogZiel::neu(dir, "determinismus", teilnehmer, "abcd1234", arch), false);
+        for (k, v) in [
+            ("arch", arch),
+            ("fingerprint_sha256", fp),
+            ("fingerabdruck_schema", crate::hardware::FINGERABDRUCK_SCHEMA),
+            ("rechenpfad_sha256", "pfad-referenz"),
+        ] {
+            log.event(Event::Hardware { key: k.into(), value: v.into() });
+        }
+        for (k, v) in [("theta_v", "0.22.0"), ("modell", modell), ("artefakt_digest", artefakt)] {
+            log.event(Event::Artifact { key: k.into(), value: v.into() });
+        }
+        log.result("determinismus", digest, "bitgleich");
+        log.finish(true);
+    }
+
+    /// ⛔️ **Zwei Modelle, zwei Maschinen, ein Plan: zwei Gruppen mit je
+    /// einem Nachweis** (2026-11-19, der Fall von Block B des Miettags).
+    /// Vorher eine Gruppe und „UNVERGLEICHBAR (Modellstand)“.
+    #[test]
+    fn zwei_modelle_mit_einem_plan_sind_zwei_gruppen() {
+        let dir = tempdir("zwei-modelle");
+        mit_modell(&dir, "mac", "aarch64", "fp-a", "sparrow-0.6b-int8", "art-s", "d-s");
+        mit_modell(&dir, "mac", "aarch64", "fp-a", "pigeon-4b-int8", "art-p", "d-p");
+        mit_modell(&dir, "x86", "x86_64", "fp-b", "sparrow-0.6b-int8", "art-s", "d-s");
+        mit_modell(&dir, "x86", "x86_64", "fp-b", "pigeon-4b-int8", "art-p", "d-p");
+        let gruppen = gruppieren(einlesen(&dir).expect("lesbar"));
+        assert_eq!(gruppen.len(), 2, "je Modell eine Gruppe");
+        for g in &gruppen {
+            assert_eq!(g.urteil, Urteil::Nachweis, "Modell {}", g.modell);
+        }
+        // Dasselbe Modell, auf einer Maschine anders gebaut: eine Gruppe,
+        // und der Modellstand wird benannt, nicht als zwei Gruppen versteckt.
+        let dir2 = tempdir("modellstand");
+        mit_modell(&dir2, "mac", "aarch64", "fp-a", "pigeon-4b-int8", "art-p", "d-p");
+        mit_modell(&dir2, "x86", "x86_64", "fp-b", "pigeon-4b-int8", "art-anders", "d-p");
+        assert_eq!(urteil_ueber(&dir2), Urteil::Modellstand);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir2);
     }
 
     /// Der Regelfall, für den es das Werkzeug gibt: zwei Architekturen,
@@ -1990,6 +2053,7 @@ mod trainingshinweis_tests {
         Gruppe {
             befehl: "testlauf".into(),
             einstellungen_id: "abcd1234".into(),
+            modell: String::new(),
             protokolle: Vec::new(),
             urteil: Urteil::Abweichung,
             werte: werte

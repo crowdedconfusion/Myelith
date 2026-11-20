@@ -1,0 +1,82 @@
+# Dienst fuer einen Einstiegsknoten unter Linux mit systemd (Debian, Ubuntu,
+# Fedora, Arch und was ihnen gleicht). Eingerichtet von
+# `einstieg-einrichten.sh` daneben; Anleitung in `NODE/README/README.md`,
+# Abschnitt "Ein Einstiegsknoten unter Linux". Fuer NixOS gilt `modul.nix`.
+#
+# ⚑ Die Einstellungen des Betreibers stehen in /etc/myl-einstieg/einstieg.env,
+# nicht hier. Diese Datei bleibt bei jedem Update dieselbe, und ein Betreiber
+# prueft den Zuschnitt mit `systemctl cat myl-einstieg`.
+#
+# ⚑ Derselbe Zuschnitt wie `modul.nix`: nach aussen nur der P2P-Port, die
+# Beobachtung auf der Rueckschleife, keine Tuer, eigener Nutzer ohne Rechte,
+# Sandbox von systemd. Die Begruendung je Direktive steht dort.
+
+[Unit]
+Description=Myelith Einstiegsknoten (myl-node)
+Documentation=https://github.com/crowdedconfusion/Myelith/blob/main/NODE/README/README.md
+After=network-online.target
+Wants=network-online.target
+# Ein Startfehler (fehlender Startsatz, falscher Schluessel) wird keine
+# Schleife: fuenf Versuche in fuenf Minuten, dann bleibt der Dienst liegen
+# und sagt es. Gehoert nach [Unit], in [Service] taete es nichts.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=myl-einstieg
+Group=myl-einstieg
+EnvironmentFile=/etc/myl-einstieg/einstieg.env
+StateDirectory=myl-einstieg
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/myl-einstieg
+# Schluessel, Kette, Startsatz und Protokolle liegen im Zustandsordner. Die
+# Konformitaetsvektoren liegen neben dem Programm (der Knoten sucht sie dort).
+# Protokolle nur in Dateien (--still), gedeckelt auf 128 MiB; das Journal
+# bekommt nur Startfehler. --aufnahme 60: Im Aufnahmetakt setzt der Knoten
+# auch /metriken und /bereit neu; mit 300 hinkten sie fuenf Minuten nach.
+ExecStart=/usr/local/lib/myelith/myl-node --still \
+  --name ${NAME} --netz ${NETZ} --port ${PORT} --oeffentlich ${OEFFENTLICH} \
+  --schluessel /var/lib/myl-einstieg/knoten.key \
+  --konsensschluessel /var/lib/myl-einstieg/konsens.key \
+  --kette /var/lib/myl-einstieg/kette.dat \
+  --protokolle /var/lib/myl-einstieg/logs \
+  --aufnahme 60 --zeugen-bereithalten --ohne-tuer \
+  --beobachtung 127.0.0.1:4151 $ZUSATZ
+Restart=on-failure
+RestartSec=10s
+
+# Haertung, wie in modul.nix; `systemd-analyze security myl-einstieg` ist
+# der Beleg.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+# AF_NETLINK: libp2p beobachtet die Schnittstellen (if-watch); ohne es endet
+# der Start mit "Address family not supported by protocol".
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+LimitNOFILE=65536
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

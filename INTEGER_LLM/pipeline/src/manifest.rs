@@ -68,10 +68,13 @@ impl PipelineManifest {
             return Err(format!("Erwarte genau 1 LM-Head-Stage, habe {}", head_count));
         }
 
-        // Shard-Layout gegen den deklarierten pipeline_hash pruefen
-        // (Fund 25): Die Boundary-Reskalierung ist verlustbehaftet, das
-        // Ergebnis haengt an der Lage der Stage-Grenzen. Ein Pod mit
-        // abweichendem Layout darf gar nicht erst starten.
+        // Das Manifest gegen sich selbst pruefen: Passt der deklarierte
+        // pipeline_hash zum tatsaechlichen Shard-Layout? Eine
+        // Selbstkonsistenzpruefung gegen Fehlkonfiguration (Fund 38), keine
+        // Gleichheit zwischen Pods. 📌 Hier stand bis 2026-11-19 noch die
+        // Begruendung aus Fund 25 (verlustbehaftete Reskalierung an den
+        // Stage-Grenzen); sie gilt seit Fund 26 nicht mehr, gemessen mit 1
+        // bis 24 Shards und gleichem Digest, siehe `canonical_layout_id`.
         manifest.verify_layout()?;
 
         Ok(manifest)

@@ -293,6 +293,10 @@ pub struct KnotenKonfig {
     /// zaehlt, was in den Orten fuer das Netz liegt. Wer die Datei
     /// aendert, sieht es in der naechsten Aufnahme, ohne Neustart.
     pub speicherorte: Option<PathBuf>,
+    /// ⚑ **Die AS-Zuordnung des Betreibers** (`--asmap`, Audit A9): eine
+    /// Zeile `<praefix>/<laenge> <AS>` je Praefix. Ausgehende Verbindungen
+    /// zaehlen dann je AS statt je /16 (`myl_net::netzgruppe`).
+    pub asmap: Option<PathBuf>,
     /// ⚑ **Das Netz** (Stufe 4, 2026-10-22): Probekette oder Testnetz mit
     /// dem int4-35B. Bestimmt Startwert und Podmodell der Kette.
     pub netz: &'static crate::netz::Netz,
@@ -486,6 +490,7 @@ impl Default for KnotenKonfig {
             hintergrundpruefung: true,
             teilnehmer: Vec::new(),
             speicherorte: None,
+            asmap: None,
             netz: &crate::netz::PROBEKETTE,
             modellzusage: None,
             zone: myl_types::node_metadata::GeoRegion::Europe,
@@ -563,6 +568,14 @@ impl KnotenKonfig {
     }
 
     /// Die Netzkonfiguration für `myl-net`.
+    /// ⚑ **Die Ankerdatei** (Audit A9): neben der Schluesseldatei, mit der
+    /// Endung `.anker`. Ohne Kette (`--ohne-kette`) keine, denn dann schreibt
+    /// der Knoten nichts auf die Platte.
+    pub fn ankerdatei(&self) -> Option<PathBuf> {
+        self.kettendatei.as_ref()?;
+        Some(self.schluesseldatei.with_extension("anker"))
+    }
+
     pub fn netz(&self) -> NetConfig {
         NetConfig {
             listen_addr: self.horchadressen[0].clone(),

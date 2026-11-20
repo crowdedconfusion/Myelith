@@ -38,6 +38,7 @@ fn konfig(ordner: &std::path::Path, name: &str, bootstrap: Vec<String>) -> Knote
         konsensschluesseldatei: None,
         nat: Default::default(),
         speicherorte: None,
+        asmap: None,
         netz: &myl_node::netz::PROBEKETTE,
         modellzusage: None,
         zone: myl_types::node_metadata::GeoRegion::Europe,

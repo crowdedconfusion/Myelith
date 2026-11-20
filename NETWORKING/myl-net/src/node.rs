@@ -166,7 +166,8 @@ pub fn build_swarm(
     let ping = ping::Behaviour::new(ping::Config::new().with_interval(config.ping_interval));
 
     let grenzen = connection_limits::Behaviour::new(config.grenzen.clone());
-    let adressvielfalt = Adressvielfalt::mit_grenze(config.adressbereich_grenze);
+    let adressvielfalt =
+        Adressvielfalt::mit_grenze(config.adressbereich_grenze).mit_as_zuordnung(config.as_zuordnung.clone());
     let peer_id = identity.peer_id();
     let dient_als_relais = config.nat.dient_als_relais;
     let lokal = if config.lokale_suche { Some(mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?) } else { None };

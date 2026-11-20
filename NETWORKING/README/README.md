@@ -1,11 +1,13 @@
 # NETWORKING: das Netz zwischen den Knoten (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.27.0
-> **Datum:** 2026-11-18
+> **Version:** 0.28.0
+> **Datum:** 2026-11-19
 > **Status:** In Gebrauch im Knoten: Gegenstellen finden (Einstiegsliste,
 > Kademlia, mDNS, Adressen mit Namen), Gossip, das nur Geprüftes
 > weitergibt, ein Anfragekanal, Latenzmessung mit Attesten,
-> Verbindungsgrenzen und Vielfalt nach Netz und Ort, NAT über AutoNAT,
+> Verbindungsgrenzen und Vielfalt nach Netz und Ort, Abwehr gegen
+Umzingelung (Fühler, ausgehend höchstens zwei je Netz oder AS, Anker über
+Neustarts), NAT über AutoNAT,
 > Relais und Lochstanzen, verschlüsselte Sitzungen zwischen Shard-Minern
 > mit Schlüsselwechsel je Epoche. **Offen:** ein unabhängiges
 > kryptographisches Review des Sitzungsschemas und ein Lasttest in der
@@ -45,8 +47,16 @@ NETWORKING/
         │                      Kademlia, Identify, Ping, Relais und AutoNAT
         │                      über TCP und QUIC
         ├── limits.rs          Verbindungsgrenzen (Fund 53): getrennte
-        │                      Budgets ein-/ausgehend, je Peer, je
-        │                      Adressbereich (IPv4 /24, IPv6 /64)
+        │                      Budgets ein-/ausgehend, je Peer, eingehend je
+        │                      Adressbereich (IPv4 /24, IPv6 /64), ausgehend
+        │                      je Netzgruppe (A9)
+        ├── netzgruppe.rs      Netzgruppen (AS aus der Zuordnung des
+        │                      Betreibers, sonst IPv4 /16, IPv6 /32) und das
+        │                      Lesen der AS-Zuordnung (A9)
+        ├── fuehler.rs         Fühler: eingehende Gegenstellen erst nach
+        │                      eigener Wahl in die Routingtabelle, aus einem
+        │                      eigenen Swarm mit flüchtiger Identität (A9)
+        ├── anker.rs           Anker über Neustarts: Auswahl und Dateiformat (A9)
         ├── scoring.rs         Gossipsub-Peer-Scoring: IP-Kolokation,
         │                      Verhaltensstrafe, Graylist-Schwellen
         ├── sitzung.rs         Ende-zu-Ende-verschlüsselte Sitzungen
@@ -98,6 +108,95 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.28.0 (2026-11-19): Abwehr gegen Umzingelung (A9), Verfahrenskennzeichen der Sitzungen (`myl-net` 0.28.0, `myl-siegel` 0.4.0)
+
+Audit A9, nach Heilman et al. 2015 (Bitcoin), Marcus et al. 2018 (Ethereum)
+und Tran et al. 2020 (Angriffe über wenige AS); Vorlage für Fühler, Anker und
+Gruppen sind die Gegenmaßnahmen von Bitcoin Core (feeler, `anchors.dat`,
+asmap), nachgebaut, nicht übernommen.
+
+- ⛔️ **Die Lücke:** libp2p-kad nimmt eine Gegenstelle nur über eine selbst
+  gewählte Verbindung in die Tabelle (bei einer eingehenden ist die Adresse
+  unbekannt). Seit Fund 587 trug die Laufzeit aber jede Horchadresse, die
+  eine Gegenstelle über `identify` nannte, selbst ein, auch bei eingehenden
+  Verbindungen. Ein Angreifer füllte so die Tabelle mit vielen Kennungen und
+  beliebigen Adressen, ohne je erreichbar zu sein.
+- ⚑ **Fühler** (`fuehler.rs`): Meldet sich eine Gegenstelle eingehend, wählt
+  der Knoten sie selbst unter einer ihrer genannten Adressen an, mit der
+  erwarteten Kennung. Erst wenn der Noise-Handshake dort genau diese
+  Gegenstelle zeigt, geht die Adresse in die Tabelle; die Verbindung schließt
+  sofort. Höchstens vier zugleich, 64 wartend, je Gegenstelle einmal je
+  Stunde, Frist 20 s. Ereignis `NodeEvent::Fuehler`.
+- 📌 **Der Fühler wählt aus einem eigenen, kleinen Swarm mit flüchtiger
+  Identität.** Zuerst wählte er aus dem Swarm des Knotens; dann verteilte die
+  Gegenseite ihre Anfragen reihum auch auf die Fühlerverbindung, und die
+  rissen beim Schließen ab (`tests/sitzung.rs`, zwei von fünf Läufen rot).
+  Mit fremder Kennung landet dort nichts. Zweiter Fund beim Bau: Der Fühler
+  der Gegenseite kam eingehend an, und der Knoten fühlte zurück; das
+  unterbleibt jetzt, wenn schon eine eigene ausgehende Verbindung besteht.
+- ⚑ **Ausgehend höchstens zwei je Netzgruppe** (`netzgruppe.rs`,
+  `limits::MAX_AUSGEHEND_JE_GRUPPE`): Gruppe ist das AS aus der Zuordnung des
+  Betreibers (`NetConfig::as_zuordnung`, Format wie `table.txt` von bgp.tools,
+  längstes Präfix gilt), sonst IPv4 /16 und IPv6 /32. Private Netze,
+  Rückschleife, link-lokale Adressen und Relaiswege zählen nicht; eine
+  Zuordnung geht vor diese Ausnahme. Pod-Mitglieder mit Vorrang sind
+  ausgenommen. Wer alle 16 ausgehenden Plätze stellen will, braucht damit
+  Adressen in acht Netzen. Abgewiesene Wahl löscht in Kademlia keine Adresse
+  (geprüft im Quelltext von libp2p-kad 0.49).
+- ⚑ **Anker** (`anker.rs`, `NodeCommand::Anker`): die zwei ältesten
+  ausgehenden Verbindungen ab fünf Minuten, aus verschiedenen Gruppen, als
+  Adresse mit `/p2p/`; der Knoten legt sie ab und wählt sie beim Start zuerst.
+  Eine veränderte Datei bringt höchstens zwei gültige Einträge.
+- 📌 **Vor dem Wählen abweisen, solange die Gruppe voll ist:** Im ersten Lauf
+  mit allen Behältern in einem AS baute Kademlia alle paar Sekunden eine
+  Verbindung ganz auf (TCP, Noise, yamux), nur damit sie an der Grenze fiel
+  (772 Wahlen über alle Knoten in 12 Minuten, dazu 914 abgebrochene
+  eingehende Verbindungen bei den Gegenstellen). Jetzt merkt sich
+  `Adressvielfalt` die Gruppe einer abgewiesenen Gegenstelle und weist die
+  nächste Wahl schon in `handle_pending_outbound_connection` ab, bis dort ein
+  Platz frei ist. Im zweiten Lauf: 34 Abweisungen, 108 abgebrochene
+  eingehende, weniger als im Lauf ohne A9 vom Vortag.
+- 📌 **Der Grund einer abgewiesenen Verbindung steht im Protokoll:** libp2p
+  nennt sie nur „Dial error“; `mit_ursachen` hängt die Kette der Ursachen an
+  („… Netzgruppe AS65000 hat bereits 2 ausgehende Verbindungen“).
+- `NodeCommand::Routingtabelle` für Diagnose und Proben.
+- **Proben:** Bibliothek 107 (Netzgruppen 7, Fühler 5, Anker 5, Grenze je
+  Gruppe 4 neu, eine angepasst: ausgehende zählen weiter nicht gegen die
+  eingehende Grenze je /24), `tests/fuehler.rs` neu: Eine ehrliche eingehende
+  Gegenstelle steht nach dem Fühler in der Tabelle, eine mit toter Adresse
+  nicht, und der Fühler belegt keine Verbindung; eine selbst gewählte braucht
+  keinen. Gegenprobe mit der alten Regel (jede genannte Adresse eintragen):
+  rot. Volle Sammlung grün, `sitzung`, `testnet`, `fuehler`, `chaos` sechsmal
+  hintereinander grün, Clippy grün.
+- **Im Behälter, der schärfste Fall** (`testnetzlauf.py --kurz --ein-as`,
+  sieben Knoten, alle in einem AS, also höchstens zwei ausgehende je Knoten,
+  mit Neustart, Absturz, Abschneiden, Spaltung, Einsteigern, Ausfall des
+  Einstiegs, schlechtem Netz): eine Endhöhe (332), ein Block, eine Wurzel;
+  aufgeholt in 2 bis 4 s wie ohne A9; Abstimmung unverändert (Wechsel je
+  Commit gleich dem Lauf vom Vortag); Gegenstellen im Median 4 statt 5, Mesh
+  im Median 3 bis 4, höchstens 9 % der Aufnahmen ohne Mesh für Blöcke (Vortag
+  8 %); alle Fühler gelungen; Anker beim Neustart gewählt.
+- ⚠️ **Was erst mehrere Maschinen zeigen:** echte Gruppen in echten AS, und
+  ob zwei je Gruppe in einem kleinen Netz mit wenigen Gruppen trägt.
+- ⚑ **Verfahrenskennzeichen in den Botschaften der Sitzungen** (3b.4,
+  `myl-siegel` 0.4.0): ein Byte `VERFAHREN` (1 = X25519 und ML-KEM-768
+  hybrid, HKDF-SHA256, ChaCha20-Poly1305) vorn in `Kopf` (113 statt 112 Byte,
+  in den authentisierten Daten), `Kapsel` (Rahmen 1 185 statt 1 184 Byte vor
+  dem Chiffrat) und `Epochenankuendigung` (in den unterschriebenen Bytes
+  direkt hinter der Kennung). Ein anderes Kennzeichen heißt
+  `SitzungsFehler::UnbekanntesVerfahren` und wird vor allem anderen geprüft.
+  Damit ist ein späterer Wechsel des Verfahrens kein harter Bruch mehr, und
+  niemand kann eine Botschaft auf ein anderes Verfahren umschreiben, ohne Tag
+  oder Unterschrift zu brechen. ⚠️ Drahtformat geändert: Knoten und Shards
+  dieses Stands sprechen nicht mit älteren (vor dem Start des Testnetzes ohne
+  Folgen). Proben 62 (zwei neu, zwei erweitert: Kopf, Ankündigung samt
+  Unterschrift, Kapsel, festgenagelter Aufbau), Gegenprobe ohne die Prüfung
+  im Öffnen rot, Clippy grün. 📌 `tests/sitzung.rs` in `myl-net` rechnete
+  die Rahmenlänge selbst nach und wurde rot (vier Proben „unleserlicher
+  Rahmen“); jetzt nimmt sie `KAPSELRAHMEN_LEN`. Alle Kisten, die `myl-siegel`
+  benutzen (Netz, Pod, Verifier, Simulation, Knoten, Testclient), mit Clippy
+  und allen Proben grün.
 
 ### v0.27.0 (2026-11-19): Was nicht beurteilbar ist, wird ignoriert, nicht bestraft (`myl-net` 0.27.0)
 

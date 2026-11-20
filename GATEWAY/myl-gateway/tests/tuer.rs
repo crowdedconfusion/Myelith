@@ -999,3 +999,69 @@ async fn die_tuer_sagt_zu_was_gedeckt_ist_und_ein_ungedeckter_prompt_bekommt_402
     assert_eq!(status, 402, "{rumpf}");
     assert_eq!(werk.zusagen.lock().expect("z").len(), vorher, "ohne Zusage wird nicht gerechnet");
 }
+
+/// Ein Rechenweg, der wartet und mitschreibt, ob er zu Ende kam.
+struct Gehwerk {
+    begonnen: tokio::sync::Notify,
+    weiter: tokio::sync::Notify,
+    fertig: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl Rechenweg for Gehwerk {
+    async fn rechne(&self, _: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
+        self.begonnen.notify_one();
+        self.weiter.notified().await;
+        self.fertig.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+    }
+    async fn modell(&self) -> Option<Modellstand> {
+        Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
+    }
+}
+
+/// ⚑ **Geht der Klient, wird trotzdem zu Ende gerechnet** (Fund 717,
+/// Simulation vom 2026-11-20, entschieden als gewollt). Im Knoten bucht der
+/// Rechenweg nach dem Ergebnis ab; bräche die Tür ab, sobald der Klient
+/// trennt, liesse sich jeder Pod rechnen lassen und durch Trennen nichts
+/// bezahlen. Dass die Zusage bis dahin Credits des Inhabers bindet, ist
+/// deshalb richtig, und der Klient kauft für eine weitere Sitzung nach
+/// (Fund 716 in CLIENT). Gegenprobe: Eine Tür, die beim Trennen abbricht,
+/// liesse `fertig` falsch.
+#[tokio::test]
+async fn ein_gegangener_klient_wird_zu_ende_gerechnet() {
+    let k = kontrakt(7);
+    let token = bearer_fuer(7, k.adresse());
+    let tuer = Tuer::binden(0).await.expect("binden");
+    let port = tuer.port().expect("port");
+    let annahme = std::sync::Mutex::new(Annahme::neu(1, EpochId(5)));
+    let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
+    let besetzung = myl_gateway::tuer::Besetzung::default();
+    let werk = Gehwerk { begonnen: tokio::sync::Notify::new(), weiter: tokio::sync::Notify::new(), fertig: false.into() };
+    let koerper = r#"{"model":"m","messages":[{"role":"user","content":"frage"}],"max_tokens":4}"#;
+    let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
+
+    let klient = async {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).await.expect("verbinden");
+        s.write_all(&bytes).await.expect("senden");
+        s.flush().await.expect("leeren");
+        tokio::time::timeout(std::time::Duration::from_secs(5), werk.begonnen.notified())
+            .await
+            .expect("die Anfrage kam nie beim Rechenweg an");
+        drop(s);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        werk.weiter.notify_one();
+    };
+    let dienst = async {
+        // Die Antwort geht an eine geschlossene Verbindung; ob das Schreiben
+        // scheitert, ist hier gleich.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tuer.bedienen_v1(&annahme, &stelle, &besetzung, &werk, EpochId(5), 1_000),
+        )
+        .await
+        .expect("die Tuer kam nicht zu Ende");
+    };
+    tokio::join!(klient, dienst);
+    assert!(werk.fertig.load(std::sync::atomic::Ordering::SeqCst), "die Tuer brach die Rechnung ab, als der Klient ging");
+}

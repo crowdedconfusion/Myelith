@@ -111,7 +111,8 @@ OPTIONEN
                         Modell und prüft die Datei gegen ihre Prüfsumme.
     --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: sparrow-0.6b-int8)
     --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
-    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: sparrow-0.6b-int8)
+    --model <NAME>      Das Modell eines Laufs: das Artefakt <NAME> im Artefaktordner
+                        (statt --artifacts; nennen beide eines, muss es dasselbe sein)
     --erwarte <DIGEST>  Erwarteter Vergleichswert. Der Lauf schlägt fehl,
                         wenn er einen anderen erzeugt. Für die CI nach
                         einem Modellwechsel: Ab da meldet sich jede
@@ -240,7 +241,10 @@ impl Args {
 }
 
 fn parse() -> Result<Args, String> {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
+    parse_aus(std::env::args().skip(1).collect())
+}
+
+fn parse_aus(raw: Vec<String>) -> Result<Args, String> {
     if raw.iter().any(|a| a == "-h" || a == "--help") {
         return Err(String::new());
     }
@@ -248,6 +252,8 @@ fn parse() -> Result<Args, String> {
     let mut a = Args::vorgaben();
     let mut befehl: Option<String> = None;
     let mut prompt_gesetzt = false;
+    let mut model_gesetzt = false;
+    let mut artifacts_von_hand = false;
 
     // Optionen dürfen VOR und NACH dem Befehl stehen: `myl-test --plan x
     // stack` ist genauso gültig wie `myl-test stack --plan x`. Der erste
@@ -291,6 +297,7 @@ fn parse() -> Result<Args, String> {
             "--artifacts" => {
                 a.artifacts = PathBuf::from(need(i, "--artifacts")?);
                 a.artifacts_explizit = true;
+                artifacts_von_hand = true;
                 i += 2;
             }
             "--logs" => {
@@ -304,6 +311,7 @@ fn parse() -> Result<Args, String> {
             }
             "--model" => {
                 a.model = need(i, "--model")?;
+                model_gesetzt = true;
                 i += 2;
             }
             "--plan" => {
@@ -342,6 +350,29 @@ fn parse() -> Result<Args, String> {
 
     // Ohne Unterbefehl ins Menü.
     a.command = befehl.unwrap_or_else(|| "menu".to_string());
+
+    // ⛔️ **`--model` waehlt das Artefakt eines Laufs** (2026-11-19). Bis
+    //    hierher wurde der Wert gelesen und nie benutzt, und `--plan` setzte
+    //    das Artefakt als ausdruecklich gewaehlt: `myl-test --model
+    //    pigeon-4b-int8 --plan standard.plan determinismus` rechnete
+    //    sparrow, ohne ein Wort. Gefunden beim Proben von Block B des
+    //    Miettags, dessen Befehl genau so lautete; der Vergleich haette fuer
+    //    pigeon einen Nachweis gemeldet, der sparrow war.
+    if model_gesetzt {
+        if artifacts_von_hand {
+            if a.artifacts.file_name().and_then(|n| n.to_str()) != Some(a.model.as_str()) {
+                return Err(format!(
+                    "--model {} und --artifacts {} nennen verschiedene Modelle",
+                    a.model,
+                    a.artifacts.display()
+                ));
+            }
+        } else {
+            let ordner = default_artifact_dir().parent().map(PathBuf::from).unwrap_or_default();
+            a.artifacts = ordner.join(&a.model);
+            a.artifacts_explizit = true;
+        }
+    }
 
     if a.steps == 0 {
         return Err("--steps muss > 0 sein".into());
@@ -763,4 +794,38 @@ fn stdin_frage(interaktiv: bool) -> Option<impl FnMut(&str) -> Option<String>> {
             Ok(_) => Some(zeile),
         }
     })
+}
+
+#[cfg(test)]
+mod schalterproben {
+    use super::*;
+
+    fn a(w: &[&str]) -> Result<Args, String> {
+        parse_aus(w.iter().map(|s| s.to_string()).collect())
+    }
+
+    /// ⛔️ **`--model` waehlt das Artefakt, auch mit einem Plan** (2026-11-19):
+    /// So steht der Befehl im Ablauf des Miettags, und er rechnete sparrow.
+    #[test]
+    fn model_waehlt_das_artefakt_auch_mit_plan() {
+        let x = a(&["--model", "pigeon-4b-int8", "--plan", "p.plan", "determinismus"]).unwrap();
+        assert_eq!(x.artifacts.file_name().unwrap(), "pigeon-4b-int8");
+        assert!(x.artifacts_explizit);
+        let y = a(&["determinismus", "--plan", "p.plan", "--model", "magpie-30b-a3b-int8"]).unwrap();
+        assert_eq!(y.artifacts.file_name().unwrap(), "magpie-30b-a3b-int8", "Reihenfolge egal");
+        // Ohne `--model` bleibt die Vorgabe.
+        let z = a(&["determinismus"]).unwrap();
+        assert_eq!(z.artifacts.file_name().unwrap(), myl_testclient::DEFAULT_MODEL);
+    }
+
+    /// Nennen `--model` und `--artifacts` verschiedene Modelle, ist das ein
+    /// Fehler; dasselbe ist erlaubt.
+    #[test]
+    fn model_und_artifacts_muessen_passen() {
+        assert!(a(&["--model", "pigeon-4b-int8", "--artifacts", "/x/sparrow-0.6b-int8", "determinismus"])
+            .err()
+            .is_some_and(|f| f.contains("verschiedene Modelle")));
+        let x = a(&["--model", "pigeon-4b-int8", "--artifacts", "/x/pigeon-4b-int8", "determinismus"]).unwrap();
+        assert_eq!(x.artifacts, PathBuf::from("/x/pigeon-4b-int8"));
+    }
 }

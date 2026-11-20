@@ -506,6 +506,10 @@
             <input id="entwurf-a" type="text" autocomplete="off" spellcheck="false" />
             <label id="entwurf-label-b" for="entwurf-b"></label>
             <input id="entwurf-b" type="text" autocomplete="off" spellcheck="false" />
+            <label for="entwurf-pw" data-t="wallet.passwort">Passwort (leer: unverschlüsselt)</label>
+            <input id="entwurf-pw" type="password" autocomplete="new-password" />
+            <label for="entwurf-pw2" data-t="wallet.passwort2">Passwort noch einmal</label>
+            <input id="entwurf-pw2" type="password" autocomplete="new-password" />
           </div>
           <div class="knotenknoepfe">
             <button type="submit" data-t="wallet.entwurf.bestaetigen">Bestätigen</button>
@@ -526,6 +530,8 @@
                  data-t-platz="wallet.name.platz" />
           <textarea id="wallet-wieder-woerter" rows="2" autocomplete="off" spellcheck="false"
                     data-t-platz="wallet.wieder.platz"></textarea>
+          <input id="wallet-wieder-pw" type="password" autocomplete="new-password" data-t-platz="wallet.passwort" />
+          <input id="wallet-wieder-pw2" type="password" autocomplete="new-password" data-t-platz="wallet.passwort2" />
           <button type="submit" data-t="wallet.wieder.knopf">Wiederherstellen</button>
         </form>
         <label for="wallet-einstieg" data-t="wallet.einstieg">Einstieg ins Netz</label>

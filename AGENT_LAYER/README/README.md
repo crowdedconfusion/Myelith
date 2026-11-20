@@ -1,6 +1,6 @@
 # AGENT_LAYER: vom Modell zum Agenten (`myl-agent`, `myl-local-agent`, `book2skill`)
 
-> **Version:** 0.74.1 (`myl-agent` 0.10.0, `myl-local-agent` 0.58.0, `book2skill` 0.7.0)
+> **Version:** 0.74.2 (`myl-agent` 0.10.0, `myl-local-agent` 0.58.1, `book2skill` 0.7.0)
 > **Datum:** 2026-11-18
 > **Status:** Der Agent auf dem eigenen Rechner läuft: Werkzeuge,
 > Werkzeugkisten, Skills, Loop, Notaus, Gedächtnis, und Befehle wie
@@ -81,6 +81,24 @@ umbenannt, weil er in jedem `use` steht.
   was die Ausgabe eines Schritts einer geltenden Kette ist.
 
 ## Changelog
+
+### v0.74.2 (2026-11-20): Abschnitte und Berichtigungen getrennt gezählt (Fund 718, `myl-local-agent` 0.58.1)
+
+- **Gefunden in der Simulation vom 20. November:** Das 35B hatte die
+  Dienstreise gelöst, zwei Antworten endeten beim Überlegen an der Grenze von
+  512 Token, dann rief es `write_file` mit `felder`, dem Feld von
+  `fill_template`. Beides fiel in einen Zähler; der dritte vergebliche
+  Schritt beendete den Lauf als „steckengeblieben“, bevor das Modell die
+  Berichtigung lesen konnte.
+- **Jetzt:** Antworten, die an der Tokengrenze enden, haben ihre eigene
+  Schranke (`HOECHSTZAHL_ABSCHNITTE`, zwei); abgelehnte Aufrufe behalten
+  `HOECHSTZAHL_BERICHTIGUNGEN`. Die Kostenschranke gilt je Art weiter.
+- **Und die Absage eines unbekannten Felds nennt das Werkzeug, zu dem es
+  gehört** (`wer_das_feld_kennt`): „`felder` gehoert zu `fill_template`;
+  das ist ein eigener Aufruf“.
+- Proben: `abschnitte_verbrauchen_keine_berichtigung` (der Hergang aus der
+  Simulation), `das_feld_eines_anderen_werkzeugs_wird_genannt`;
+  `immer_abgeschnitten_bleibt_stecken` hält weiter.
 
 ### v0.74.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
 

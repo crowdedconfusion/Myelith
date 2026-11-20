@@ -1,6 +1,6 @@
 # GATEWAY: die Tür zum Netzmodell (`myl-gateway`)
 
-> **Version:** 0.16.1
+> **Version:** 0.16.2
 > **Datum:** 2026-11-18
 > **Status:** Die eigene Tür eines Knotens auf der Rückschleife
 > (Vorgabe `127.0.0.1:4160`): `/v1/models`, `/v1/completions` und
@@ -99,6 +99,19 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.16.2 (2026-11-20): Ein gegangener Klient wird zu Ende gerechnet, festgehalten (Fund 717, `myl-gateway` 0.16.2)
+
+- **Gefragt in der Simulation vom 20. November:** Ein Agent wurde an seiner
+  Auftragsfrist beendet, seine Anfrage lief weiter, und ihre Zusage band die
+  Credits seines Inhabers bis zum Ende. **Entschieden als gewollt:** Der
+  Rechenweg bucht nach dem Ergebnis ab; eine Tür, die beim Trennen
+  abbräche, ließe Pods für nichts rechnen. Der Klient kauft für weitere
+  Sitzungen nach (CLIENT 0.249.1, Fund 716).
+- Vermerk an der Zusage in `tuer.rs`; Probe
+  `ein_gegangener_klient_wird_zu_ende_gerechnet` (Gegenprobe: eine Tür, die
+  beim Trennen abbricht, ließe sie scheitern).
+- Fassung der Kiste auf die der Komponente gehoben (0.16.0 → 0.16.2).
 
 ### v0.16.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
 

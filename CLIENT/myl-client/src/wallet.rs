@@ -44,7 +44,7 @@
 use std::path::PathBuf;
 
 use myl_types::adresstext;
-use myl_types::bls::BlsSecretKey;
+use myl_types::bls::{BlsPublicKey, BlsSecretKey};
 /// Die Adresse eines Wallets; herausgereicht, damit Oberflaechen ohne eigene
 /// Abhaengigkeit auf `myl-types` mit ihr umgehen koennen.
 pub use myl_types::ids::Address;
@@ -478,7 +478,11 @@ pub fn liste() -> Vec<Wallet> {
         .filter_map(|e| {
             let p = e.path();
             let datei = p.file_name()?.to_str()?;
-            let name = datei.strip_suffix(".key").or_else(|| datei.strip_suffix(KEYSTORE_ENDUNG))?.to_string();
+            let name = datei
+                .strip_suffix(".key")
+                .or_else(|| datei.strip_suffix(KEYSTORE_ENDUNG))
+                .or_else(|| datei.strip_suffix(KALT_ENDUNG))?
+                .to_string();
             laden(&name).ok()
         })
         .collect();
@@ -490,6 +494,10 @@ pub fn liste() -> Vec<Wallet> {
 /// Liest ein Wallet.
 pub fn laden(name: &str) -> Result<Wallet, String> {
     name_pruefen(name)?;
+    if ist_kalt(name) {
+        let pk = kalter_schluessel(name)?;
+        return Ok(Wallet { name: name.to_string(), adresse: Address::aus_schluessel(&pk) });
+    }
     if let Some(k) = keystore_lesen(name)? {
         let b: [u8; myl_types::bls::BLS_PK_LEN] =
             ikm_aus_beliebigem_hex(&k.pubkey).and_then(|v| v.try_into().ok()).ok_or("Keystore: kein öffentlicher Schlüssel")?;
@@ -536,6 +544,11 @@ pub fn eingetragen_setzen(name: &str) -> Result<(), String> {
 /// verlaesst diese Kiste nur als Unterschrift (`crate::bezahlen`).
 pub(crate) fn geheimschluessel(name: &str) -> Result<BlsSecretKey, String> {
     name_pruefen(name)?;
+    if ist_kalt(name) {
+        return Err(format!(
+            "„{name}“ ist ein kaltes Wallet: Der Schlüssel liegt auf einem anderen Gerät. Dort mit `myl wallet unterschreiben` unterschreiben."
+        ));
+    }
     if keystorepfad(name).exists() {
         let offen = OFFEN.lock().map_err(|_| "Sperre vergiftet".to_string())?;
         let s = offen.get(name).ok_or_else(|| format!("{GESPERRT}: {name}"))?;
@@ -554,6 +567,69 @@ pub(crate) fn geheimschluessel(name: &str) -> Result<BlsSecretKey, String> {
 
 /// Die Endung eines Keystores neben den `.key`-Dateien.
 const KEYSTORE_ENDUNG: &str = ".keystore.json";
+
+/// ⚑ **Die Endung eines kalten Wallets** (CLIENT 7.12): nur der öffentliche
+/// Schlüssel, kein Geheimnis. Siehe [`crate::kalt`].
+const KALT_ENDUNG: &str = ".oeffentlich";
+
+fn kaltpfad(name: &str) -> PathBuf {
+    ordner().join(format!("{name}{KALT_ENDUNG}"))
+}
+
+/// Ob ein Wallet kalt ist: hier nur der öffentliche Schlüssel.
+pub fn ist_kalt(name: &str) -> bool {
+    kaltpfad(name).exists()
+}
+
+fn kalter_schluessel(name: &str) -> Result<BlsPublicKey, String> {
+    let p = kaltpfad(name);
+    let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    let wort = text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).find(|l| !l.is_empty()).unwrap_or("");
+    oeffentlich_aus_hex(wort).map_err(|f| format!("{}: {f}", p.display()))
+}
+
+fn oeffentlich_aus_hex(wort: &str) -> Result<BlsPublicKey, String> {
+    let b: [u8; myl_types::bls::BLS_PK_LEN] = ikm_aus_beliebigem_hex(wort)
+        .and_then(|v| v.try_into().ok())
+        .ok_or("erwartet einen öffentlichen Schlüssel aus 96 Hexzeichen")?;
+    let pk = BlsPublicKey(b);
+    pk.validate().map_err(|_| "kein gültiger öffentlicher Schlüssel".to_string())?;
+    Ok(pk)
+}
+
+/// **Der öffentliche Schlüssel eines Wallets**, für ein kaltes Wallet auf
+/// einem anderen Rechner (`myl wallet oeffentlich`). Bei einem Keystore steht
+/// er darin, ohne zu entsperren.
+pub fn oeffentlicher_schluessel(name: &str) -> Result<BlsPublicKey, String> {
+    name_pruefen(name)?;
+    if ist_kalt(name) {
+        return kalter_schluessel(name);
+    }
+    if let Some(k) = keystore_lesen(name)? {
+        return oeffentlich_aus_hex(&k.pubkey);
+    }
+    geheimschluessel(name)?.public_key().map_err(|_| "Schlüssel ungültig".to_string())
+}
+
+/// **Legt ein kaltes Wallet an**: nur der öffentliche Schlüssel, etwa vom
+/// Gerät, das den Schlüssel hält (`myl wallet oeffentlich`). Taugt als
+/// Auszahlungskonto; Überweisungen werden dort unterschrieben.
+pub fn beobachten(name: &str, oeffentlich_hex: &str) -> Result<Wallet, String> {
+    name_pruefen(name)?;
+    if ordner().join(format!("{name}.key")).exists() || keystorepfad(name).exists() || ist_kalt(name) {
+        return Err(format!("Ein Wallet „{name}“ gibt es schon."));
+    }
+    let pk = oeffentlich_aus_hex(oeffentlich_hex.trim())?;
+    std::fs::create_dir_all(ordner()).map_err(|e| e.to_string())?;
+    std::fs::write(
+        kaltpfad(name),
+        format!("# Myelith, kaltes Wallet: nur der öffentliche Schlüssel. Unterschrieben wird auf dem Gerät mit dem Schlüssel.
+{}
+", hex(&pk.0)),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(Wallet { name: name.to_string(), adresse: Address::aus_schluessel(&pk) })
+}
 
 /// Was ein Aufruf meldet, solange das Wallet nicht entsperrt ist.
 pub const GESPERRT: &str = "Das Wallet ist verschlüsselt und gesperrt";
@@ -792,6 +868,39 @@ mod proben {
             std::fs::write(&pfad, &echt).unwrap();
             entsperren("iv", "ein gutes Passwort").unwrap();
             assert!(ist_entsperrt("iv"));
+        });
+    }
+
+    /// ⚑ **Das kalte Wallet (CLIENT 7.12)**: aus dem öffentlichen Schlüssel
+    /// eines Keystores angelegt (ohne Entsperren), dieselbe Adresse, in der
+    /// Liste, als Auszahlungskonto wählbar; einen Schlüssel gibt es dort
+    /// nicht, und der Auftrag lässt sich nur mit dem echten unterschreiben.
+    #[test]
+    fn ein_kaltes_wallet_hat_nur_den_oeffentlichen_schluessel() {
+        mit_ordner(|| {
+            let e = aus_woertern(WOERTER).unwrap();
+            let warm = speichern_mit("warm", &e, Some("ein gutes Passwort")).unwrap();
+            let pk = oeffentlicher_schluessel("warm").expect("ohne Entsperren");
+            let kalt = beobachten("kalt", &hex(&pk.0)).expect("anlegen");
+            assert_eq!(kalt.adresse, warm.adresse);
+            assert!(ist_kalt("kalt") && !ist_kalt("warm"));
+            assert_eq!(laden("kalt").unwrap(), kalt);
+            assert!(liste().iter().any(|w| w.name == "kalt"));
+            waehlen("kalt").expect("als Auszahlungskonto");
+            assert!(geheimschluessel("kalt").err().is_some_and(|f| f.contains("kaltes Wallet")));
+            assert!(beobachten("kalt", &hex(&pk.0)).is_err(), "ein Name zweimal");
+            assert!(beobachten("kaputt", "abcd").is_err());
+            let auftrag = crate::kalt::Auftrag {
+                netzwert: myl_types::hash::Hash::from_bytes([1; 32]),
+                absender: oeffentlicher_schluessel("kalt").unwrap(),
+                nonce: 0,
+                max_gebuehr: 10,
+                anweisung: myl_consensus::block::Anweisung::Burn { betrag: 1 },
+            };
+            assert!(crate::bezahlen::kalt_unterschreiben("warm", &auftrag).unwrap_err().contains("gesperrt"));
+            entsperren("warm", "ein gutes Passwort").unwrap();
+            let tx = crate::bezahlen::kalt_unterschreiben("warm", &auftrag).expect("unterschreiben");
+            assert_eq!(tx.absender_adresse(), kalt.adresse);
         });
     }
 

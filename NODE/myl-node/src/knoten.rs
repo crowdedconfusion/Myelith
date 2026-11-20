@@ -1150,7 +1150,16 @@ impl Knoten {
                 .text("schluesseldatei", konfig.schluesseldatei.display().to_string()),
         );
 
-        let netz = konfig.netz();
+        let mut netz = konfig.netz();
+        // ⚑ A9: Die AS-Zuordnung des Betreibers, falls angegeben. Eine
+        //   unlesbare Datei ist ein Startfehler, kein stilles /16.
+        if let Some(pfad) = &konfig.asmap {
+            let z = myl_net::netzgruppe::AsZuordnung::aus_datei(pfad).map_err(|e| KnotenFehler::Netz(format!("--asmap: {e}")))?;
+            protokoll.schreibe(
+                Eintrag::neu("asmap").text("datei", pfad.display().to_string()).zahl("praefixe", z.eintraege() as i64),
+            );
+            netz.as_zuordnung = Some(Arc::new(z));
+        }
         let mut swarm =
             build_swarm(&identitaet, &netz).map_err(|e| KnotenFehler::Netz(e.to_string()))?;
         // ⚑ Nach der Rolle: Volle Knoten hören die Zeugen nicht, zustandslose
@@ -1201,6 +1210,31 @@ impl Knoten {
             Ok(n) => protokoll.schreibe(Eintrag::neu("bootstrap").zahl("peers", n as i64)),
             Err(e) => protokoll
                 .schreibe(Eintrag::neu("bootstrap_fehler").text("grund", e.to_string())),
+        }
+
+        // ⚑ A9: Die Anker des letzten Laufs zuerst waehlen, neben der
+        //   Einstiegsliste: Nach einem Neustart nimmt der Knoten sonst, was
+        //   zuerst kommt (Heilman et al. 2015; Bitcoin Core `anchors.dat`).
+        if let Some(datei) = konfig.ankerdatei() {
+            if let Ok(text) = std::fs::read_to_string(&datei) {
+                let anker = myl_net::anker::lesen(&text);
+                let mut gewaehlt = 0;
+                for (peer, addr) in &anker {
+                    let wahl = libp2p::swarm::dial_opts::DialOpts::peer_id(*peer)
+                        .addresses(vec![addr.clone()])
+                        .condition(libp2p::swarm::dial_opts::PeerCondition::DisconnectedAndNotDialing)
+                        .build();
+                    if swarm.dial(wahl).is_ok() {
+                        gewaehlt += 1;
+                    }
+                }
+                protokoll.schreibe(
+                    Eintrag::neu("anker_gewaehlt")
+                        .text("datei", datei.display().to_string())
+                        .zahl("anker", anker.len() as i64)
+                        .zahl("gewaehlt", gewaehlt),
+                );
+            }
         }
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -2116,6 +2150,33 @@ impl Knoten {
             return Default::default();
         }
         rx.await.unwrap_or_default()
+    }
+
+    /// ⚑ **Die Anker sichern** (Audit A9): die bewaehrten ausgehenden
+    /// Gegenstellen in die Ankerdatei, wenn sie sich geaendert haben. Ohne
+    /// Kandidaten bleibt die alte Datei stehen: Nach einem Neustart sind die
+    /// Verbindungen jung, und die Anker des letzten Laufs gelten weiter.
+    async fn anker_pflegen(&mut self) {
+        let Some(datei) = self.konfig.ankerdatei() else { return };
+        let (tx, rx) = oneshot::channel();
+        if self.kommandos.send(NodeCommand::Anker(tx)).is_err() {
+            return;
+        }
+        let Ok(anker) = rx.await else { return };
+        if anker.is_empty() {
+            return;
+        }
+        let text = myl_net::anker::als_text(&anker);
+        if std::fs::read_to_string(&datei).ok().as_deref() == Some(text.as_str()) {
+            return;
+        }
+        let neu = datei.with_extension("anker.neu");
+        let ergebnis = std::fs::write(&neu, &text).and_then(|_| std::fs::rename(&neu, &datei));
+        let mut e = Eintrag::neu("anker_gesichert").zahl("anker", anker.len() as i64);
+        if let Err(f) = ergebnis {
+            e = e.text("fehler", f.to_string());
+        }
+        self.protokoll.schreibe(e);
     }
 
     /// Anzahl verbundener Peers.
@@ -3489,6 +3550,7 @@ impl Knoten {
         self.nachrechnung_pflegen();
         self.groessen_protokollieren();
         self.netzarbeit().await;
+        self.anker_pflegen().await;
         self.pruefpunkt_pflegen().await;
         self.saat_pflegen();
         let z = self.zustand().await;
@@ -4986,7 +5048,14 @@ impl Knoten {
             //    er noch nicht verbunden ist. Das zählte wie eine Abweisung,
             //    und mit 29 Knoten bekamen ehrliche Miner Zeugnisse. Jetzt
             //    wird später neu gefragt, ohne zu zählen.
-            NodeEvent::AnfrageGescheitert { an, grund, zweck } if zweck == Some(ZWECK_ZEITPROBE) && self.messungen.contains_key(&an) && ist_waehlfehler(&grund) => {
+            // 📌 **Fund 715 (2026-11-20, Auftragslauf): ebenso ein Stau.**
+            //    Sind auf der Verbindung alle Plätze für Anfragen belegt
+            //    ([`myl_net::MAX_ANFRAGEN_ZUGLEICH`]), scheitert die Probe
+            //    hier, bevor sie hinausgeht. Das zählte wie eine Weigerung,
+            //    und ein ehrlicher Miner bekam ein Zeugnis.
+            NodeEvent::AnfrageGescheitert { an, grund, zweck }
+                if zweck == Some(ZWECK_ZEITPROBE) && self.messungen.contains_key(&an) && (ist_waehlfehler(&grund) || ist_staufehler(&grund)) =>
+            {
                 self.messung_unerreicht(an);
                 self.nachholquelle_scheitert(an);
                 Eintrag::neu("zeitprobe_unerreicht").text("an", an.to_string()).text("grund", grund)
@@ -5000,6 +5069,16 @@ impl Knoten {
                     self.zweig_aufgeben("gescheitert");
                 }
                 self.nachforderungen.retain(|n| n.an != an);
+                // 📌 **Fund 715: Ein Stau ist sofort wieder ein Stau.** Ohne
+                //    Sperre fragte der Knoten gleich die nächste Gegenstelle
+                //    mit voller Verbindung, und die gleich die nächste: im
+                //    Auftragslauf vom 2026-11-20 rund 11 000 Mal je Sekunde,
+                //    1,2 GB Protokoll in einer Stunde, Rechenzeit, die dem
+                //    eigenen Shard fehlte. Jetzt gilt die Gegenstelle wie eine,
+                //    die eben nichts hatte, für [`LEER_SPERRE`] als belegt.
+                if ist_staufehler(&grund) {
+                    self.leer_geantwortet.insert(an, (0, std::time::Instant::now()));
+                }
                 self.weiter_nachfordern(None);
                 Eintrag::neu("nachschub_gescheitert")
                     .text("an", an.to_string())
@@ -5060,6 +5139,12 @@ impl Knoten {
             NodeEvent::Abgewiesen { peer, eingehend, grund } => Eintrag::neu("abgewiesen")
                 .text("gegenstelle", peer.map(|p| p.to_string()).unwrap_or_default())
                 .wahr("eingehend", eingehend)
+                .text("grund", grund),
+            // ⚑ A9: Eine eingehende Gegenstelle wurde unter ihrer Adresse
+            //   angewaehlt; nur eine erreichbare kommt in die Tabelle.
+            NodeEvent::Fuehler { peer, gelungen, grund } => Eintrag::neu("fuehler")
+                .text("gegenstelle", peer.to_string())
+                .wahr("gelungen", gelungen)
                 .text("grund", grund),
         };
         self.protokoll.schreibe(eintrag);
@@ -8236,6 +8321,15 @@ fn ist_waehlfehler(grund: &str) -> bool {
     grund.starts_with("Failed to dial")
 }
 
+/// 📌 **Ein Stau** (Fund 715): Die Anfrage kam nicht hinaus, weil auf der
+/// eigenen Verbindung alle Plätze für Anfragen belegt sind. Der Text ist der
+/// von `libp2p-request-response` (`OutboundStreamFailed`, „max sub-streams
+/// reached“); [`stau_tests`] hält ihn fest. Über die Gegenstelle sagt er
+/// nichts.
+fn ist_staufehler(grund: &str) -> bool {
+    grund.ends_with("max sub-streams reached")
+}
+
 /// ⚑ **So viele Spurablagen hält ein Knoten** (Stufe 2, 2026-10-28): je
 /// Bündel eine, über wenige Epochen; die Ziehung kommt eine Epoche nach dem
 /// Bündel. Seit 2026-11-05 nur mit dem unterschriebenen Bündel, je Bündel
@@ -9250,6 +9344,9 @@ mod netz_luecke_tests;
 
 #[cfg(test)]
 mod plaetze_tests;
+
+#[cfg(test)]
+mod stau_tests;
 
 /// Ein nachgerechneter Verlauf, aus der Rechenaufgabe zurück (Stufe 2).
 #[derive(Debug)]

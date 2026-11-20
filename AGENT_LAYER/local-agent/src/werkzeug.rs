@@ -727,6 +727,20 @@ impl std::error::Error for Argumentfehler {}
 /// `pattern`, `enum` und die übrigen Stichworte werden **nicht**
 /// ausgewertet. Wer sie ins Schema schreibt, bekommt sie nicht geprüft,
 /// und dieser Absatz steht hier, damit niemand das Gegenteil annimmt.
+/// 📌 **Welche anderen Werkzeuge ein Feld kennen** (Fund 718, Simulation
+/// vom 2026-11-20). Das 35B rief `write_file` mit `felder`, dem Feld von
+/// `fill_template`; die Absage nannte nur, was `write_file` kennt. Ein
+/// Hinweis auf das Werkzeug, zu dem das Feld gehört, sagt dem Modell, dass es
+/// zwei Aufrufe verwechselt hat, und nicht nur, dass einer falsch war.
+pub fn wer_das_feld_kennt(feld: &str, angebote: &[Werkzeug], ausser: &str) -> Vec<String> {
+    angebote
+        .iter()
+        .filter(|w| w.name != ausser)
+        .filter(|w| w.parameter.get("properties").and_then(|p| p.as_object()).is_some_and(|p| p.contains_key(feld)))
+        .map(|w| w.name.clone())
+        .collect()
+}
+
 pub fn argumente_pruefen(
     werkzeug: &Werkzeug,
     v: &Vorschlag,
@@ -869,5 +883,29 @@ fn typname(w: &serde_json::Value) -> &'static str {
         serde_json::Value::String(_) => "string",
         serde_json::Value::Array(_) => "array",
         serde_json::Value::Object(_) => "object",
+    }
+}
+
+#[cfg(test)]
+mod feld_proben {
+    use super::*;
+
+    fn mit(name: &str, felder: &[&str]) -> Werkzeug {
+        let mut w = Werkzeug::ohne_parameter(name, "");
+        let props: serde_json::Map<String, serde_json::Value> =
+            felder.iter().map(|f| (f.to_string(), serde_json::json!({"type": "string"}))).collect();
+        w.parameter = serde_json::json!({"type": "object", "properties": props});
+        w
+    }
+
+    /// Fund 718: `felder` gehört zu `fill_template`, nicht zu `write_file`;
+    /// das gerufene Werkzeug selbst zählt nicht, ein unbekanntes Feld ergibt
+    /// keinen Hinweis.
+    #[test]
+    fn das_feld_eines_anderen_werkzeugs_wird_genannt() {
+        let angebote = vec![mit("write_file", &["pfad", "inhalt"]), mit("fill_template", &["vorlage", "felder"]), mit("zeit", &[])];
+        assert_eq!(wer_das_feld_kennt("felder", &angebote, "write_file"), vec!["fill_template".to_string()]);
+        assert!(wer_das_feld_kennt("pfad", &angebote, "write_file").is_empty());
+        assert!(wer_das_feld_kennt("gibtsnicht", &angebote, "write_file").is_empty());
     }
 }

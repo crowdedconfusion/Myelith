@@ -133,10 +133,11 @@ if grep -q golemos.knotenprobe /proc/cmdline; then
   K=/tmp/knotenprobe
   export GOLEM_KNOTEN_KONF=$K/knoten.conf GOLEM_KNOTEN_STAND=$K/stand GOLEM_KNOTEN_LAUF=$K/lauf
   befund=""
-  /usr/sbin/golem-knoten einrichten --name probe --konformitaet aus >/dev/null 2>&1 || befund="$befund einrichten"
+  # Die Probekette: Sie braucht keinen Startsatz aus dem Release.
+  /usr/sbin/golem-knoten einrichten --name probe --netz probe --konformitaet aus >/dev/null 2>&1 || befund="$befund einrichten"
   /usr/sbin/golem-knoten starten >/dev/null 2>&1 || befund="$befund starten"
   n=0
-  while [ $n -lt 60 ] && ! netstat -ltn 2>/dev/null | grep -q ":4001 "; do sleep 1; n=$((n + 1)); done
+  while [ $n -lt 60 ] && ! netstat -ltn 2>/dev/null | grep -q ":4150 "; do sleep 1; n=$((n + 1)); done
   echo "  P2P-Port nach $n s"
   pid=$(cat $K/lauf/knoten.pid 2>/dev/null)
   # ⚑ Der Waechter startet ueber `setpriv`; die gemerkte Kennung ist die
@@ -146,7 +147,7 @@ if grep -q golemos.knotenprobe /proc/cmdline; then
   echo "  myl-node: Prozess ${kind:-keiner}, Konto ${konto:-?} (Waechterkind $pid)"
   [ "$konto" = 900 ] || befund="$befund konto"
   netstat -ltn 2>/dev/null | awk 'NR>2{print "  hoert: "$4}'
-  netstat -ltn 2>/dev/null | awk 'NR>2{print $4}' | grep -v -e ":4001$" -e "^127.0.0.1:" -e "^::1:" > /tmp/offen.txt
+  netstat -ltn 2>/dev/null | awk 'NR>2{print $4}' | grep -v -e ":4150$" -e "^127.0.0.1:" -e "^::1:" > /tmp/offen.txt
   if [ -s /tmp/offen.txt ]; then befund="$befund offen:$(tr '\n' ' ' < /tmp/offen.txt)"; fi
   netstat -ltn 2>/dev/null | grep -q "127.0.0.1:4151 " || befund="$befund beobachtung"
   /usr/sbin/golem-knoten stoppen >/dev/null 2>&1

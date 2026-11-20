@@ -190,6 +190,40 @@ pub fn ueberweisen(leitung: &Knotenleitung, w: &Wallet, vorschau: &Ueberweisungs
     senden_mit(leitung, w, &vorschau.stand, Anweisung::Ueberweisung { nach: vorschau.an, betrag: vorschau.betrag })
 }
 
+/// **Der Auftrag zu einer Vorschau**, für ein kaltes Wallet (CLIENT 7.12):
+/// dieselbe Nonce, derselbe Netzwert, dieselbe Gebührengrenze, die ein
+/// warmes Wallet unterschriebe.
+pub fn ueberweisung_als_auftrag(vorschau: &Ueberweisungsvorschau, absender: myl_types::bls::BlsPublicKey) -> Result<crate::kalt::Auftrag, String> {
+    if Address::aus_schluessel(&absender) != vorschau.von {
+        return Err("Der Schlüssel gehört nicht zum Absender der Vorschau.".into());
+    }
+    Ok(crate::kalt::Auftrag {
+        netzwert: vorschau.stand.netzwert,
+        absender,
+        nonce: vorschau.stand.nonce,
+        max_gebuehr: vorschau.max_gebuehr,
+        anweisung: Anweisung::Ueberweisung { nach: vorschau.an, betrag: vorschau.betrag },
+    })
+}
+
+/// **Unterschreibt einen Auftrag** mit dem Schlüssel eines (warmen) Wallets
+/// dieses Geräts (CLIENT 7.12). Der Schlüssel verlässt die Kiste nur als
+/// Unterschrift, wie bei [`senden`].
+pub fn kalt_unterschreiben(name: &str, auftrag: &crate::kalt::Auftrag) -> Result<Transaktion, String> {
+    let geheim = wallet::geheimschluessel(name)?;
+    auftrag.unterschreiben(&geheim)
+}
+
+/// **Reicht eine anderswo unterschriebene Transaktion ein** (CLIENT 7.12).
+pub fn einreichen(leitung: &Knotenleitung, tx: &Transaktion) -> Result<String, String> {
+    let bytes = borsh::to_vec(tx).map_err(|e| e.to_string())?;
+    match leitung.fragen(&Relaisfrage::Transaktion { tx: bytes })? {
+        Relaisantwort::Erledigt(z) => Ok(z),
+        Relaisantwort::Fehler(f) => Err(f),
+        andere => Err(format!("unerwartete Antwort: {andere:?}")),
+    }
+}
+
 /// **Credits kaufen**: MYL verbrennen; die Kette schreibt Inferenz-Credits gut.
 pub fn credits_kaufen(leitung: &Knotenleitung, w: &Wallet, betrag: u64) -> Result<String, String> {
     senden(leitung, w, Anweisung::Burn { betrag })
@@ -248,6 +282,21 @@ pub enum Nachkauf {
     BudgetErschoepft { rest: u64 },
     /// Das Wallet kann die Runde nicht decken.
     GeldFehlt { noetig: u64, guthaben: u64 },
+}
+
+/// 📌 **Lehnt die Tür wegen des Guthabens ab, zählt ihr Wort** (Fund 716,
+/// Auftragslauf vom 2026-11-20). Die Tür zieht vom Guthaben des Inhabers
+/// auch ab, was sie anderen Anfragen zugesagt hat, die noch rechnen; dieser
+/// Klient sieht das nicht. Im Lauf hielt eine verwaiste Anfrage (ihr Agent
+/// war an der Frist beendet, ihr Pod rechnete sie nach dem Wechsel neu)
+/// rund 24 000 von 26 980 Credits; jede neue Sitzung bekam 2 697 zugesagt,
+/// der Klient hielt sich für gedeckt, kaufte nicht, und sechs Aufträge
+/// endeten in Sekunden mit 402. Nach einer Ablehnung (und den zwei Slots,
+/// die ein eben gekaufter Bestand braucht, um bei der Tür anzukommen) gilt
+/// deshalb nichts als verfügbar: Gekauft wird die Runde samt Vorrat, nie
+/// über das Budget.
+pub fn nach_ablehnung(l: Nachkauflage) -> Nachkauflage {
+    Nachkauflage { credits: l.offen.min(l.credits), ..l }
 }
 
 /// ⚑ **Die Entscheidung des Nachkaufs, ohne Netz und ohne Uhr** (Fund 707,
@@ -398,7 +447,10 @@ impl Nachkaeufer {
             return Err(format!("Die Sitzung galt bis Epoche {}, jetzt läuft {}.", s.gueltig_bis, s.epoche));
         }
         let konto = self.leitung.kontostand(&self.wallet.adresse)?;
-        let lage = self.lage(&s, &konto, bedarf, je_runde, heraus, laengste_runde);
+        let mut lage = self.lage(&s, &konto, bedarf, je_runde, heraus, laengste_runde);
+        if abgelehnt {
+            lage = nach_ablehnung(lage);
+        }
         let (credits, myl) = match nachkauf_entscheiden(&lage) {
             Nachkauf::Genug => return Ok(Nachkaufbericht::Genug),
             Nachkauf::Kaufen { credits, myl } => (credits, myl),
@@ -537,6 +589,20 @@ mod nachkauf_proben {
 
     fn lage() -> Nachkauflage {
         Nachkauflage { credits: 100, offen: 0, bedarf: 512, je_runde: 512, vorrat_runden: 4, budget_rest: 10_000, preis: 67, guthaben: 1_000_000, gebuehr: 300 }
+    }
+
+    /// Fund 716: Hält dieser Klient die Runde für gedeckt, die Tür aber nicht,
+    /// wird nach der Ablehnung gekauft. Gegenprobe: ohne [`nach_ablehnung`]
+    /// bliebe es bei `Genug`, und die Runde scheiterte erneut.
+    #[test]
+    fn nach_einer_ablehnung_wird_gekauft_auch_wenn_es_reicht() {
+        let l = Nachkauflage { credits: 26_980, bedarf: 3_700, je_runde: 0, budget_rest: 400_000, ..lage() };
+        assert_eq!(nachkauf_entscheiden(&l), Nachkauf::Genug);
+        assert_eq!(nachkauf_entscheiden(&nach_ablehnung(l)), Nachkauf::Kaufen { credits: 3_700, myl: 3_700 * 67 });
+        // Das Offene bleibt offen, das Budget die Grenze.
+        let knapp = Nachkauflage { credits: 900, offen: 300, budget_rest: 2_000, ..lage() };
+        assert_eq!(nach_ablehnung(knapp).credits, 300);
+        assert_eq!(nachkauf_entscheiden(&nach_ablehnung(knapp)), Nachkauf::Kaufen { credits: 1_700, myl: 1_700 * 67 });
     }
 
     /// ⚑ **Aufgefüllt wird auf den Vorrat, nie über den Rest des Budgets.**

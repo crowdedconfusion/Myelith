@@ -144,6 +144,20 @@ use zeroize::Zeroizing;
 /// verstehen einander nicht.
 pub const SITZUNG_KENNUNG: &str = "myelith-sitzung-1";
 
+/// ⚑ **Das Verfahrenskennzeichen** (NETWORKING 3b.4, 2026-11-19): ein Byte
+/// vorn in jeder Botschaft, die über die Leitung geht ([`Kopf`], [`Kapsel`],
+/// [`Epochenankuendigung`]). `1` heißt X25519 und ML-KEM-768 hybrid,
+/// HKDF-SHA256 mit [`SITZUNG_KENNUNG`], ChaCha20-Poly1305.
+///
+/// Warum: Ohne Kennzeichen ist ein späterer Wechsel des Verfahrens (etwa ein
+/// anderes KEM, wenn ML-KEM-768 fällt) ein harter Bruch, denn eine alte
+/// Gegenstelle liest neue Bytes als kaputte alte. Mit ihm sagt sie
+/// „unbekanntes Verfahren“, und ein Release kann zwei Verfahren nebeneinander
+/// sprechen, bis alle umgestellt sind. Kopf und Ankündigung tragen es
+/// authentisiert (Daten des AEAD, Signatur), sodass niemand eine Nachricht
+/// auf ein schwächeres Verfahren herunterschreiben kann.
+pub const VERFAHREN: u8 = 1;
+
 /// Länge eines abgeleiteten Sitzungsschlüssels.
 pub const SCHLUESSEL_LEN: usize = 32;
 
@@ -159,12 +173,12 @@ const KEM_SAAT_INFO: &[u8] = b"myelith-sitzung-kem-saat-v1";
 /// Länge des Poly1305-Tags, das `encrypt` an den Geheimtext hängt.
 pub const TAG_LEN: usize = 16;
 
-/// Borsh-Länge eines [`Kopf`]: 8 (Epoche) + 32 (Pod) + 32 + 32 + 8.
+/// Borsh-Länge eines [`Kopf`]: 1 (Verfahren) + 8 (Epoche) + 32 (Pod) + 32 + 32 + 8.
 ///
 /// Ein Test rechnet das nach. Wer dem Kopf ein Feld hinzufügt und die
 /// Konstante vergisst, bekommt einen roten Test statt einer Grenze, die
 /// um die Differenz zu großzügig ist.
-pub const KOPF_BYTES: usize = 112;
+pub const KOPF_BYTES: usize = 113;
 
 /// Größte Klartextlänge, die durch den Anfragekanal passt.
 ///
@@ -390,6 +404,7 @@ pub struct Gegenpunkte {
 /// fehlschlagenden Tag. **Sie braucht deshalb keine eigene Signatur.**
 #[derive(Clone, PartialEq, Eq)]
 pub struct Kapsel {
+    verfahren: u8,
     epoche: EpochId,
     pod: PodId,
     von: Endpunkt,
@@ -423,9 +438,15 @@ impl Kapsel {
         &self.chiffrat
     }
 
-    /// Auf die Leitung: `epoche ‖ pod ‖ von ‖ an ‖ chiffrat`.
+    /// Das Verfahren, mit dem gekapselt wurde.
+    pub fn verfahren(&self) -> u8 {
+        self.verfahren
+    }
+
+    /// Auf die Leitung: `verfahren ‖ epoche ‖ pod ‖ von ‖ an ‖ chiffrat`.
     pub fn zu_bytes(&self) -> Vec<u8> {
-        let mut roh = Vec::with_capacity(8 + 32 + 32 + 32 + KAPSEL_LEN);
+        let mut roh = Vec::with_capacity(KAPSELRAHMEN_LEN);
+        roh.push(self.verfahren);
         roh.extend_from_slice(&self.epoche.0.to_le_bytes());
         roh.extend_from_slice(self.pod.as_bytes());
         roh.extend_from_slice(self.von.bytes());
@@ -436,10 +457,16 @@ impl Kapsel {
 
     /// Von der Leitung.
     pub fn aus_bytes(roh: &[u8]) -> Result<Self, SitzungsFehler> {
-        const KOPF: usize = 8 + 32 + 32 + 32;
+        const KOPF: usize = 1 + 8 + 32 + 32 + 32;
         if roh.len() != KOPF + KAPSEL_LEN {
             return Err(SitzungsFehler::UnleserlicherRahmen);
         }
+        // Zuerst das Verfahren: Unter einem anderen haben die Bytes danach
+        // eine andere Bedeutung.
+        if roh[0] != VERFAHREN {
+            return Err(SitzungsFehler::UnbekanntesVerfahren { verfahren: roh[0] });
+        }
+        let roh = &roh[1..];
         let mut acht = [0u8; 8];
         acht.copy_from_slice(&roh[0..8]);
         let mut pod = [0u8; 32];
@@ -449,8 +476,9 @@ impl Kapsel {
         let mut an = [0u8; 32];
         an.copy_from_slice(&roh[72..104]);
         let mut chiffrat = Box::new([0u8; KAPSEL_LEN]);
-        chiffrat.copy_from_slice(&roh[KOPF..]);
+        chiffrat.copy_from_slice(&roh[KOPF - 1..]);
         Ok(Self {
+            verfahren: VERFAHREN,
             epoche: EpochId(u64::from_le_bytes(acht)),
             pod: PodId::new(pod),
             von: Endpunkt::aus_bytes(von),
@@ -586,6 +614,8 @@ impl Epochenschluessel {
 /// es zum Weiterleiten braucht, und nichts davon ändern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct Kopf {
+    /// Das Verfahren ([`VERFAHREN`]); authentisiert wie der ganze Kopf.
+    pub verfahren: u8,
     /// Epoche, deren Schlüssel gilt.
     pub epoche: EpochId,
     /// Pod, zu dem die Sitzung gehört.
@@ -666,6 +696,10 @@ pub enum SitzungsFehler {
     EndpunktPasstNicht { erwartet: Endpunkt, bekommen: Endpunkt },
     /// Der mitgeführte Konsensschlüssel ist kein gültiger Gruppenpunkt.
     SchluesselUngueltig,
+    /// Die Botschaft nennt ein Verfahren, das dieser Knoten nicht spricht
+    /// ([`VERFAHREN`]). Kein Angriff, sondern meist ein älterer oder
+    /// neuerer Stand der Gegenstelle.
+    UnbekanntesVerfahren { verfahren: u8 },
     /// Es soll geöffnet werden, aber die Kapsel der Gegenstelle fehlt
     /// noch. Kein Angriff, sondern eine Reihenfolge: Der
     /// Empfangsschlüssel entsteht erst aus ihrem Chiffrat.
@@ -754,6 +788,10 @@ impl fmt::Display for SitzungsFehler {
                 f,
                 "der mitgeführte Konsensschlüssel ist kein gültiger Gruppenpunkt"
             ),
+            SitzungsFehler::UnbekanntesVerfahren { verfahren } => write!(
+                f,
+                "die Gegenstelle nennt Verfahren {verfahren}, dieser Knoten spricht {VERFAHREN}"
+            ),
             SitzungsFehler::SignierenGescheitert => {
                 write!(f, "der Konsensschlüssel konnte die Ankündigung nicht signieren")
             }
@@ -820,6 +858,7 @@ pub fn endpunkt_aus_schluessel(pubkey: &BlsPublicKey) -> Endpunkt {
 /// im Kommentar, sie steht im Typ.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct Epochenankuendigung {
+    verfahren: u8,
     epoche: EpochId,
     punkt: Epochenpunkt,
     kapselpunkt: Kapselpunkt,
@@ -829,18 +868,21 @@ pub struct Epochenankuendigung {
 
 /// Die Bytes, über die unterschrieben wird.
 ///
-/// Aufbau: `DST ‖ u64_le(epoche) ‖ pubkey ‖ punkt`. Der eigene
-/// öffentliche Schlüssel steht mit darin, damit die Nachricht ohne
-/// Nebenwissen eindeutig ist.
+/// Aufbau: `DST ‖ verfahren ‖ u64_le(epoche) ‖ pubkey ‖ punkt ‖ kapselpunkt`.
+/// Der eigene öffentliche Schlüssel steht mit darin, damit die Nachricht
+/// ohne Nebenwissen eindeutig ist; das Verfahren, damit niemand eine
+/// Ankündigung einem anderen Verfahren unterschiebt.
 fn ankuendigungsbytes(
+    verfahren: u8,
     epoche: EpochId,
     pubkey: &BlsPublicKey,
     punkt: &Epochenpunkt,
     kapselpunkt: &Kapselpunkt,
 ) -> Vec<u8> {
     let mut msg =
-        Vec::with_capacity(DST_EPOCHENPUNKT.len() + 8 + BLS_PK_LEN + 32 + KAPSELPUNKT_LEN);
+        Vec::with_capacity(DST_EPOCHENPUNKT.len() + 1 + 8 + BLS_PK_LEN + 32 + KAPSELPUNKT_LEN);
     msg.extend_from_slice(DST_EPOCHENPUNKT);
+    msg.push(verfahren);
     msg.extend_from_slice(&epoche.0.to_le_bytes());
     msg.extend_from_slice(&pubkey.0);
     msg.extend_from_slice(punkt.bytes());
@@ -860,11 +902,12 @@ impl Epochenankuendigung {
             .map_err(|_| SitzungsFehler::SignierenGescheitert)?;
         let punkt = schluessel.punkt();
         let kapselpunkt = schluessel.kapselpunkt();
-        let bytes = ankuendigungsbytes(schluessel.epoche(), &pubkey, &punkt, &kapselpunkt);
+        let bytes = ankuendigungsbytes(VERFAHREN, schluessel.epoche(), &pubkey, &punkt, &kapselpunkt);
         let signatur = konsens
             .sign(&bytes)
             .map_err(|_| SitzungsFehler::SignierenGescheitert)?;
         Ok(Self {
+            verfahren: VERFAHREN,
             epoche: schluessel.epoche(),
             punkt,
             kapselpunkt,
@@ -902,6 +945,9 @@ impl Epochenankuendigung {
         erwarteter: Endpunkt,
         erwartete_epoche: EpochId,
     ) -> Result<Gegenpunkte, SitzungsFehler> {
+        if self.verfahren != VERFAHREN {
+            return Err(SitzungsFehler::UnbekanntesVerfahren { verfahren: self.verfahren });
+        }
         if self.epoche != erwartete_epoche {
             // Vor allem anderen: Eine gültig unterschriebene Ankündigung
             // aus einer alten Epoche ist echt und trotzdem falsch, und
@@ -924,7 +970,7 @@ impl Epochenankuendigung {
                 bekommen,
             });
         }
-        let bytes = ankuendigungsbytes(self.epoche, &self.pubkey, &self.punkt, &self.kapselpunkt);
+        let bytes = ankuendigungsbytes(self.verfahren, self.epoche, &self.pubkey, &self.punkt, &self.kapselpunkt);
         if !self.pubkey.verify(&bytes, &self.signatur) {
             return Err(SitzungsFehler::SignaturStimmtNicht);
         }
@@ -1148,6 +1194,7 @@ impl Kanal {
             eigenes_geheim: eigener.geheim.clone(),
             gegenpunkte: gegenpunkte.clone(),
             eigene_kapsel: Kapsel {
+                verfahren: VERFAHREN,
                 epoche,
                 pod,
                 von: ich,
@@ -1280,6 +1327,7 @@ impl Kanal {
         }
 
         let kopf = Kopf {
+            verfahren: VERFAHREN,
             epoche: self.epoche,
             pod: self.pod,
             von: self.ich,
@@ -1310,6 +1358,9 @@ impl Kanal {
     /// nichts kostet.
     pub fn oeffne(&mut self, nachricht: &Versiegelt) -> Result<Vec<u8>, SitzungsFehler> {
         let kopf = &nachricht.kopf;
+        if kopf.verfahren != VERFAHREN {
+            return Err(SitzungsFehler::UnbekanntesVerfahren { verfahren: kopf.verfahren });
+        }
         if kopf.epoche != self.epoche {
             return Err(SitzungsFehler::EpocheVorbei {
                 kopf: kopf.epoche,
@@ -1536,8 +1587,8 @@ impl Sitzungen {
     }
 }
 
-/// Länge des Kapselvorspanns: `epoche ‖ pod ‖ von ‖ an ‖ chiffrat`.
-pub const KAPSELRAHMEN_LEN: usize = 8 + 32 + 32 + 32 + KAPSEL_LEN;
+/// Länge des Kapselvorspanns: `verfahren ‖ epoche ‖ pod ‖ von ‖ an ‖ chiffrat`.
+pub const KAPSELRAHMEN_LEN: usize = 1 + 8 + 32 + 32 + 32 + KAPSEL_LEN;
 
 /// Kapsel und versiegelte Nachricht in einem Stück.
 ///
@@ -1806,6 +1857,7 @@ mod tests {
         // hier einen roten Test statt einer Grenze, die um die Differenz
         // zu großzügig ist.
         let kopf = Kopf {
+            verfahren: VERFAHREN,
             epoche: EpochId(1),
             pod: pod(3),
             von: endpunkt(1),
@@ -2068,7 +2120,16 @@ mod tests {
             let a = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb))
                 .expect("Kanal A");
             let roh = a.eigene_kapsel().zu_bytes();
-            assert_eq!(roh.len(), 8 + 32 + 32 + 32 + KAPSEL_LEN);
+            assert_eq!(roh.len(), 1 + 8 + 32 + 32 + 32 + KAPSEL_LEN);
+            assert_eq!(roh[0], VERFAHREN, "das Verfahren steht vorn");
+            // ⚑ 3b.4: Ein anderes Verfahren wird benannt, nicht als kaputter
+            //   Rahmen gelesen.
+            let mut fremd = roh.clone();
+            fremd[0] = 2;
+            assert!(matches!(
+                Kapsel::aus_bytes(&fremd),
+                Err(SitzungsFehler::UnbekanntesVerfahren { verfahren: 2 })
+            ));
             let zurueck = Kapsel::aus_bytes(&roh).expect("lesen");
             assert_eq!(&zurueck, a.eigene_kapsel());
             // Ein Byte zu wenig wird abgelehnt, statt still zu raten.
@@ -2077,6 +2138,24 @@ mod tests {
                 Err(SitzungsFehler::UnleserlicherRahmen)
             ));
         }
+    }
+
+    /// ⚑ **3b.4: Der Kopf nennt sein Verfahren, authentisiert.** Ein anderes
+    /// Kennzeichen wird vor allem anderen benannt; das Kennzeichen geht als
+    /// Daten des AEAD mit, umgeschrieben stimmt das Tag nicht.
+    #[test]
+    fn der_kopf_nennt_sein_verfahren() {
+        let (mut a, mut b) = paar(1);
+        let echt = a.versiegle(b"hallo").expect("versiegeln");
+        assert_eq!(echt.kopf.verfahren, VERFAHREN);
+        let mut fremd = echt.clone();
+        fremd.kopf.verfahren = 2;
+        assert_eq!(b.oeffne(&fremd), Err(SitzungsFehler::UnbekanntesVerfahren { verfahren: 2 }));
+        // Gegenprobe: Das Kennzeichen ist Teil der authentisierten Daten.
+        let aad_echt = borsh::to_vec(&echt.kopf).unwrap();
+        let aad_fremd = borsh::to_vec(&fremd.kopf).unwrap();
+        assert_ne!(aad_echt, aad_fremd);
+        assert_eq!(b.oeffne(&echt).expect("öffnen"), b"hallo");
     }
 
     #[test]
@@ -2335,6 +2414,25 @@ mod tests {
         );
     }
 
+    /// ⚑ **3b.4: Das Verfahren ist unterschrieben und wird zuerst geprüft.**
+    /// Ein anderes Kennzeichen heißt „unbekanntes Verfahren“; wer das Byte
+    /// einer echten Ankündigung umschreibt, bricht die Unterschrift.
+    #[test]
+    fn eine_ankuendigung_nennt_ihr_verfahren_unterschrieben() {
+        let sk = konsens(1);
+        let ich = endpunkt_aus_schluessel(&sk.public_key().unwrap());
+        let schluessel = Epochenschluessel::probe(EpochId(9), [1u8; 32]);
+        let echt = Epochenankuendigung::neu(&sk, &schluessel).expect("ankündigen");
+        assert_eq!(echt.verfahren, VERFAHREN);
+        let mut fremd = echt.clone();
+        fremd.verfahren = 2;
+        assert_eq!(fremd.pruefe(ich, EpochId(9)), Err(SitzungsFehler::UnbekanntesVerfahren { verfahren: 2 }));
+        // Gegenprobe der Unterschrift: Die Bytes, über die unterschrieben
+        // wurde, enthalten das Verfahren; mit einem anderen passt sie nicht.
+        let bytes = ankuendigungsbytes(2, echt.epoche, &echt.pubkey, &echt.punkt, &echt.kapselpunkt);
+        assert!(!echt.pubkey.verify(&bytes, &echt.signatur));
+    }
+
     #[test]
     fn eine_ankuendigung_gibt_den_punkt_erst_nach_der_pruefung_heraus() {
         let sk = konsens(1);
@@ -2427,6 +2525,7 @@ mod tests {
         let kaputt = BlsPublicKey([0u8; BLS_PK_LEN]);
         let s = Epochenschluessel::probe(EpochId(9), [1u8; 32]);
         let ankuendigung = Epochenankuendigung {
+            verfahren: VERFAHREN,
             epoche: EpochId(9),
             punkt: s.punkt(),
             kapselpunkt: s.kapselpunkt(),
@@ -2490,6 +2589,7 @@ mod tests {
         ohne_kennung.extend_from_slice(punkt.bytes());
 
         let gefaelscht = Epochenankuendigung {
+            verfahren: VERFAHREN,
             epoche: EpochId(9),
             punkt,
             kapselpunkt: schluessel.kapselpunkt(),
@@ -2504,11 +2604,13 @@ mod tests {
         // vormacht: Wer ein Feld einschiebt, bekommt hier einen roten
         // Test statt einer stillen Formatänderung.
         let kapselpunkt = schluessel.kapselpunkt();
-        let msg = ankuendigungsbytes(EpochId(9), &pubkey, &punkt, &kapselpunkt);
+        let msg = ankuendigungsbytes(VERFAHREN, EpochId(9), &pubkey, &punkt, &kapselpunkt);
         assert!(msg.starts_with(DST_EPOCHENPUNKT));
+        // ⚑ Direkt hinter der Kennung das Verfahren (3b.4).
+        assert_eq!(msg[DST_EPOCHENPUNKT.len()], VERFAHREN);
         assert_eq!(
             msg.len(),
-            DST_EPOCHENPUNKT.len() + 8 + BLS_PK_LEN + 32 + KAPSELPUNKT_LEN
+            DST_EPOCHENPUNKT.len() + 1 + 8 + BLS_PK_LEN + 32 + KAPSELPUNKT_LEN
         );
         // ⚑ Der Kapselpunkt steht **hinten und mit drin**: Ohne ihn wäre
         // der zweite Zweig des Austauschs ungedeckt, und ein Angreifer

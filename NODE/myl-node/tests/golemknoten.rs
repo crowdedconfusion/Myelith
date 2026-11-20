@@ -192,9 +192,11 @@ mod lauf {
         let nach = |f: &str| args.iter().position(|a| *a == f).map(|i| args[i + 1]);
         assert_eq!(nach("--name"), Some("golem-1"));
         assert_eq!(nach("--rolle"), Some("teilnehmer"));
-        assert_eq!(nach("--port"), Some("4001"));
+        assert_eq!(nach("--port"), Some("4150"));
+        assert_eq!(nach("--netz"), Some("test-int4"), "ohne Netz laeuft der Knoten auf der Probekette");
+        assert!(args.contains(&"--zeugen-bereithalten"));
         assert_eq!(nach("--beobachtung"), Some("127.0.0.1:4151"));
-        assert_eq!(nach("--aufnahme"), Some("300"));
+        assert_eq!(nach("--aufnahme"), Some("60"));
         assert_eq!(nach("--bootstrap"), Some("/dns4/a.example/tcp/4001/p2p/12D3Koo"));
         let stand = o.0.join("stand");
         assert_eq!(nach("--schluessel").map(PathBuf::from), Some(stand.join("identitaet.key")), "der Schluessel liegt im Zustand");

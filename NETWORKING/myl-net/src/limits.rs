@@ -159,6 +159,18 @@ pub const MAX_JE_ADRESSBEREICH: usize = 4;
 /// je Adressbereich bleibt.
 pub const MAX_VORRANG: usize = 64;
 
+/// ⚑ **Ausgehende Verbindungen je Netzgruppe** (Audit A9, 2026-11-19):
+/// höchstens zwei je AS, ohne AS-Zuordnung je IPv4 /16 oder IPv6 /32
+/// ([`crate::netzgruppe`]). Pod-Mitglieder mit Vorrang zählen nicht.
+///
+/// **Herleitung:** Bei 16 ausgehenden Plätzen ([`MAX_AUSGEHEND`]) braucht
+/// ein Angreifer, der sie alle stellen will, Adressen in acht verschiedenen
+/// Netzen statt in einem gemieteten Bereich. Bitcoin Core hält eine
+/// ausgehende Verbindung je Gruppe bei acht Plätzen; zwei bei sechzehn ist
+/// dieselbe Spreizung, und zwei lässt zu, dass ein Knoten zwei ehrliche
+/// Gegenstellen beim selben großen Anbieter hat.
+pub const MAX_AUSGEHEND_JE_GRUPPE: usize = 2;
+
 /// Präfixlänge für IPv4-Adressbereiche: /24, also die ersten drei Oktette.
 pub const IPV4_PRAEFIX_BITS: u8 = 24;
 
@@ -272,15 +284,46 @@ impl std::fmt::Display for BereichVoll {
 
 impl std::error::Error for BereichVoll {}
 
-/// Begrenzt **eingehende** Verbindungen je Adressbereich.
+/// Grund einer abgelehnten ausgehenden Verbindung: die Netzgruppe ist voll.
+#[derive(Debug)]
+pub struct GruppeVoll {
+    /// Die Netzgruppe, deren Kontingent erschöpft ist.
+    pub gruppe: crate::netzgruppe::Netzgruppe,
+    /// Die überschrittene Grenze.
+    pub grenze: usize,
+}
+
+impl std::fmt::Display for GruppeVoll {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Netzgruppe {} hat bereits {} ausgehende Verbindungen (Grenze)", self.gruppe, self.grenze)
+    }
+}
+
+impl std::error::Error for GruppeVoll {}
+
+/// Begrenzt **eingehende** Verbindungen je Adressbereich und
+/// **ausgehende** je Netzgruppe.
 ///
-/// Ausgehende Verbindungen bleiben unberührt: Sie sind die selbst
-/// gewählten, und eine Schranke darauf würde genau das Budget
-/// beschneiden, das die Verteidigung freihalten soll.
+/// ⚑ **Ausgehend seit dem 2026-11-19 auch** (Audit A9). Bis dahin blieben
+/// ausgehende Verbindungen unberührt, mit der Begründung, sie seien die
+/// selbst gewählten. Gewählt werden sie aber aus Adressen, die Kademlia
+/// liefert, und die kann ein Angreifer mit vielen Identitäten in einem
+/// Bereich füllen. Die Grenze je Gruppe ist großzügiger als die eingehende
+/// und beschneidet das Budget nicht, sie verteilt es.
 pub struct Adressvielfalt {
     grenze: usize,
     belegt: HashMap<Adressbereich, usize>,
     zuordnung: HashMap<ConnectionId, Adressbereich>,
+    grenze_ausgehend: usize,
+    ausgehend: HashMap<crate::netzgruppe::Netzgruppe, usize>,
+    ausgehend_zuordnung: HashMap<ConnectionId, crate::netzgruppe::Netzgruppe>,
+    as_zuordnung: Option<std::sync::Arc<crate::netzgruppe::AsZuordnung>>,
+    vorrang: std::collections::HashSet<PeerId>,
+    /// Gegenstellen, deren Gruppe beim letzten Versuch voll war.
+    /// 📌 Ohne das baute Kademlia im Lauf „alle in einem AS“ alle paar
+    ///    Sekunden eine Verbindung ganz auf (TCP, Noise, yamux), nur damit
+    ///    sie an der Grenze sofort fiel (n1: 210 Wahlen in 12 Minuten).
+    voll_bei: HashMap<PeerId, crate::netzgruppe::Netzgruppe>,
 }
 
 impl Adressvielfalt {
@@ -297,7 +340,41 @@ impl Adressvielfalt {
             grenze,
             belegt: HashMap::new(),
             zuordnung: HashMap::new(),
+            grenze_ausgehend: MAX_AUSGEHEND_JE_GRUPPE,
+            ausgehend: HashMap::new(),
+            ausgehend_zuordnung: HashMap::new(),
+            as_zuordnung: None,
+            vorrang: std::collections::HashSet::new(),
+            voll_bei: HashMap::new(),
         }
+    }
+
+    /// Mit der AS-Zuordnung des Betreibers für die ausgehende Grenze.
+    pub fn mit_as_zuordnung(mut self, z: Option<std::sync::Arc<crate::netzgruppe::AsZuordnung>>) -> Self {
+        self.as_zuordnung = z;
+        self
+    }
+
+    /// Mit eigener Grenze je Netzgruppe für ausgehende Verbindungen.
+    pub fn mit_grenze_ausgehend(mut self, grenze: usize) -> Self {
+        self.grenze_ausgehend = grenze;
+        self
+    }
+
+    /// Gegenstellen mit Vorrang (Pod-Mitglieder): Für sie gilt die
+    /// ausgehende Grenze je Gruppe nicht, wie die Zahlengrenzen nicht.
+    pub fn vorrang_setzen(&mut self, peers: impl IntoIterator<Item = PeerId>) {
+        self.vorrang = peers.into_iter().collect();
+    }
+
+    /// Die AS-Zuordnung, mit der gezählt wird.
+    pub fn as_zuordnung(&self) -> Option<std::sync::Arc<crate::netzgruppe::AsZuordnung>> {
+        self.as_zuordnung.clone()
+    }
+
+    /// Ausgehende Verbindungen einer Gruppe. Für Diagnose und Tests.
+    pub fn ausgehend_belegt(&self, g: &crate::netzgruppe::Netzgruppe) -> usize {
+        self.ausgehend.get(g).copied().unwrap_or(0)
     }
 
     /// Belegte Plätze eines Bereichs. Für Diagnose und Tests.
@@ -311,6 +388,14 @@ impl Adressvielfalt {
     }
 
     fn freigeben(&mut self, id: &ConnectionId) {
+        if let Some(g) = self.ausgehend_zuordnung.remove(id) {
+            if let Some(z) = self.ausgehend.get_mut(&g) {
+                *z = z.saturating_sub(1);
+                if *z == 0 {
+                    self.ausgehend.remove(&g);
+                }
+            }
+        }
         if let Some(bereich) = self.zuordnung.remove(id) {
             if let Some(zaehler) = self.belegt.get_mut(&bereich) {
                 *zaehler = zaehler.saturating_sub(1);
@@ -367,14 +452,58 @@ impl NetworkBehaviour for Adressvielfalt {
         Ok(dummy::ConnectionHandler)
     }
 
-    fn handle_established_outbound_connection(
+    /// ⚑ **Vor dem Waehlen abweisen, solange die Gruppe voll ist**: fuer eine
+    /// Gegenstelle, deren Gruppe beim letzten Versuch voll war. Welche
+    /// Adresse eine Wahl nimmt, steht erst nach dem Aufbau fest (Kademlia
+    /// liefert sie selbst); was hier geprueft wird, ist die gemerkte Gruppe.
+    fn handle_pending_outbound_connection(
         &mut self,
         _connection_id: ConnectionId,
-        _peer: PeerId,
-        _addr: &Multiaddr,
+        maybe_peer: Option<PeerId>,
+        _addresses: &[Multiaddr],
+        _effective_role: Endpoint,
+    ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
+        let Some(peer) = maybe_peer else { return Ok(Vec::new()) };
+        if self.vorrang.contains(&peer) {
+            return Ok(Vec::new());
+        }
+        if let Some(gruppe) = self.voll_bei.get(&peer).copied() {
+            if self.ausgehend_belegt(&gruppe) >= self.grenze_ausgehend {
+                return Err(ConnectionDenied::new(GruppeVoll { gruppe, grenze: self.grenze_ausgehend }));
+            }
+            self.voll_bei.remove(&peer);
+        }
+        Ok(Vec::new())
+    }
+
+    fn handle_established_outbound_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        peer: PeerId,
+        addr: &Multiaddr,
         _role_override: Endpoint,
         _port_use: PortUse,
     ) -> Result<THandler<Self>, ConnectionDenied> {
+        if self.vorrang.contains(&peer) {
+            return Ok(dummy::ConnectionHandler);
+        }
+        let Some(gruppe) = crate::netzgruppe::netzgruppe(addr, self.as_zuordnung.as_deref()) else {
+            return Ok(dummy::ConnectionHandler);
+        };
+        let belegt = self.ausgehend_belegt(&gruppe);
+        if belegt >= self.grenze_ausgehend {
+            if self.voll_bei.len() >= 1024 {
+                self.voll_bei.clear();
+            }
+            self.voll_bei.insert(peer, gruppe);
+            return Err(ConnectionDenied::new(GruppeVoll { gruppe, grenze: self.grenze_ausgehend }));
+        }
+        self.voll_bei.remove(&peer);
+        // Gezählt wie eingehend sofort; freigegeben bei `ConnectionClosed`
+        // und bei `DialFailure` (lehnt ein anderes Verhalten nach uns ab,
+        // meldet der Swarm die Wahl als gescheitert).
+        self.ausgehend.insert(gruppe, belegt + 1);
+        self.ausgehend_zuordnung.insert(connection_id, gruppe);
         Ok(dummy::ConnectionHandler)
     }
 
@@ -384,6 +513,9 @@ impl NetworkBehaviour for Adressvielfalt {
                 self.freigeben(&connection_id);
             }
             FromSwarm::ListenFailure(ListenFailure { connection_id, .. }) => {
+                self.freigeben(&connection_id);
+            }
+            FromSwarm::DialFailure(libp2p::swarm::behaviour::DialFailure { connection_id, .. }) => {
                 self.freigeben(&connection_id);
             }
             FromSwarm::ConnectionEstablished(ConnectionEstablished { endpoint, .. }) => {
@@ -588,11 +720,11 @@ mod tests {
 
     #[test]
     fn ausgehende_verbindungen_zaehlen_nicht_gegen_den_bereich() {
-        // Ausgehende sind die selbst gewählten. Eine Schranke darauf
-        // beschnitte genau das Budget, das die Verteidigung freihält.
+        // Ausgehende belegen keinen Platz der eingehenden Grenze je /24;
+        // sie haben ihre eigene, großzügigere je Netzgruppe (A9).
         let mut v = Adressvielfalt::mit_grenze(1);
         let addr: Multiaddr = "/ip4/203.0.113.7/tcp/4150".parse().unwrap();
-        for i in 0..5usize {
+        for i in 0..MAX_AUSGEHEND_JE_GRUPPE {
             assert!(v
                 .handle_established_outbound_connection(
                     ConnectionId::new_unchecked(i),
@@ -604,5 +736,70 @@ mod tests {
                 .is_ok());
         }
         assert_eq!(v.bereiche(), 0);
+        let rein: Multiaddr = "/ip4/198.51.100.1/tcp/4150".parse().unwrap();
+        assert!(v.handle_established_inbound_connection(ConnectionId::new_unchecked(99), PeerId::random(), &rein, &addr).is_ok());
+    }
+
+    fn raus(v: &mut Adressvielfalt, i: usize, peer: PeerId, addr: &str) -> bool {
+        let a: Multiaddr = addr.parse().unwrap();
+        v.handle_established_outbound_connection(ConnectionId::new_unchecked(i), peer, &a, Endpoint::Dialer, PortUse::Reuse)
+            .is_ok()
+    }
+
+    /// ⚑ A9: Ausgehend höchstens zwei je /16; ein anderer /16 hat eigene
+    /// Plätze, und ein geschlossener gibt seinen frei.
+    #[test]
+    fn ausgehend_hoechstens_zwei_je_netzgruppe() {
+        let mut v = Adressvielfalt::neu();
+        assert!(raus(&mut v, 0, PeerId::random(), "/ip4/203.0.113.7/tcp/4150"));
+        assert!(raus(&mut v, 1, PeerId::random(), "/ip4/203.0.9.9/udp/4150/quic-v1"));
+        assert!(!raus(&mut v, 2, PeerId::random(), "/ip4/203.0.200.1/tcp/4150"), "dritte im selben /16");
+        assert!(raus(&mut v, 3, PeerId::random(), "/ip4/203.1.0.1/tcp/4150"), "anderer /16");
+        v.freigeben(&ConnectionId::new_unchecked(0));
+        assert!(raus(&mut v, 4, PeerId::random(), "/ip4/203.0.200.1/tcp/4150"), "Platz wieder frei");
+    }
+
+    /// Eine Gegenstelle, deren Gruppe voll war, wird schon vor dem Wählen
+    /// abgewiesen, bis in der Gruppe ein Platz frei wird.
+    #[test]
+    fn eine_volle_gruppe_weist_schon_vor_dem_waehlen_ab() {
+        let mut v = Adressvielfalt::neu();
+        let p = PeerId::random();
+        assert!(raus(&mut v, 0, PeerId::random(), "/ip4/203.0.113.7/tcp/4150"));
+        assert!(raus(&mut v, 1, PeerId::random(), "/ip4/203.0.9.9/tcp/4150"));
+        assert!(!raus(&mut v, 2, p, "/ip4/203.0.200.1/tcp/4150"));
+        let vorher = |v: &mut Adressvielfalt, q| v.handle_pending_outbound_connection(ConnectionId::new_unchecked(9), Some(q), &[], Endpoint::Dialer).is_ok();
+        assert!(!vorher(&mut v, p), "dieselbe Gegenstelle, Gruppe noch voll");
+        assert!(vorher(&mut v, PeerId::random()), "eine unbekannte Gegenstelle darf es versuchen");
+        v.freigeben(&ConnectionId::new_unchecked(0));
+        assert!(vorher(&mut v, p), "ein Platz ist frei");
+    }
+
+    /// Pod-Mitglieder mit Vorrang zählen nicht, private Netze und die
+    /// Rückschleife auch nicht.
+    #[test]
+    fn vorrang_und_private_netze_sind_ausgenommen() {
+        let mut v = Adressvielfalt::neu();
+        let pod: Vec<PeerId> = (0..5).map(|_| PeerId::random()).collect();
+        v.vorrang_setzen(pod.iter().copied());
+        for (i, p) in pod.iter().enumerate() {
+            assert!(raus(&mut v, i, *p, "/ip4/203.0.113.7/tcp/4150"), "Pod-Mitglied {i}");
+        }
+        for i in 10..20 {
+            assert!(raus(&mut v, i, PeerId::random(), "/ip4/172.18.0.5/tcp/4150"));
+            assert!(raus(&mut v, i + 100, PeerId::random(), "/ip4/127.0.0.1/tcp/4150"));
+        }
+    }
+
+    /// Mit AS-Zuordnung zählt das AS: zwei /16 desselben Anbieters sind eine
+    /// Gruppe.
+    #[test]
+    fn mit_as_zuordnung_zaehlt_das_as() {
+        let z = crate::netzgruppe::AsZuordnung::lesen("203.0.0.0/8 64500\n").unwrap();
+        let mut v = Adressvielfalt::neu().mit_as_zuordnung(Some(std::sync::Arc::new(z)));
+        assert!(raus(&mut v, 0, PeerId::random(), "/ip4/203.1.0.1/tcp/4150"));
+        assert!(raus(&mut v, 1, PeerId::random(), "/ip4/203.2.0.1/tcp/4150"));
+        assert!(!raus(&mut v, 2, PeerId::random(), "/ip4/203.3.0.1/tcp/4150"), "drittes im selben AS");
+        assert_eq!(v.ausgehend_belegt(&crate::netzgruppe::Netzgruppe::As(64500)), 2);
     }
 }

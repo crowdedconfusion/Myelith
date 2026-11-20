@@ -222,6 +222,11 @@ myl-node — ein Myelith-Netzknoten
                          ALLE Knoten eines Laufs müssen denselben Wert
                          nennen, sonst halten sie fremde Blöcke für
                          künftig. NUR FÜR TESTNETZE.
+  --asmap <datei>        Die AS-Zuordnung: eine Zeile <praefix>/<laenge> <AS>
+                         je Praefix (wie table.txt von bgp.tools). Dann
+                         haelt der Knoten hoechstens zwei ausgehende
+                         Verbindungen je AS statt je /16: Wer ihn
+                         umzingeln will, braucht Adressen in vielen Netzen.
   --lokale-suche         Knoten im lokalen Netz suchen (mDNS), auch wenn
                          das Netz es nicht vorgibt. Braucht eine
                          Horchadresse auf den Schnittstellen, nicht nur
@@ -414,6 +419,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
             }
             "--modell" => { modellangabe = Some(wert(i)?); i += 2; }
             "--speicherorte" => { konfig.speicherorte = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--asmap" => { konfig.asmap = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--zusage" => { zusage = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--netz" => {
                 let t = wert(i)?;

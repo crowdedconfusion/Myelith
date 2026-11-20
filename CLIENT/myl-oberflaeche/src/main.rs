@@ -3646,6 +3646,8 @@ fn main() {
             wallet_bestaetigen,
             wallet_verwerfen,
             wallet_wiederherstellen,
+            wallet_entsperren,
+            wallet_verschluesseln,
             wallet_waehlen,
             wallet_verlauf,
             einstieg_setzen,
@@ -4283,6 +4285,10 @@ struct Walletzeile {
     /// Das Guthaben, falls der laufende Knoten es kennt (nur das seines
     /// Wallets), als Text in MYL.
     guthaben: Option<String>,
+    /// Liegt es als Keystore mit Passwort (EIP-2335), und ist es in diesem
+    /// Fenster gerade entsperrt.
+    verschluesselt: bool,
+    entsperrt: bool,
 }
 
 /// **Die Lage fuer den Reiter „Wallet"** (2026-10-26).
@@ -4317,6 +4323,8 @@ async fn wallet_lage() -> Result<Walletlage, String> {
             guthaben: lauf.as_ref().filter(|(n, _, _)| *n == w.name).map(|(_, g, _)| mining::myl_text(*g)),
             gewaehlt: Some(&w.name) == gewaehlt.as_ref(),
             eingetragen: Some(&w.name) == eingetragen.as_ref(),
+            verschluesselt: wallet::ist_verschluesselt(&w.name),
+            entsperrt: wallet::ist_entsperrt(&w.name),
             adresse: w.adresse_text(),
             name: w.name,
         })
@@ -4379,10 +4387,32 @@ async fn wallet_entwurf(fenster: tauri::WebviewWindow, name: String) -> Result<W
     Ok(antwort)
 }
 
-/// **Zweiter Schritt**: „notiert" und die zwei Woerter; erst dann wird
-/// gespeichert. Stimmt etwas nicht, ist der Entwurf verworfen.
+/// ⚑ **Das Passwort des Keystores** (CLIENT 7.10, seit dem 2026-11-19 auch
+/// im Fenster): leer heisst unverschluesselt wie bisher, sonst zweimal
+/// dasselbe. Wie `myl wallet neu`.
+fn neues_passwort(passwort: &str, nochmal: &str) -> Result<Option<String>, String> {
+    if passwort.is_empty() && nochmal.is_empty() {
+        return Ok(None);
+    }
+    if passwort != nochmal {
+        return Err("Die Passwörter stimmen nicht überein; es wurde nichts angelegt.".into());
+    }
+    Ok(Some(passwort.to_string()))
+}
+
+/// **Zweiter Schritt**: „notiert", die zwei Woerter und wahlweise ein
+/// Passwort; erst dann wird gespeichert. Stimmen die Woerter nicht, ist der
+/// Entwurf verworfen; stimmen nur die Passwoerter nicht, bleibt er offen.
 #[tauri::command]
-async fn wallet_bestaetigen(fenster: tauri::WebviewWindow, notiert: bool, wort_a: String, wort_b: String) -> Result<String, String> {
+async fn wallet_bestaetigen(
+    fenster: tauri::WebviewWindow,
+    notiert: bool,
+    wort_a: String,
+    wort_b: String,
+    passwort: String,
+    passwort2: String,
+) -> Result<String, String> {
+    let pw = neues_passwort(&passwort, &passwort2)?;
     woerterschutz(&fenster, false);
     let (name, e, (a, b)) = ENTWURF.lock().map_err(|_| "Entwurf gesperrt")?.take().ok_or("Kein Entwurf; neu beginnen.")?;
     if !notiert {
@@ -4391,8 +4421,26 @@ async fn wallet_bestaetigen(fenster: tauri::WebviewWindow, notiert: bool, wort_a
     if !e.bestaetigt(&[(a, &wort_a), (b, &wort_b)]) {
         return Err("Die Wörter stimmen nicht; es wurde nichts angelegt. Neu beginnen.".into());
     }
-    let w = myl_client::wallet::speichern(&name, &e)?;
-    Ok(format!("{} angelegt: {}", w.name, w.adresse_text()))
+    let w = myl_client::wallet::speichern_mit(&name, &e, pw.as_deref())?;
+    let art = if pw.is_some() { "als Keystore mit Passwort" } else { "ohne Passwort (nur für Spielgeld)" };
+    Ok(format!("{} angelegt, {art}: {}", w.name, w.adresse_text()))
+}
+
+/// **Ein Wallet entsperren**, fuer diesen Lauf des Fensters (etwa damit das
+/// Mining ein altes Auszahlungskonto wechseln kann).
+#[tauri::command]
+async fn wallet_entsperren(name: String, passwort: String) -> Result<(), String> {
+    myl_client::wallet::entsperren(&name, &passwort)
+}
+
+/// **Ein Wallet nachtraeglich verschluesseln**, wie `myl wallet verschluesseln`.
+#[tauri::command]
+async fn wallet_verschluesseln(name: String, passwort: String, passwort2: String) -> Result<String, String> {
+    let pw = neues_passwort(&passwort, &passwort2)?.ok_or("Ohne Passwort gibt es nichts zu verschlüsseln.")?;
+    myl_client::wallet::verschluesseln(&name, &pw)?;
+    Ok(format!(
+        "„{name}“ liegt jetzt als Keystore; die Klartextdatei ist entfernt. Auf einer SSD und in Sicherungen kann sie wiederherstellbar bleiben."
+    ))
 }
 
 #[tauri::command]
@@ -4405,13 +4453,14 @@ async fn wallet_verwerfen(fenster: tauri::WebviewWindow) {
 
 /// Ein Wallet aus zwoelf Woertern, mit Suche im Netz.
 #[tauri::command]
-async fn wallet_wiederherstellen(name: String, woerter: String) -> Result<String, String> {
+async fn wallet_wiederherstellen(name: String, woerter: String, passwort: String, passwort2: String) -> Result<String, String> {
     use myl_client::wallet;
     let name = name.trim();
     wallet::name_pruefen(name)?;
+    let pw = neues_passwort(&passwort, &passwort2)?;
     let e = wallet::aus_woertern(&woerter)?;
     let befund = wallet::im_netz_suchen(&e.adresse);
-    let w = wallet::speichern(name, &e)?;
+    let w = wallet::speichern_mit(name, &e, pw.as_deref())?;
     Ok(format!("{} wiederhergestellt. {}", w.name, befund.satz()))
 }
 
@@ -4612,5 +4661,21 @@ mod tests {
         assert_eq!(mitschnitte.len(), 1, "nur der Mitschnitt des anderen Gespraechs bleibt: {mitschnitte:?}");
         assert!(mitschnitte[0].ends_with("g-2"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod passwortproben {
+    use super::neues_passwort;
+
+    /// ⚑ Leer heisst ohne Passwort; sonst zweimal dasselbe (CLIENT 7.10 im
+    /// Fenster, 2026-11-19). Ein nur einmal getipptes Passwort legt nichts an.
+    #[test]
+    fn ein_passwort_braucht_zweimal_dasselbe() {
+        assert_eq!(neues_passwort("", ""), Ok(None));
+        assert_eq!(neues_passwort("gut genug", "gut genug"), Ok(Some("gut genug".to_string())));
+        assert!(neues_passwort("gut genug", "gut genau").is_err());
+        assert!(neues_passwort("gut genug", "").is_err());
+        assert!(neues_passwort("", "gut genug").is_err());
     }
 }

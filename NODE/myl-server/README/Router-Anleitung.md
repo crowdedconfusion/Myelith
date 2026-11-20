@@ -55,7 +55,7 @@ Konsensschlüssel, dass du mitstimmst.
 ## 3. Portweiterleitung im Router
 
 ⚑ **Genau ein Port.** Nach außen erreichbar sein muss nur das
-Peer-to-Peer-Netz, also der `p2pPort` (Standard **4001**). **Tür,
+Peer-to-Peer-Netz, also der `p2pPort` (Standard **4150**). **Tür,
 Beobachtung und Ortsleitung bleiben auf der Rückschleife** und werden
 **nicht** weitergeleitet: Die Tür ist dein privates Gateway, und sie offen
 im Netz zu haben, macht aus einem Überlastangriff gegen sie einen gegen
@@ -65,8 +65,8 @@ die Lebendigkeit des Konsenses.
 
 1. Gib dem Server im lokalen Netz eine **feste Adresse** (DHCP-Reservierung
    auf seine MAC), damit die Weiterleitung nicht ins Leere zeigt.
-2. Lege eine **Portweiterleitung** an: extern Port **4001** → intern die
-   feste Adresse des Servers, Port **4001**, **TCP und UDP** (UDP für
+2. Lege eine **Portweiterleitung** an: extern Port **4150** → intern die
+   feste Adresse des Servers, Port **4150**, **TCP und UDP** (UDP für
    QUIC).
 3. ⛔️ **Kein UPnP.** Wenn dein Router UPnP anbietet, lass es **aus**: Es
    öffnet Ports ohne Nachfrage. Die eine Weiterleitung setzt du von Hand.
@@ -74,7 +74,7 @@ die Lebendigkeit des Konsenses.
 **Feste oder dynamische öffentliche Adresse:**
 
 - **Fest** (Server im Rechenzentrum): trage sie unter
-  `oeffentlicheAdressen` ein, z. B. `/dns4/mein-server.example/tcp/4001`.
+  `oeffentlicheAdressen` ein, z. B. `/dns4/mein-server.example/tcp/4150`.
 - **Dynamisch** (Anschluss zu Hause): richte **DynDNS** ein (viele Router
   können das), sodass ein Name immer auf deine wechselnde Adresse zeigt,
   und trage den Namen unter `oeffentlicheAdressen` ein.
@@ -89,7 +89,7 @@ will), setzt die Weiterleitung und `rolle = "relais"`.
 ## 4. Erreichbarkeit prüfen
 
 - Der Dienst läuft: `systemctl status myl-server`.
-- Der Port horcht lokal: `ss -tulpen | grep 4001`.
+- Der Port horcht lokal: `ss -tulpen | grep 4150`.
 - Von außen erreichbar: von einem anderen Netz aus den Port prüfen (ein
   Freund, ein Mobilfunknetz), **nicht** aus dem eigenen Netz (viele Router
   spiegeln die eigene Adresse nicht zurück).
@@ -97,7 +97,8 @@ will), setzt die Weiterleitung und `rolle = "relais"`.
   auf den Türport von außen muss scheitern.
 - Diagnose: der Beobachtungsendpunkt bleibt auf der Rückschleife. Wer ihn
   sehen will, tunnelt ihn über SSH:
-  `ssh -L 9100:127.0.0.1:9100 betreiber@server` und öffnet ihn lokal.
+  `ssh -N -L 4151:127.0.0.1:4151 betreiber@server` und öffnet
+  `http://127.0.0.1:4151/metriken` lokal.
 
 ---
 

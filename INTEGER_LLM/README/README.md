@@ -1,7 +1,7 @@
 # INTEGER_LLM: Inferenz ganz ohne Gleitkomma (`kernels`, `runtime`, `pipeline`, θ_v)
 
-> **Version:** 0.154.1 (θ_v 0.22.0; kernels 0.93.0, runtime 0.107.0, pipeline 0.15.4)
-> **Datum:** 2026-11-18
+> **Version:** 0.154.2 (θ_v 0.22.0; kernels 0.93.0, runtime 0.107.0, pipeline 0.15.5)
+> **Datum:** 2026-11-19
 > **Status:** Rechnet die Modelle des Katalogs bitgleich auf der CPU
 > (`reference`, `cpu-simd` mit NEON und AVX2), auf Apple-Grafik (`metal`)
 > und, nach bestandener Selbstprüfung, auf Karten von NVIDIA und AMD. Das
@@ -671,6 +671,15 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.154.2 (2026-11-19): Ein veralteter Kommentar zu `pipeline_hash` (`pipeline` 0.15.5)
+
+- An der Aufrufstelle von `verify_layout` stand noch die Begründung aus Fund 25
+  (verlustbehaftete Reskalierung an den Stage-Grenzen, „ein Pod mit
+  abweichendem Layout darf gar nicht erst starten“). Sie gilt seit Fund 26
+  nicht mehr; der Kopf von `canonical_layout_id` sagte das schon. Jetzt sagt
+  auch die Aufrufstelle: eine Selbstkonsistenzprüfung gegen Fehlkonfiguration,
+  keine Gleichheit zwischen Pods (Fund 38). Nur Kommentar.
 
 ### v0.154.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
 

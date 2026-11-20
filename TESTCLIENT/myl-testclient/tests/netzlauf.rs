@@ -182,6 +182,7 @@ fn konfig(ordner: &Path, name: &str, bootstrap: Vec<String>, miner: Option<&Roll
         konsensschluesseldatei: miner.map(|_| protokolle.join("konsens.key")),
         nat: Default::default(),
         speicherorte: None,
+        asmap: None,
         netz: if sucht_lokal(name) { &LOKALNETZ } else { &myl_node::netz::PROBEKETTE },
         modellzusage: miner.map(|m| Modellzusage { abdruck: [0; 32], ebenen_hoechstens: m.ebenen, ebenenzeit_us: m.zeit_us, gehalten: m.gehalten }),
         zone: myl_types::node_metadata::GeoRegion::Europe,

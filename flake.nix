@@ -88,13 +88,28 @@
         quelle = pkgs.lib.cleanSourceWith {
           src = ./.;
           name = "myelith-quelle";
+          # 📌 **Nach dem Praefix, nicht nach dem ersten Pfadteil** (2026-11-19):
+          #    Bis hierher stand `SYSTEM/full-build` in einer Liste, die mit dem
+          #    ersten Pfadteil verglichen wurde (`SYSTEM`), und traf nie; als
+          #    Pfad-Flake ginge das Bauverzeichnis mit. Ueber GitHub kopiert Nix
+          #    nur versionierte Dateien, dort fehlt es ohnehin.
           filter = pfad: _typ:
             let
               rel = pkgs.lib.removePrefix (toString ./. + "/") (toString pfad);
-              erster = pkgs.lib.head (pkgs.lib.splitString "/" rel);
+              draussen = [
+                "SYSTEM/full-build" "SYSTEM/crates-lager" "SYSTEM/golemos/bau"
+                "SYSTEM/golemos/aus" "SYSTEM/golemos/Quellarchiv" "WORK_DIR" "logs"
+                "GENESIS" "MODELS" "INTEGER_LLM/artifacts" "INTEGER_LLM/calibrate/.venv"
+              ];
+              # ⚑ Was eine Kiste beim Uebersetzen einbettet, obwohl es in einem
+              #   ausgeschlossenen Ordner liegt (`include_str!`), samt den
+              #   Ordnern auf dem Weg dorthin. 📌 Ohne den Katalog brach der
+              #   Bau von `integer-llm-runtime` ab (2026-11-19).
+              erlaubt = [ "MODELS/llm/KATALOG.json" ];
+              aufDemWeg = builtins.any (e: pkgs.lib.hasPrefix (rel + "/") e) erlaubt;
             in
-            !(builtins.elem erster [ "SYSTEM/full-build" "WORK_DIR" "logs" "GENESIS" "MODELS" ])
-            && !(pkgs.lib.hasPrefix "INTEGER_LLM/artifacts" rel);
+            builtins.elem rel erlaubt || aufDemWeg
+            || !(builtins.any (d: rel == d || pkgs.lib.hasPrefix (d + "/") rel) draussen);
         };
 
         # ⚑ **Die Fassung wird gelesen, nicht hingeschrieben.** Eine Zahl
@@ -112,6 +127,12 @@
           # seiner Kisten.
           src = quelle;
           buildAndTestSubdir = "NODE/myl-node";
+          # ⛔️ **Die Sperrdatei liegt bei der Kiste, nicht in der Wurzel**
+          #   (kein Workspace). Ohne `cargoRoot` brach der Bau beim Abgleich
+          #   der Sperrdatei ab („Missing Cargo.lock from src“): gefunden am
+          #   2026-11-19 beim ersten echten `nix build`, das Paket hatte nie
+          #   gebaut.
+          cargoRoot = "NODE/myl-node";
 
           # ⚑ **`cargoLock.lockFile` statt `cargoHash`.** Nix liest die
           # Sperrdatei, die ohnehin gepflegt wird und deren Aktualität
@@ -129,6 +150,15 @@
           # der stillschweigend die halbe Prüfsammlung überspringt, wäre
           # ein bestandener Lauf ohne Aussage.**
           doCheck = false;
+
+          # ⚑ **Die Konformitaetsvektoren neben das Programm** (2026-11-19):
+          #   Dort sucht der Knoten sie ohne `--konformitaet`
+          #   (`konformitaetstor::vorgabeorte`). Ohne sie startete der Dienst
+          #   des Moduls nur mit `--ohne-konformitaet`.
+          postInstall = ''
+            mkdir -p $out/bin/conformance/vectors/op
+            cp INTEGER_LLM/conformance/vectors/op/*.json $out/bin/conformance/vectors/op/
+          '';
 
           meta = {
             description = "Myelith-Knoten: P2P, Konsens, Verifikation";

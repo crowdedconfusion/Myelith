@@ -1,7 +1,7 @@
 # golemos (die Linux-Distribution, die nur Myelith bedient)
 
-> **Version:** 0.8.1 (`golem-einrichten` 0.5.0)
-> **Datum:** 2026-11-15
+> **Version:** 0.8.3 (`golem-einrichten` 0.5.0)
+> **Datum:** 2026-11-19
 > **Status:** Startet vom Stick und von Platte, findet einen
 > Myelith-Ordner auf dem Stick oder einem zweiten Laufwerk und
 > installiert sich mit einem Assistenten auf eine ganze Platte. Belegt
@@ -124,6 +124,45 @@ sie tut, soll sich in ihrem eigenen Quelltext lesen lassen.
 ---
 
 ## Changelog
+
+### v0.8.3 (2026-11-19): Die Schicht trägt ihre Lizenztexte und baut wieder
+
+- ⛔️ **Die Schicht baute seit 0.8.0 nicht mehr**: Mit den gepackten
+  Kernmodulen kam `BR2_PACKAGE_HOST_KMOD_XZ=y` in die Einstellung der Basis;
+  die Schicht nimmt den Kern heraus, die Zeile kam dort nicht an, und die
+  Nachzählung hielt den Bau an (gefunden mit dem kurzen Lauf). Jetzt nimmt
+  `schicht-bauen.sh` `BR2_PACKAGE_HOST_KMOD*` mit heraus.
+- ⛔️ **Die Lizenztexte der Pakete der Schicht liegen in der Schicht**:
+  `make legal-info` vor dem Bau, Verzeichnis und Texte nach
+  `/usr/share/licenses/` über das Overlay, wie bei der Basis; die
+  Nachzählung verlangt `manifest.csv` und die Ordner von WebKitGTK, cage und
+  wlroots. Bisher legte nur `auskunft.sh` sie neben eine Freigabe.
+- Gebaut für aarch64 (`aus/aarch64/oberflaeche-aarch64.sqfs`, 106 MB) und
+  x86_64 (`aus/x86_64/oberflaeche-x86_64.sqfs`, 109 MB), beide mit bestandener
+  Nachzählung; in der aarch64-Schicht nachgesehen: 68
+  Paketordner und `manifest.csv` im Abbild, darunter `webkitgtk-2.52.4`,
+  `cage-0.3.0`, `wlroots-0.20.0`. Nicht freigegeben (das bleibt beim
+  Projektinhaber).
+
+### v0.8.2 (2026-11-19): `golem-knoten` startet im Testnetz
+
+⛔️ **Fund beim Gleichziehen mit dem NixOS-Modul** (die Probe
+`NODE/myl-node/tests/golemknoten.rs` hielt beide zusammen und wurde rot, als
+das Modul `--netz` bekam): `golem-knoten` gab kein Netz mit, der Knoten lief
+also auf der Probekette, der Vorgabe von `myl-node`, und war für das Testnetz
+unsichtbar. Jetzt:
+
+- neues Feld `netz` (Vorgabe `test-int4`) und `zeugen` (Vorgabe `ja`,
+  `--zeugen-bereithalten` wie im Modul);
+- Port 4150 wie der Knoten (vorher 4001), ebenso in `ANLEITUNG.md` und
+  `ANLEITUNG.en.md`;
+- Aufnahme alle 60 statt 300 Sekunden: Im selben Takt setzt der Knoten
+  `/metriken` und `/bereit` neu;
+- die Selbstprobe `S99probe` richtet den Knoten mit `--netz probe` ein (die
+  Probekette braucht keinen Startsatz) und horcht auf 4150.
+
+⚠️ Wirksam mit dem nächsten Bau des Abbilds; die gebauten Abbilder tragen
+noch die alte Fassung. Die Proben von `golemknoten.rs` (9) sind grün.
 
 ### v0.8.1 (2026-11-15): Das Quellarchiv entsteht nur bei neuen Paketen
 

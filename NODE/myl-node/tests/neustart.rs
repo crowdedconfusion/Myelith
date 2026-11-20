@@ -313,6 +313,7 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         rolle: Rolle::Teilnehmer,
         nat: Default::default(),
         speicherorte: None,
+        asmap: None,
         netz: &myl_node::netz::PROBEKETTE,
         modellzusage: None,
         zone: myl_types::node_metadata::GeoRegion::Europe,

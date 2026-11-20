@@ -3449,6 +3449,9 @@ body.ablegen .eingabefeld {
 .walletguthaben { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .walletadresse { font-size: 11.5px; color: var(--leise); word-break: break-all; }
 .walletknoepfe { display: flex; gap: .5rem; flex-wrap: wrap; }
+/* Passwortfelder in der Reihe (Entsperren, Verschluesseln), aufgeklappt mit dem Knopf. */
+.walletpasswort { display: inline-flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.walletpasswort input { width: 12rem; }
 .walletverlauf {
   margin: 0;
   max-height: 14rem;

@@ -80,8 +80,11 @@ esac
 # ⚑ **Herausgenommen wird, was ein startbares System ausmacht**: Kern,
 #   Startprogramm, Abbilder und die Skripte und Konten der Basis. Die
 #   Schicht startet nichts davon; sie laeuft auf dem Kern der Basis.
+# 📌 `BR2_PACKAGE_HOST_KMOD_XZ` (gepackte Kernmodule, seit GolemOS 0.8) haengt
+#   am Kern und kam in der Schicht nicht an; die Nachzaehlung hielt den Bau
+#   an (gefunden 2026-11-19, die Schicht war seither nicht gebaut worden).
 mkdir -p /bau/eingabe
-grep -v -E '^(BR2_LINUX_KERNEL|BR2_TARGET_GRUB2|BR2_TARGET_ROOTFS_(CPIO|EXT2)|BR2_PACKAGE_HOST_(GENIMAGE|DOSFSTOOLS|MTOOLS)|BR2_ROOTFS_(POST_BUILD_SCRIPT|POST_IMAGE_SCRIPT|OVERLAY|USERS_TABLES))' \
+grep -v -E '^(BR2_LINUX_KERNEL|BR2_TARGET_GRUB2|BR2_TARGET_ROOTFS_(CPIO|EXT2)|BR2_PACKAGE_HOST_(GENIMAGE|DOSFSTOOLS|MTOOLS|KMOD)|BR2_ROOTFS_(POST_BUILD_SCRIPT|POST_IMAGE_SCRIPT|OVERLAY|USERS_TABLES))' \
   "$EIN/konfigurationen/golemos_${ARCH}_defconfig" > /tmp/konf
 cat "$EIN/konfigurationen/schicht_oberflaeche.fragment" >> /tmp/konf
 # Die Pfade im Fragment zeigen auf /eingabe wie in `bauen.sh`; hier liegt
@@ -118,6 +121,19 @@ if [ "$NUR_PRUEFEN" = 1 ]; then
   echo "── Nur geprueft; der Bau selbst folgt ohne --nur-pruefen"
   exit 0
 fi
+
+# ⛔️ **Die Lizenztexte der Pakete der Schicht gehoeren in die Schicht**
+#    (2026-11-19, wie `bauen.sh` fuer die Basis): WebKitGTK, cage, wlroots,
+#    GTK und ihre Nachbarn stehen unter LGPL, BSD und weiteren; eine Schicht,
+#    die jemand weitergibt, traegt nur, was in ihr steht. `auskunft.sh` legte
+#    sie bisher nur neben die Freigabe.
+#    ⚑ Vor dem Bau, ueber das Overlay: `legal-info` braucht Einstellung und
+#    ausgepackte Quellen, nicht das Ergebnis.
+echo "── Lizenztexte der Pakete in die Schicht"
+make -C "$BR" O="$O" legal-info >/dev/null
+install -d /bau/schicht-overlay/usr/share/licenses
+cp -a "$O/legal-info/licenses/." /bau/schicht-overlay/usr/share/licenses/
+cp "$O/legal-info/manifest.csv" /bau/schicht-overlay/usr/share/licenses/
 
 # ── 2. Bauen ─────────────────────────────────────────────────────────
 #
@@ -233,6 +249,12 @@ for bib in $("$O/host/bin/$TUPEL-readelf" -d /bau/schicht-overlay/usr/bin/myelit
     echo "   ⛔️ $bib fehlt in der Schicht" >&2
     fehlt=$((fehlt + 1))
   fi
+done
+# ⛔️ Und die Lizenztexte: das Verzeichnis und die Ordner der grossen Pakete.
+[ -s "$O/target/usr/share/licenses/manifest.csv" ] || { echo "   ⛔️ Lizenzverzeichnis fehlt in der Schicht" >&2; fehlt=$((fehlt + 1)); }
+for paket in webkitgtk cage wlroots; do
+  ls -d "$O/target/usr/share/licenses/$paket"-* >/dev/null 2>&1 \
+    || { echo "   ⛔️ Lizenztext von $paket fehlt in der Schicht" >&2; fehlt=$((fehlt + 1)); }
 done
 for prog in usr/bin/cage usr/bin/golem-kiosk usr/bin/myelith-fenster; do
   [ -e "$O/target/$prog" ] || { echo "   ⛔️ $prog fehlt in der Schicht" >&2; fehlt=$((fehlt + 1)); }

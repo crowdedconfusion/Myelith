@@ -1,7 +1,7 @@
 # TESTCLIENT: das Messgerät (`myl-testclient`, Programm `myl-test`)
 
-> **Version:** 0.76.0
-> **Datum:** 2026-11-18
+> **Version:** 0.78.1
+> **Datum:** 2026-11-19
 > **Status:** `myl-test` fährt Hardware-, Determinismus- und
 > Konformitätsläufe mit einem Protokoll, das zwischen Maschinen und
 > Modellständen vergleichbar bleibt; `vergleich` urteilt über zwei
@@ -537,6 +537,70 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.78.1 (2026-11-20): Der Auftragslauf bemisst das Probegeld nach dem Verfall der Credits (`myl-testclient` 0.78.1)
+
+- **`auftragslauf.py`:** Credits verfallen nach einer Epoche (Fund 707); der
+  Lauf kaufte am Start für 10 von 12 MYL auf Vorrat, die am ersten Wechsel
+  verfielen, und der Rest deckte den Nachkauf keiner Runde. Jetzt
+  `--credits-myl` 1 und `--probegeld-myl` 30 (nach der Anmeldung geben die
+  Probekonten rund 39 MYL her), und vor jedem Auftrag füllt der Lauf das
+  Wallet des Zahlers unter der Hälfte auf; geben die Probekonten weniger,
+  nimmt er, was sie geben.
+- Gefahren in der Simulation vom 20. November (fünf Aufträge ganz gelöst,
+  Lügner und Störer); Funde 715 und 716 in NODE und CLIENT.
+
+### v0.78.0 (2026-11-19): `--model` wählt das Modell eines Laufs (`myl-testclient` 0.78.0)
+
+- ⛔️ **Fund beim Proben des Vergleichs über zwei Architekturen:**
+  `myl-test --model pigeon-4b-int8 --plan standard.plan determinismus`
+  rechnete sparrow. `--model` wurde gelesen und nie benutzt (auch nicht beim
+  Erzeugen eines Plans), und `--plan` hielt das Vorgabemodell als
+  ausdrücklich gewählt fest. Zwei Maschinen, die so je zwei Modelle
+  vergleichen, hätten zweimal sparrow verglichen, und `vergleich` hätte für
+  das zweite Modell einen Nachweis gemeldet, der keiner ist. Sichtbar war es
+  nur an der Zeile `Artefakt  modell` im Protokoll und daran, dass beide
+  Läufe denselben Vergleichswert trugen.
+- Jetzt wählt `--model NAME` das Artefakt `NAME` im Artefaktordner, vor oder
+  nach dem Befehl, auch mit `--plan`; nennen `--model` und `--artifacts`
+  verschiedene Modelle, ist das ein Fehler. Hilfe berichtigt.
+- Proben `model_waehlt_das_artefakt_auch_mit_plan` und
+  `model_und_artifacts_muessen_passen` (dazu `parse_aus`, damit sich das
+  Einlesen ohne Prozess prüfen lässt). Gegenprobe ist der Lauf vor der
+  Behebung: derselbe Befehl, Artefakt sparrow.
+- ⛔️ **Zweiter Fund in derselben Probe: `vergleich` legte beide Modelle in
+  eine Gruppe.** Gruppiert wurde nach Befehl und Einstellungs-Kennung; seit
+  Testpläne an kein Modell gebunden sind, tragen sparrow und pigeon mit
+  `standard.plan` dieselbe Kennung, und das Urteil hieß „UNVERGLEICHBAR
+  (Modellstand)“, obwohl jedes Modell für sich bitgleich war. Jetzt gehört
+  der Modellname in den Schlüssel (nicht der Abdruck: dasselbe Modell,
+  verschieden gebaut, bleibt eine Gruppe und wird als Modellstand benannt);
+  Bildschirm und Bericht nennen das Modell je Gruppe. Probe
+  `zwei_modelle_mit_einem_plan_sind_zwei_gruppen`.
+- **Die Probe von Block B des Miettags** (2026-11-19): Klon über die
+  Dateiliste von Git wie im Ablauf (0,41 GB), Mac-Protokolle für sparrow und
+  pigeon (`metal+cpu-simd/neon`), dann ein x86_64-Behälter unter Rosetta:
+  Vorrat ausgepackt, Konformität 55/55 `reference`, `myl-test` gebaut, beide
+  Modelle mit denselben Vergleichswerten wie der Mac (`d82edd72…`,
+  `5d6173b1…`), `vergleich` zwei Gruppen mit `NACHWEIS`. ⚠️ Rosetta übersetzt
+  nach ARM; das ist eine Probe der Werkzeuge, kein Beleg für echtes x86.
+
+### v0.77.0 (2026-11-19): Der Netzlauf kennt A9 (`myl-testclient` 0.77.0)
+
+- `netzbedingungen/testnetzlauf.py --ein-as`: Jeder Knoten bekommt eine
+  AS-Zuordnung (`--asmap`), die alle Behälter in ein AS legt. Dann hält
+  jeder höchstens zwei ausgehende Verbindungen zu den anderen, der schärfste
+  Fall der Grenze je Netzgruppe (NETWORKING 0.28.0), etwa ein Testnetz, dessen
+  Betreiber alle beim selben Anbieter sind.
+- `testnetzauswertung.py`: Abschnitt „Umzingelung (A9)“ je Knoten mit
+  Fühlern (gelungen, gescheitert), ausgehend abgewiesenen Wahlen („Netzgruppe
+  voll“), gesicherten Ankern und beim Start gewählten Ankern.
+- `KnotenKonfig` hat das Feld `asmap` (NODE 0.136.0); die Proben und
+  `src/knoten.rs` setzen es auf `None`.
+- `tests/bezahlen.rs` geht auch den Weg des kalten Kontos (CLIENT 0.249.0):
+  Wallet aus dem öffentlichen Schlüssel, Auftrag, Unterschrift, Einreichen,
+  Ankunft und Abbuchung in der Kette; das kalte Wallet selbst unterschreibt
+  nicht.
 
 ### v0.76.0 (2026-11-18): Das geschlossene Testnetz, nachgestellt (`myl-testclient` 0.76.0)
 

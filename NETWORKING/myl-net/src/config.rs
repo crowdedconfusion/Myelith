@@ -72,6 +72,10 @@ pub struct NetConfig {
     /// gegenseitig und verfaelschten ihre Zaehlungen; ein echtes Netz
     /// schaltet sie ein.
     pub lokale_suche: bool,
+    /// ⚑ **Die AS-Zuordnung des Betreibers** (Audit A9, seit dem
+    /// 2026-11-19): Ausgehende Verbindungen zählen je AS statt je /16
+    /// ([`crate::netzgruppe`]). Vorgabe keine.
+    pub as_zuordnung: Option<std::sync::Arc<crate::netzgruppe::AsZuordnung>>,
 }
 
 impl Default for NetConfig {
@@ -85,6 +89,7 @@ impl Default for NetConfig {
             adressbereich_grenze: MAX_JE_ADRESSBEREICH,
             nat: NatKonfig::default(),
             lokale_suche: false,
+            as_zuordnung: None,
         }
     }
 }

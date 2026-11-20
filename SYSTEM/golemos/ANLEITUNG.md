@@ -335,7 +335,7 @@ Mit `golem-knoten an` startet der Knoten künftig bei jedem Hochfahren mit,
 gerade tut, `golem-knoten stoppen` beendet ihn. Nach fünf Abstürzen in fünf
 Minuten hält er von selbst an, statt es endlos weiter zu versuchen.
 
-**Was du dazu wissen solltest:** Nach außen ist nur der Port 4001 offen.
+**Was du dazu wissen solltest:** Nach außen ist nur der Port 4150 offen.
 Seine Einstellungen und seine Identität liegen auf dem System und nicht auf
 dem lesbaren Teil **Golem** des Sticks. ⚠️ Eine neue Installation löscht
 beides, der Knoten bekommt dann eine neue Identität.

@@ -1,10 +1,11 @@
 #!/bin/sh
 # golem-knoten: der Myelith-Knoten (`myl-node`) als Dienst in GolemOS.
 #
-#   golem-knoten einrichten [--name N] [--rolle teilnehmer|relais] [--port P]
+#   golem-knoten einrichten [--name N] [--netz NETZ] [--rolle teilnehmer|relais] [--port P]
 #                           [--bootstrap ADRESSE]... [--oeffentlich ADRESSE]...
 #                           [--beobachtung PORT|aus] [--konformitaet PFAD|klon|aus]
 #                           [--aufnahme SEK] [--erzeuger ja|nein] [--stimmsatz PFAD]
+#                           [--zeugen ja|nein]
 #   golem-knoten konsensschluessel DATEI   den Konsensschluessel uebernehmen
 #   golem-knoten starten | stoppen | status | protokoll
 #   golem-knoten an | aus                   beim Start mitstarten oder nicht
@@ -60,20 +61,29 @@ KONTO_ID=900
 
 # Die Vorgaben, dieselben wie im Modul.
 name=$(hostname 2>/dev/null || echo golemos)
+# ⛔️ **Das Netz ausdruecklich** (2026-11-19): Ohne `--netz` lief der Knoten
+#   auf der Probekette, der Vorgabe von `myl-node`, und war fuer das Testnetz
+#   unsichtbar; im Modul derselbe Fund.
+netz=test-int4
 rolle=teilnehmer
-port=4001
+# Der Port des Knotens (vorher 4001, wie das Modul bis 2026-11-19).
+port=4150
 bootstrap=""
 oeffentlich=""
 beobachtung=4151
-# ⚑ **300 und nicht die 30 des Knotens**: Ein Dienst laeuft Monate, und der
-#   Abstand der Aufnahmen ist die Rate, mit der die Protokolle wachsen.
-aufnahme=300
+# ⚑ **60 und nicht die 30 des Knotens**: Ein Dienst laeuft Monate, und der
+#   Abstand der Aufnahmen ist die Rate, mit der die Protokolle wachsen; im
+#   selben Takt setzt der Knoten aber auch `/metriken` und `/bereit` neu
+#   (bis 2026-11-19 stand hier 300, und beide hinkten fuenf Minuten nach).
+aufnahme=60
 # ⚑ `klon` heisst: die Op-Vektoren aus dem Myelith-Ordner, den GolemOS beim
 #   Start gefunden hat. Fehlt er, startet der Knoten NICHT; ohne Pruefung
 #   laeuft er nur auf ausdrueckliches `aus`.
 konformitaet=klon
 erzeuger=nein
 stimmsatz=""
+# Als voller Knoten die Zeugen der Bloecke bereithalten, wie im Modul.
+zeugen=ja
 konsens=nein
 aktiv=nein
 
@@ -109,10 +119,11 @@ zahl_im_bereich() { # zahl_im_bereich WERT VON BIS
 pruefe() { # pruefe FELD WERT
   case "$1" in
     name) nur "A-Za-z0-9._-" "$2" || fehler "name: nur Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich" ;;
+    netz) nur "a-z0-9-" "$2" || fehler "netz: ein Name wie test-int4 oder probe" ;;
     rolle) case "$2" in teilnehmer | relais) ;; *) fehler "rolle: teilnehmer oder relais" ;; esac ;;
     # ⚑ Ueber 1024, damit der Dienst kein Vorrecht braucht.
     port) zahl_im_bereich "$2" 1025 65535 || fehler "port: eine Zahl von 1025 bis 65535" ;;
-    bootstrap | oeffentlich) nur "A-Za-z0-9./:_-" "$2" || fehler "$1: eine Multiadresse wie /dns4/name/tcp/4001/p2p/..." ;;
+    bootstrap | oeffentlich) nur "A-Za-z0-9./:_-" "$2" || fehler "$1: eine Multiadresse wie /dns4/name/tcp/4150/p2p/..." ;;
     beobachtung) [ "$2" = aus ] || zahl_im_bereich "$2" 1025 65535 || fehler "beobachtung: ein Port von 1025 bis 65535 oder aus" ;;
     aufnahme) zahl_im_bereich "$2" 10 86400 || fehler "aufnahme: Sekunden von 10 bis 86400" ;;
     konformitaet | stimmsatz)
@@ -120,7 +131,7 @@ pruefe() { # pruefe FELD WERT
       case "$2" in /*) ;; *) fehler "$1: ein absoluter Pfad" ;; esac
       nur "A-Za-z0-9./_-" "$2" || fehler "$1: nur Buchstaben, Ziffern und ./_- im Pfad"
       ;;
-    erzeuger | konsens | aktiv) case "$2" in ja | nein) ;; *) fehler "$1: ja oder nein" ;; esac ;;
+    erzeuger | zeugen | konsens | aktiv) case "$2" in ja | nein) ;; *) fehler "$1: ja oder nein" ;; esac ;;
     *) fehler "unbekanntes Feld: $1" ;;
   esac
 }
@@ -153,7 +164,7 @@ schreiben() {
     umask 077
     {
       echo "# Geschrieben von golem-knoten einrichten; von Hand nur mit Bedacht."
-      for f in name rolle port beobachtung aufnahme konformitaet erzeuger stimmsatz konsens aktiv; do
+      for f in name netz rolle port beobachtung aufnahme konformitaet erzeuger zeugen stimmsatz konsens aktiv; do
         eval "w=\$$f"
         [ -n "$w" ] && echo "$f=$w"
       done
@@ -184,6 +195,7 @@ zustand_anlegen() {
 befehlszeile() {
   echo "$PROGRAMM"
   echo "--name"; echo "$name"
+  echo "--netz"; echo "$netz"
   echo "--rolle"; echo "$rolle"
   echo "--port"; echo "$port"
   echo "--schluessel"; echo "$STAND/identitaet.key"
@@ -200,6 +212,7 @@ befehlszeile() {
     echo "--beobachtung"; echo "127.0.0.1:$beobachtung"
   fi
   [ "$erzeuger" = ja ] && echo "--erzeuger"
+  [ "$zeugen" = ja ] && echo "--zeugen-bereithalten"
   case "$konformitaet" in
     aus) echo "--ohne-konformitaet" ;;
     klon)

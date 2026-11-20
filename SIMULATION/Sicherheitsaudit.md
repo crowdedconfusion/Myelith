@@ -10,9 +10,12 @@ abgewehrt werden, welche gemessen offen sind und welche niemand geprüft
 hat. Es ist **kein externes Review** (K5, K9) und ersetzt keines.
 
 **Der wichtigste Satz vorweg:** Von den 57 Angriffsklassen
-unten (Stand 2026-11-18) sind **53 abgewehrt und belegt**, **drei offen mit
-gemessener oder benannter Lücke** (A9, A12, A53) und **eine
-ungeprüft** (A13, die Krypto-Primitiven ohne externes Review). Keine der
+unten (Stand 2026-11-19) sind **54 abgewehrt und belegt**, **zwei offen mit
+gemessener oder benannter Lücke** (A9, A12) und **eine
+ungeprüft** (A13, die Krypto-Primitiven ohne externes Review). A53 ist seit
+dem 2026-11-18 wirksam (Freigabeschlüssel eingetragen, Update echt
+durchgespielt); A9 ist seit dem 2026-11-19 gebaut, offen nur der Beleg über
+echte Maschinen. Keine der
 Lücken ist neu entdeckt worden, ohne dass sie hier steht.
 
 ⚑ **Nachtrag vom 2026-11-18: Saat, Agentenschicht und Update (A51 bis
@@ -73,7 +76,7 @@ Kettenmigration.
 | A6 | Self-Dealing in der Subventionsphase | ✅ | `s < c/(1−c)` gegen das untere Bandende, Fund 49 |
 | A7 | Verbrauchs-Stoß mit Ausstieg | ✅ | Burn-Cap je Adresse, gemessen |
 | A8 | Parametervorschlag, der Invarianten bricht | ✅ | Registry prüft **vor** der Abstimmung |
-| A9 | **Eclipse: Umzingelung eines Knotens** | ⚠️ | **Fund 53 geschlossen** (2026-08-24); Restbedingung: ehrlicher Bootstrap-Knoten |
+| A9 | **Eclipse: Umzingelung eines Knotens** | ⚠️ | **Fund 53 geschlossen** (2026-08-24); **seit 2026-11-19 gebaut** (NETWORKING 0.28.0, NODE 0.136.0): Fühler vor der Aufnahme in die Routingtabelle, ausgehend höchstens zwei je /16 oder AS, Anker über Neustarts, AS-Zuordnung des Betreibers; im Behälter belegt. Restbedingung: Beleg über echte Maschinen in echten AS |
 | A10 | **Latenzwerte fälschen** | ✅ | Signatur wird **geprüft** (2026-08-25). ⚑ Neu eingeordnet (2026-11-08): Seit dem 2026-09-01 bilden Zonen aus der Registrierung die Pods, nicht gemessene Latenzen; ein Attest geht nur noch als Probe durchs Gossip und wirkt auf nichts im Konsens. Die ableitbaren Schlüssel des Probelaufs betreffen nur diesen Probeverkehr. Was bleibt, ist die selbst erklärte Zone, und die steht unter A12 |
 | A11 | **Kontrollsegmente erkennen** | ✅ | **Gegenstandslos** (2026-11-08 festgehalten): Die Kontrollsegmente sind seit dem 2026-09-02 entfallen, die Stichprobe zieht echte Arbeit, und die ist von echter Arbeit nicht zu unterscheiden. Die Messung unten bleibt als Geschichte der Klasse stehen |
 | A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft); Gegenmaßnahme im Netz belegt (2026-11-06: Paar einig, nur der Checker fand es). ⚑ Clusterbild gemessen (2026-11-08, Test `der_zonenhebel_ueber_die_zwillinge`): Mit gut einem Viertel der Kennungen, die Hälfte in einer leeren Zone erklärt, gehört ein ganzes Zwillingspaar in 3,7 % der Epochen dem Angreifer, gleichmässig verteilt nie; beide Zwillinge an der ersten Position (genug für eine Kollusion dort) in 44 % ohne und 58 % mit dem Hebel. Gegen Kollusion an einer Position schützt Stufe 1 also nie, die Abwehr ist die Stichprobe mit Nachrechnen. Paaren nach der Saat wäre gemessen schlechter (bis 50 %) |
@@ -116,7 +119,7 @@ Kettenmigration.
 | A50 | **Ein Beleg, an dem der Prüfer stirbt** | ✅ | Beim grossen Durchgang gefunden (2026-11-08): Der Beleg der Schiedsrunde kommt vom Angeklagten. Ein Pod, der sich auf einen Vektor falscher Länge festlegte, liess die Aufgabe jedes Prüfers an einer Panik sterben, niemand stimmte, und er entging dem Urteil. **Geschlossen** (VERIFICATION 0.29.0): bezeugt und in falscher Länge ist überführt. Probe gegen das echte Modell |
 | A51 | **Die Saat über zwei Zweige** | ✅ | Beim Durchgang gefunden (2026-11-18): Ein Austeiler leitete sein Polynom aus Netz, Epoche und Kennung ab, nicht aus der Sitzvergabe. Nach einem Zweigwechsel teilte ein ehrlicher Knoten dasselbe Polynom an andere Nummern aus; lässt ein Erzeuger auf einem Zweig eine Schlüsseleintragung weg, rutschen die Nummern, und ein Angreifer mit einem Viertel des Einsatzes (statt der Hälfte) bildet aus beiden Zweigen das Geheimnis jedes ehrlichen Austeilers, kennt also jede künftige Saat. **Geschlossen** (CONSENSUS 0.91.0, NODE 0.133.0, SHARED_TYPES 0.75.0): Ableitung aus dem Abdruck der Runde (wie RFC 6979: die Nonce bindet alle Eingaben), Chiffre aus dem Wert, Zwischenspeicher des Dienstes am Inhalt. Probe mit dem Angriff als Gegenprobe |
 | A52 | **Die Dateiwerkzeuge über einen getauschten Verweis** | ✅ | Beim Durchgang gefunden (2026-11-18): Die Dateiwerkzeuge des Agenten laufen ausserhalb der Sandbox, prüften den Pfad und öffneten danach mit `std::fs`. Ein Hintergrundprozess aus `run_command` tauscht im Fenster einen Ordner gegen einen Verweis nach draussen, und `read_file` oder `write_file` greift auf `~/.ssh` zu (CWE-367). **Geschlossen** (AGENT_LAYER 0.73.0): Öffnen Stück für Stück mit `openat` und `O_NOFOLLOW`, nur gewöhnliche Dateien. Harte Verweise nach draussen verweigert die Sandbox (geprobt). Unter Windows weiter `std::fs` |
-| A53 | **Ein Update aus einem übernommenen Repositorium** | ⚠️ | Beim Durchgang gefunden (2026-11-18): `--aktualisieren` bewegte den Klon auf den Stand von GitHub und baute ihn; wer den Zugang hatte, lieferte Code an jede Maschine. **Gebaut** (CLIENT 0.245.0): Die Spitze des neuen Stands muss eine Signatur eines Freigabeschlüssels tragen, aus der Liste des bisherigen Stands; Probe gegen echte Repositorien. ⚠️ **Wirksam erst mit dem ersten eingetragenen Schlüssel**; bis dahin prüft das Skript nicht und sagt es laut |
+| A53 | **Ein Update aus einem übernommenen Repositorium** | ✅ | Beim Durchgang gefunden (2026-11-18): `--aktualisieren` bewegte den Klon auf den Stand von GitHub und baute ihn; wer den Zugang hatte, lieferte Code an jede Maschine. **Gebaut** (CLIENT 0.245.0): Die Spitze des neuen Stands muss eine Signatur eines Freigabeschlüssels tragen, aus der Liste des bisherigen Stands; Probe gegen echte Repositorien. ⚠️ **Wirksam erst mit dem ersten eingetragenen Schlüssel**; bis dahin prüft das Skript nicht und sagt es laut. ✅ **Wirksam seit 2026-11-18:** Freigabeschlüssel `myelith-freigabe` eingetragen (CLIENT 0.245.1), Update echt durchgespielt unter macOS und Linux; ein unsignierter Folgestand wird abgewiesen |
 | A54 | **Steuermarken im Inhalt** | ✅ | Gefunden 2026-11-17: Ein Werkzeugergebnis mit `<|im_end|>` und `<|im_start|>system` schrieb eine eigene Systemrunde in den Verlauf, an jedem Rahmen des Agenten vorbei. **Geschlossen** (SHARED_TYPES 0.74.0): jede Marke `<|Name|>` im Inhalt gebrochen; am echten Wortschatz geprüft |
 | A55 | **Ein Guthaben, mehrfach zugesagt** | ✅ | Gefunden 2026-11-17: Mehrere Sitzungen eines Inhabers bekamen an der Tür dasselbe Guthaben zugesagt; der Überhang war Rechenarbeit ohne Bezahlung. **Geschlossen** (GATEWAY 0.16.0): Vormerkung je Inhaber unter derselben Sperre, freigegeben beim Ende der Anfrage |
 | A56 | **Prüfvolumen ohne Deckel** | ✅ | Gefunden 2026-11-17: Ein Checker gab seine Positionen selbst an und nahm so den anderen ihren Anteil am Pool. **Geschlossen** (CONSENSUS 0.90.0): gedeckelt durch die Segmente des Bündels |
@@ -541,6 +544,30 @@ privaten Netz, das die Regel ausnehmen muss; gebaut wird es mit den
 Maschinen nach dem Miettag. Für ein Testnetz mit bekannten Betreibern und
 Ankern ist die Folge gering: Ein umzingelter Knoten sieht weniger, er
 nimmt aber keinen falschen endgültigen Block an (Finalität mit Zertifikat).
+
+✅ **Gebaut am 2026-11-19** (NETWORKING 0.28.0, NODE
+0.136.0), alle vier Stücke aus der Literatur:
+
+- **Fühler:** Kademlia selbst nahm schon nur über selbst gewählte
+  Verbindungen auf; die Lücke war die eigene Zeile, die jede über
+  `identify` genannte Adresse eintrug. Jetzt wählt der Knoten eine eingehend
+  gemeldete Gegenstelle unter ihrer Adresse an, aus einem eigenen Swarm mit
+  flüchtiger Identität, und nur wenn der Handshake dort genau diese
+  Kennung zeigt, kommt die Adresse in die Tabelle. Probe
+  `tests/fuehler.rs`: eine Gegenstelle mit toter Adresse kommt nicht hinein;
+  Gegenprobe mit der alten Regel rot.
+- **Vielfalt ausgehend:** höchstens zwei je Netzgruppe (AS aus der
+  Zuordnung, sonst /16 und /32), Pod-Mitglieder ausgenommen; eine volle
+  Gruppe weist schon vor dem Wählen ab.
+- **Anker:** die zwei ältesten ausgehenden Verbindungen ab fünf Minuten,
+  aus verschiedenen Gruppen, als Datei neben dem Schlüssel; beim Start
+  zuerst gewählt.
+- **AS-Zuordnung:** `--asmap`, eine Zeile `<präfix>/<länge> <AS>` je Präfix.
+
+Im Behälter mit allen Knoten in einem AS (dem schärfsten Fall) eine Wurzel
+über Neustart, Absturz, Abschneiden, Spaltung und Einsteiger. ⚠️ **Bleibt
+auf ⚠️, bis echte Gruppen über echte Maschinen gemessen sind**, und weil
+eine Bootstrap-Liste, die nur ein Angreifer stellt, auch damit nicht hilft.
 
 ### A10 Latenzwerte fälschen (eingeordnet, siehe Tabelle)
 

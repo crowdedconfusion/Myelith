@@ -455,6 +455,37 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
             m = re.search(r"credits=(\d+)", r.stdout)
             return int(m.group(1)) if m else -1
 
+        def nachfuellen() -> None:
+            """Das Wallet des Zahlers vor jedem Auftrag aus dem Probehahn
+            auffuellen, sobald es unter der Haelfte des Probegelds liegt.
+
+            📌 Seit Fund 707 verfallen Credits nach einer Epoche; ein Auftrag
+            lebt vom Nachkauf aus dem Wallet. Im langen Lauf vom 2026-11-20
+            kaufte der Treiber fuer 10 von 12 MYL Credits auf Vorrat, die am
+            ersten Wechsel verfielen; mit dem Rest von 2 MYL deckte der
+            Nachkauf keine Runde (2,35 MYL), und jeder weitere Auftrag waere
+            an der Tuer gescheitert. Die Probekonten fuellt jeder
+            Epochenwechsel wieder auf."""
+            k = erzeuger.konto(zahler) or {}
+            soll = args.probegeld_myl * UNITS_PER_MYL
+            ist = int(k.get("guthaben", 0))
+            if ist >= soll // 2:
+                return
+            betrag = soll - ist
+            r = subprocess.run([str(args.probegeld), RELAIS, str(erzeuger.ordner / "relais.ausweis"), zahler,
+                                str(betrag)], capture_output=True, text=True, timeout=300)
+            # Geben die Probekonten weniger her, das nehmen, was sie geben.
+            m = re.search(r"nur (\d+) von", r.stderr)
+            if r.returncode != 0 and m and int(m.group(1)) > 0:
+                betrag = int(m.group(1))
+                r = subprocess.run([str(args.probegeld), RELAIS, str(erzeuger.ordner / "relais.ausweis"), zahler,
+                                    str(betrag)], capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                melde(f"Probegeld nachfuellen gescheitert: {r.stderr.strip()[-300:]}")
+            else:
+                melde(f"Probegeld nachgefuellt: {betrag / UNITS_PER_MYL:.2f} MYL")
+            notiere("nachgefuellt", vorher=ist, soll=soll, rueckgabe=r.returncode)
+
         n0 = nonce()
         r = myl("wallet", "credits", "zahler", str(args.credits_myl), *relais_angaben)
         if r.returncode != 0:
@@ -490,6 +521,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
                 melde(f"Uhrzeit {args.bis} erreicht, {len(mappe) - nummer + 1} Auftraege bleiben liegen")
                 notiere("abbruch_uhrzeit", offen=[x.kennung for x in mappe[nummer - 1:]])
                 break
+            nachfuellen()
             arbeit = ordner / "auftraege" / a.kennung
             arbeit.mkdir(parents=True, exist_ok=True)
             auftragsmappe.anlegen(a, arbeit)
@@ -706,8 +738,11 @@ def main() -> int:
     # Runde bis rund 10 000. Das Einzellimit ist ein Zehntel des Budgets.
     p.add_argument("--budget", type=int, default=400_000, help="Credits je Sitzung (Einzellimit ein Zehntel)")
     p.add_argument("--sitzung-epochen", type=int, default=40)
-    p.add_argument("--probegeld-myl", type=int, default=12)
-    p.add_argument("--credits-myl", type=int, default=10)
+    # Credits verfallen nach einer Epoche (Fund 707): wenig auf Vorrat
+    # kaufen, das Wallet traegt den Nachkauf und wird vor jedem Auftrag
+    # aufgefuellt (nach der Anmeldung geben die Probekonten rund 39 MYL her).
+    p.add_argument("--probegeld-myl", type=int, default=30, help="Probegeld des Zahlers, vor jedem Auftrag aufgefuellt")
+    p.add_argument("--credits-myl", type=int, default=1, help="Credits beim Start; sie verfallen nach einer Epoche")
     p.add_argument("--vorrat", type=int, default=4,
                    help="der Klient kauft vor jeder Runde auf so viele Runden Vorrat nach; 0 schaltet den Nachkauf ab")
     p.add_argument("--ordner", type=pathlib.Path)

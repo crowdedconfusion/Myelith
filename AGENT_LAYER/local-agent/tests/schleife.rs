@@ -1289,6 +1289,24 @@ fn immer_abgeschnitten_bleibt_stecken() {
     );
 }
 
+/// 📌 **Fund 718: Zwei Abschnitte und ein falscher Aufruf sind kein
+/// Steckenbleiben.** So endete die Dienstreise in der Simulation vom
+/// 2026-11-20, mit der Lösung in der Hand. Jede Art hat ihre eigene
+/// Schranke; nach der Berichtigung läuft der richtige Aufruf. Gegenprobe:
+/// mit einem gemeinsamen Zähler endete der Lauf nach dem dritten Schritt.
+#[test]
+fn abschnitte_verbrauchen_keine_berichtigung() {
+    let lang = ("<think>Die guenstigste Verbindung ist", "length");
+    let e = fahren_mit_gruenden(vec![
+        lang,
+        lang,
+        ("<tool_call>{\"name\":\"zeit\",\"arguments\":{\"felder\":{\"x\":\"1\"}}}</tool_call>", "stop"),
+        ("<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>", "stop"),
+        ("Es ist 12:00.", "stop"),
+    ]);
+    assert_eq!(e.ende, Ende::Fertig, "{}", e.ende);
+}
+
 /// Die Gegenprobe: Dieselbe Antwort mit `stop` ist ein gewoehnliches Ende,
 /// wie vorher.
 #[test]

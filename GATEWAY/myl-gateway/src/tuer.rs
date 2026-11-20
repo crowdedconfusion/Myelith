@@ -539,6 +539,10 @@ impl Tuer {
         // des Inhabers, abzüglich dessen, was noch nicht in der Kette steht.
         let obergrenze = myl_types::inferenzauftrag::obergrenze(prompt.len() as u64, deckel);
         // ⚑ Vorgemerkt, bis die Anfrage durch ist ([`crate::zugang::Zusage`]).
+        //   📌 **Auch wenn der Klient vorher geht** (Fund 717, entschieden als
+        //   gewollt): Der Rechenweg bucht nach dem Ergebnis ab, und eine Tür,
+        //   die beim Trennen abbräche, ließe Pods für nichts rechnen. Probe
+        //   `ein_gegangener_klient_wird_zu_ende_gerechnet`.
         let vorgemerkt = crate::zugang::Zusage::geben(zugang, &vollmacht, &rahmen, obergrenze);
         let zusage = vorgemerkt.betrag;
         if zusage == 0 {

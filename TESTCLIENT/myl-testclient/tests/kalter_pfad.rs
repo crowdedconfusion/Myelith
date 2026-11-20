@@ -124,6 +124,7 @@ fn konfig(
         hintergrundpruefung: true,
         teilnehmer: Vec::new(),
         speicherorte: None,
+        asmap: None,
         netz: &myl_node::netz::PROBEKETTE,
         modellzusage: None,
         zone: myl_types::node_metadata::GeoRegion::Europe,

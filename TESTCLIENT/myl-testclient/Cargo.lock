@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.143.0"
+version = "0.144.1"
 dependencies = [
  "aes",
  "borsh",
@@ -2690,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "myl-gateway"
-version = "0.16.0"
+version = "0.16.2"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2721,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "libc",
  "myl-agent",
@@ -2746,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "borsh",
  "chacha20poly1305",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.135.0"
+version = "0.136.1"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2827,7 +2827,7 @@ dependencies = [
 
 [[package]]
 name = "myl-siegel"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "borsh",
  "chacha20poly1305",
@@ -2853,7 +2853,7 @@ dependencies = [
 
 [[package]]
 name = "myl-testclient"
-version = "0.76.0"
+version = "0.78.1"
 dependencies = [
  "borsh",
  "crossterm",

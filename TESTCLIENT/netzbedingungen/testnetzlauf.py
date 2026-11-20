@@ -38,6 +38,12 @@ Bedingungen wie im Testnetz.
       -e CARGO_NET_OFFLINE=true myelith-netem sh -c 'cargo build --release --locked --offline'
     python3 -u TESTCLIENT/netzbedingungen/testnetzlauf.py --aus <ordner> --kurz     # rund 12 Minuten
     python3 -u TESTCLIENT/netzbedingungen/testnetzlauf.py --aus <ordner> --minuten 400
+    python3 -u TESTCLIENT/netzbedingungen/testnetzlauf.py --aus <ordner> --kurz --ein-as
+
+`--ein-as` gibt jedem Knoten eine AS-Zuordnung, die alle Behaelter in ein AS
+legt (`--asmap`): Dann haelt jeder hoechstens zwei ausgehende Verbindungen zu
+den anderen, der schaerfste Fall der Grenze je Netzgruppe (Audit A9), etwa ein
+Testnetz, dessen Betreiber alle beim selben Anbieter sind.
 
 Laeuft auf dem Rechner mit Docker, nicht im Behaelter; braucht das Abbild
 `myelith-netem` und das Volume `myl-netem-ziel` mit dem Knoten unter
@@ -87,8 +93,9 @@ def jetzt_ms() -> int:
 
 
 class Lauf:
-    def __init__(self, aus: pathlib.Path, faktor: float, minuten: int):
+    def __init__(self, aus: pathlib.Path, faktor: float, minuten: int, ein_as: bool = False):
         self.aus = aus
+        self.ein_as = ein_as
         self.faktor = faktor
         self.minuten = minuten
         self.t0 = time.time()
@@ -128,6 +135,8 @@ class Lauf:
              "--konformitaet", "/repo/INTEGER_LLM/conformance/vectors/op"]
         if n in VALIDATOREN:
             a += ["--konsensschluessel", "/daten/konsens.key"]
+        if self.ein_as:
+            a += ["--asmap", "/daten/asmap.txt"]
         if n == "einstieg":
             a += ["--erzeuger", "--zeugen-bereithalten", "--oeffentlich", "/dns4/einstieg/tcp/4150"]
             return a
@@ -256,12 +265,13 @@ def main() -> int:
     ap.add_argument("--aus", type=pathlib.Path, required=True)
     ap.add_argument("--kurz", action="store_true", help="der Plan auf rund ein Dreissigstel gerafft (rund 12 Minuten)")
     ap.add_argument("--minuten", type=int, default=400, help="Dauer des langen Laufs")
+    ap.add_argument("--ein-as", action="store_true", help="alle Behaelter in einem AS (--asmap): hoechstens zwei ausgehende je Knoten")
     args = ap.parse_args()
     faktor = 1 / 30 if args.kurz else 1.0
     minuten = 12 if args.kurz else args.minuten
     aus = args.aus.resolve()
     aus.mkdir(parents=True, exist_ok=True)
-    lauf = Lauf(aus, faktor, minuten)
+    lauf = Lauf(aus, faktor, minuten, ein_as=args.ein_as)
 
     # Aufraeumen, was ein abgebrochener Lauf zuruecklaesst.
     alte = sh("docker", "ps", "-aq", "--filter", f"name={PRAEFIX}", pruefen=False).split()
@@ -282,6 +292,9 @@ def main() -> int:
     for n in list(ORTE):
         (aus / n).mkdir(parents=True, exist_ok=True)
         (aus / n / "satz.stimmsatz").write_text(satz, encoding="utf-8")
+        if args.ein_as:
+            # Das Netz von Docker liegt in 172.16.0.0/12.
+            (aus / n / "asmap.txt").write_text("# alle Behaelter in einem AS\n172.16.0.0/12 65000\n", encoding="utf-8")
     lauf.ereignis("startsatz", validatoren=len(zeilen))
 
     # Der Einstieg zuerst, dann die anderen.

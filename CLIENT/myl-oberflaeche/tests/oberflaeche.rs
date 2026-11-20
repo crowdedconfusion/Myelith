@@ -1820,7 +1820,7 @@ fn glas_hat_dicke_und_spiegelung() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 86] = [
+    const WORTE: [&str; 88] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
@@ -1839,6 +1839,7 @@ fn zahlwort(n: usize) -> String {
         "vierundsiebzig", "fünfundsiebzig", "sechsundsiebzig", "siebenundsiebzig",
         "achtundsiebzig", "neunundsiebzig", "achtzig",
         "einundachtzig", "zweiundachtzig", "dreiundachtzig", "vierundachtzig", "fünfundachtzig",
+        "sechsundachtzig", "siebenundachtzig",
     ];
     WORTE
         .get(n)
@@ -4065,3 +4066,29 @@ fn die_zwoelf_woerter_sind_geschuetzt() {
     }
     assert!(lies("stil.css").contains("#entwurf-woerter { user-select: none;"), "die Woerter lassen sich markieren");
 }
+
+/// ⚑ **Das Fenster legt mit Passwort an, wenn eines genannt ist** (CLIENT
+/// 7.10, 2026-11-19): Anlegen und Wiederherstellen speichern ueber
+/// `speichern_mit`, die Seite reicht beide Passwortfelder durch, und jede
+/// Reihe kann entsperren oder verschluesseln. Vorher legte das Fenster immer
+/// im Klartext an.
+#[test]
+fn das_fenster_legt_mit_passwort_an() {
+    let rs = lies_quelle("main.rs");
+    let js = lies("app.js");
+    let html = lies("index.html");
+    for befehl in ["async fn wallet_bestaetigen(", "async fn wallet_wiederherstellen("] {
+        let ab = rs.find(befehl).unwrap_or_else(|| panic!("{befehl} fehlt"));
+        let rumpf = &rs[ab..ab + rs[ab..].find("\n}\n").expect("Ende")];
+        assert!(rumpf.contains("speichern_mit("), "{befehl} speichert ohne Passwort");
+        assert!(rumpf.contains("neues_passwort("), "{befehl} prueft das Passwort nicht");
+    }
+    for feld in ["entwurf-pw", "entwurf-pw2", "wallet-wieder-pw", "wallet-wieder-pw2"] {
+        assert!(html.contains(&format!("id=\"{feld}\" type=\"password\"")), "Feld {feld} fehlt oder zeigt Klartext");
+        assert!(js.contains(&format!("$(\"{feld}\").value")), "die Seite liest {feld} nicht");
+    }
+    for befehl in ["wallet_entsperren", "wallet_verschluesseln"] {
+        assert!(js.contains(&format!("invoke(\"{befehl}\"")), "die Seite ruft {befehl} nicht");
+    }
+}
+

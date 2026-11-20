@@ -1,18 +1,22 @@
 # myl-server
 
-> **Version:** 0.2.1
-> **Datum:** 2026-11-08
-> **Status:** ⚠️ **Ungeprüft auf NixOS.** Modul, Beispielkonfiguration
+> **Version:** 0.3.0
+> **Datum:** 2026-11-19
+> **Status:** Der Dienst für gewöhnliches Linux (`myl-einstieg.service`)
+> ist in einem Debian-Behälter mit systemd gelaufen. ⚠️ **Das NixOS-Modul
+> ist ungeprüft auf NixOS.** Modul, Beispielkonfiguration
 > **und der Bauweg** stehen: Die Flake gibt `packages.myl-node` und
 > `nixosModules.myl-server` heraus, das Modul ist damit kein Umschlag
 > mehr um „bau es dir selbst". Offen bleibt die **VM-Prüfung**
 > (`nixosTest`); bis sie gelaufen ist, gilt jede Zeile hier als
 > geschrieben und nicht als belegt.
 
-**Was hier liegt:** alles, um barrierefrei einen MYL-SERVER unter NixOS
-aufzusetzen: ein gehärtetes NixOS-Modul um `myl-node`, eine
-Beispiel-`configuration.nix`, damit jeder Server dieselbe Grundlage hat,
-und eine Anleitung zur Portweiterleitung.
+**Was hier liegt:** alles, um einen dauerhaft laufenden Knoten als Dienst
+aufzusetzen: für Debian, Ubuntu, Fedora, Arch und Verwandte ein Dienst für
+systemd samt Einrichtungsskript (der Einstiegsknoten der Anleitung in
+`NODE/README/README.md`, „Ein Einstiegsknoten unter Linux, als Dienst“),
+für NixOS ein gehärtetes Modul um `myl-node`, eine
+Beispiel-`configuration.nix` und eine Anleitung zur Portweiterleitung.
 
 ⚑ **Kein Rust-Crate.** Dies ist Nix und Dokumentation, kein
 Cargo-Projekt; deshalb keine Cargo-Version und keine Sperrdatei. Die
@@ -20,6 +24,8 @@ Fassung oben zählt die Entwürfe hier.
 
 | Datei | Inhalt |
 |---|---|
+| `myl-einstieg.service` | Dienst für systemd außerhalb von NixOS: derselbe Zuschnitt wie das Modul, Einstellungen in `/etc/myl-einstieg/einstieg.env` |
+| `einstieg-einrichten.sh` | richtet ihn ein (Dienstnutzer, Programm, Einstellungen), aktualisiert, gibt die Zeile für den Startsatz und die eigene Adresse aus |
 | `modul.nix` | das NixOS-Modul `services.myl-server`: gehärteter systemd-Dienst, nur ein offener Port, Schlüssel aus dem Store heraus |
 | `beispiel-configuration.nix` | die gemeinsame Grundlage; als Vorbild nehmen und die markierten Stellen anpassen |
 | `README/Router-Anleitung.md` | Schritt für Schritt: Schlüssel, Portweiterleitung im Router, Erreichbarkeit, Aktualisieren |
@@ -40,6 +46,58 @@ Stelle in `modul.nix` und in der `Router-Anleitung.md`. Wer an diesen
 Dateien arbeitet, liest dort die Begründung.
 
 ## Changelog
+
+### v0.3.0 – 2026-11-19 (der Einstiegsknoten unter Linux)
+
+- **Neu: `myl-einstieg.service` und `einstieg-einrichten.sh`** für den
+  Einstiegsknoten der Stufe A auf einem Linux-Rechner. Das Skript legt den
+  Dienstnutzer `myl-einstieg` an, kopiert `myl-node` und die
+  Konformitätsvektoren nach `/usr/local/lib/myelith` (der Knoten sucht
+  sie neben dem Programm), schreibt `/etc/myl-einstieg/einstieg.env`
+  (Name, Netz, Port, öffentliche Adresse, weitere Schalter) und startet
+  den Dienst; dazu `--zeile` (Zeile für den Startsatz, als Dienstnutzer),
+  `--adresse` (aus der Zeile `eigene_adresse` des Protokolls),
+  `--stand` und `--aktualisieren`. Firewall, Router und DNS bleiben beim
+  Betreiber; das Skript nennt die Befehle.
+- **Im Behälter mit systemd erprobt** (Debian 12, systemd als PID 1):
+  ohne Startsatz fünf Versuche, dann `failed` mit der Meldung des Knotens
+  im Journal; mit Startsatz vier Validatoren, drei davon über
+  `/dns4/einstieg/tcp/4150/p2p/…` eingestiegen, Prüfpunkte bestätigt,
+  Neustart des Dienstes holt auf. `systemd-analyze security`: 1,3, „OK“.
+- ⛔️ **Fund, auch im Modul: Netlink war verboten.** Mit
+  `RestrictAddressFamilies` nur `AF_INET AF_INET6` endet der Start mit
+  „Address family not supported by protocol“, denn libp2p beobachtet die
+  Schnittstellen über Netlink. Beide erlauben jetzt `AF_NETLINK`.
+- ⛔️ **Fund im Modul: kein `--netz`.** Der Dienst lief auf der
+  Probekette, der Vorgabe des Knotens. Neu `netz` (Vorgabe `test-int4`)
+  und `zeugenBereithalten` (Vorgabe an); `p2pPort` jetzt 4150 wie der
+  Knoten (vorher 4001), ebenso Beispiel und Router-Anleitung. `golem-knoten`
+  in GolemOS trug denselben Fund und ist gleichgezogen (GolemOS 0.8.2); die
+  Probe `tests/golemknoten.rs`, die beide zusammenhält, hatte ihn gemeldet.
+- ✅ **Mit Nix ausgewertet und gebaut** (Behälter `nixos/nix`, aarch64-linux,
+  das festgehaltene nixpkgs der Flake; KVM für die VM-Prüfung gibt es auf
+  dem Mac nicht): Das Modul wertet ohne Warnung aus, die erzeugte Unit trägt
+  Netz, Port 4150, Netlink, die Startgrenze unter `[Unit]` und nur den
+  P2P-Port in der Firewall. Das Paket `packages.myl-node` hatte **nie
+  gebaut**; drei Funde, behoben in `flake.nix`: ohne `cargoRoot` fand der Bau
+  die Sperrdatei nicht (kein Workspace); der Quellfilter verglich den ersten
+  Pfadteil mit `SYSTEM/full-build` und traf nie, schloss aber `MODELS` ganz
+  aus, auch den eingebetteten Katalog (jetzt nach Präfix, mit Ausnahme für
+  `MODELS/llm/KATALOG.json`); das Paket legte keine Konformitätsvektoren bei
+  (jetzt `$out/bin/conformance/vectors/op`). Danach gebaut, und der Knoten
+  meldet ohne Angabe „konformitaet=bestanden vektoren=6“.
+- **Modul:** `konformitaetspfad = null` heißt jetzt „die Vektoren neben dem
+  Programm“ statt `--ohne-konformitaet`; ohne Prüfung nur noch ausdrücklich
+  mit `ohneKonformitaet = true`.
+- **Aufnahmetakt 60 statt 300 Sekunden:** Im Aufnahmetakt setzt der
+  Knoten auch `/metriken` und `/bereit` neu; mit 300 hinkten sie im
+  Versuch fünf Minuten nach. Das Wachstum der Protokolle deckelt der
+  Knoten selbst (128 MiB).
+- Fünf neue Proben in `NODE/myl-node/tests/serverzuschnitt.rs`: jedes
+  Flag der Unit kennt der Knoten, nach außen nur der P2P-Port und ein
+  Netz, Startgrenze in `[Unit]`, Unit und Modul härten gleich und
+  erlauben Netlink, Skript und Unit meinen dieselben Pfade und Variablen.
+  Gegenprobe (Netlink und `--ohne-tuer` entfernt): zwei rot.
 
 ### v0.2.1 – 2026-11-08 (der Hinweis zum Erzeuger)
 

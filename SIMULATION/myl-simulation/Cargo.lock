@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "myl-siegel"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "borsh",
  "chacha20poly1305",

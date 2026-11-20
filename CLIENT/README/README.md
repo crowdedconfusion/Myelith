@@ -1,6 +1,6 @@
 # CLIENT: Myelith auf dem eigenen Rechner
 
-> **Version:** 0.247.1 (`myl-client` 0.143.0, `myl-oberflaeche` 0.94.1, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
+> **Version:** 0.249.1 (`myl-client` 0.144.1, `myl-oberflaeche` 0.95.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
 > **Datum:** 2026-11-19
 > **Status:** Alles, was auf dem eigenen Rechner läuft, ist da: Gespräch,
 > Agent, Loop, Module, Sehen, Hören und Sprechen, Modelle holen und bauen,
@@ -79,7 +79,7 @@ Danach:
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über fünfundachtzig Befehle. ⚠️ **Mit sechs Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole; `stimmsatzzeile` startet `myl-node` einmal mit `--stimmsatzzeile`, wie `myl mining stimmsatzzeile`. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
+über siebenundachtzig Befehle. ⚠️ **Mit sechs Ausnahmen, und alle sind gewollt:** `terminal_ausfuehren` startet eine Shell, denn ein Terminal, das keine startet, ist keines; `modul_waehlen` und `modul_befehl` starten ein Modul, und zwar wie die Konsole nur die geprüfte Kopie eines signierten Moduls; `artefakt_bauen` startet die Bauskripte des Repositoriums über `myl_client::bezug`, dieselbe Stelle wie die Konsole, und nur nach Bestätigung; die Aktualisierung startet `curl`, `git` und das Installationsskript über `myl_client::aktualisierung`. `mining_starten` startet den Knoten (`myl-node`) und `mining_beenden` schickt ihm das Ende (`kill`), beide über `myl_client::mining`, dieselbe Stelle wie `/mining` in der Konsole; `stimmsatzzeile` startet `myl-node` einmal mit `--stimmsatzzeile`, wie `myl mining stimmsatzzeile`. Jeder andere Befehl startet **keinen einzigen Unterprozess**. 📌 Bis zum 2026-10-16 nannte dieser Satz nur die ersten beiden, obwohl Bau und Aktualisierung schon damals Unterprozesse starteten. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -209,6 +209,77 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.249.1 (2026-11-20): Nach einer Ablehnung der Tür wird gekauft (Fund 716, `myl-client` 0.144.1)
+
+- **Gefunden im Auftragslauf mit dem 35B:** Die Tür zieht vom Guthaben des
+  Inhabers auch ab, was sie anderen, noch rechnenden Anfragen zugesagt hat;
+  der Klient sieht das nicht. Eine verwaiste Anfrage hielt rund 24 000 von
+  26 980 Credits, jede neue Sitzung bekam 2 697 zugesagt, der Klient hielt
+  sich für gedeckt, kaufte nicht und gab nach einem Versuch mit 402 auf:
+  sechs Aufträge in 70 s gescheitert.
+- **Jetzt:** Nach einem 402 wegen des Guthabens (und den zwei Slots, die ein
+  eben gekaufter Bestand bis zur Tür braucht) gilt nichts als verfügbar
+  (`nach_ablehnung`); gekauft wird die Runde samt Vorrat, nie über das
+  Budget der Sitzung.
+- Probe: `nach_einer_ablehnung_wird_gekauft_auch_wenn_es_reicht`, mit
+  Gegenprobe (ohne die Regel bliebe es bei `Genug`).
+
+### v0.249.0 (2026-11-19): Das kalte Auszahlungskonto (`myl-client` 0.144.0)
+
+- ⚑ **7.12, nach dem Muster von PSBT (BIP-174):** ein Wallet nur aus dem
+  öffentlichen Schlüssel (`myl wallet beobachten NAME SCHLUESSEL`, den
+  Schlüssel zeigt `myl wallet oeffentlich NAME` auf dem Gerät mit dem
+  Schlüssel, bei einem Keystore ohne Entsperren). Es taugt als
+  Auszahlungskonto, zeigt Stand und Verlauf, und `myl wallet ueberweisen`
+  schreibt statt einer Unterschrift einen **Auftrag**
+  (`myelith-auftrag-1`: Netzwert, Absender, Nonce, Gebührengrenze,
+  Anweisung). Auf dem Gerät mit dem Schlüssel unterschreibt
+  `myl wallet unterschreiben NAME AUFTRAG` nach einer Bestätigung dessen, was
+  die **kodierten Bytes** sagen (der Kommentar im Auftrag wird nie gelesen),
+  und nur, wenn der Schlüssel zum Absender gehört; heraus kommt eine
+  **Unterschrift** (`myelith-unterschrift-1`), die `myl wallet einreichen`
+  am Netz einreicht, nachdem sie gegen ihren Netzwert geprüft ist.
+- Neues Modul `kalt` (Auftrag, Unterschrift, Beschreibung), in `wallet`
+  `beobachten`, `ist_kalt`, `oeffentlicher_schluessel`, in `bezahlen`
+  `ueberweisung_als_auftrag`, `kalt_unterschreiben`, `einreichen`. Ein
+  kaltes Wallet hat keinen Schlüssel; wer es unterschreiben lassen will,
+  bekommt den Weg genannt.
+- ⚠️ Nicht enthalten: der Wechsel des Auszahlungskontos des Knotens weg von
+  einem kalten Konto (der Knoten unterschreibt ihn heute selbst mit dem
+  alten Schlüssel, `--kontowechsel`).
+- Proben: `kalt` 5 (der Weg über zwei Dateien ergibt dieselbe Transaktion,
+  fremder Schlüssel unterschreibt nicht, Beschreibung aus den Bytes,
+  veränderte Unterschrift fällt auf, kaputter Auftrag wird benannt),
+  `ein_kaltes_wallet_hat_nur_den_oeffentlichen_schluessel`, und am echten
+  Knoten in `TESTCLIENT/myl-testclient/tests/bezahlen.rs`: Auftrag,
+  Unterschrift, Einreichen, die Überweisung kommt an und bucht ab, was der
+  Auftrag sagte; das kalte Wallet selbst unterschreibt nicht. `myl-client`
+  Clippy und alle Proben grün (Bibliothek 159).
+
+### v0.248.0 (2026-11-19): Das Fenster legt mit Passwort an (`myl-oberflaeche` 0.95.0)
+
+- ⚑ **Keystore auch im Fenster** (7.10; vorher legte nur die Konsole mit
+  Passwort an, das Fenster immer im Klartext): Anlegen und Wiederherstellen
+  haben zwei Passwortfelder; leer heißt unverschlüsselt wie bisher (nur für
+  Spielgeld), sonst zweimal dasselbe, gespeichert nach EIP-2335 über
+  `wallet::speichern_mit`. Stimmen nur die Passwörter nicht überein, bleibt der
+  Entwurf offen (die Seite prüft vorher, der Rücken ebenso, bevor er den
+  Entwurf nimmt).
+- Je Wallet in der Liste: Marke „Keystore“ und „entsperrt“, Knopf
+  **Entsperren** (für diesen Lauf des Fensters, etwa damit das Mining ein
+  altes Auszahlungskonto wechseln kann) oder **Verschlüsseln** (wie
+  `myl wallet verschluesseln`, mit dem Hinweis, dass die Klartextdatei auf
+  einer SSD wiederherstellbar bleiben kann). Die Felder klappen in der Reihe
+  auf, kein Dialog des Systems.
+- Neue Befehle `wallet_entsperren`, `wallet_verschluesseln` (jetzt
+  siebenundachtzig); `wallet_bestaetigen` und `wallet_wiederherstellen`
+  nehmen `passwort` und `passwort2`.
+- Proben: `ein_passwort_braucht_zweimal_dasselbe` (Rücken),
+  `das_fenster_legt_mit_passwort_an` (Speichern über `speichern_mit`,
+  Passwortfelder vom Typ `password`, die Seite ruft die neuen Befehle);
+  Fenster 95 grün, Clippy grün.
+- ⚠️ Vor echten MYL offen: ob ein Passwort Pflicht wird.
 
 ### v0.247.1 (2026-11-19): Die Bündelversion folgt der Kiste (`myl-oberflaeche` 0.94.1)
 

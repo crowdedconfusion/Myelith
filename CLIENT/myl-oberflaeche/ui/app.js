@@ -329,6 +329,13 @@ const TEXTE = {
     "wallet.entwurf.bestaetigen": "Bestätigen",
     "wallet.entwurf.abbrechen": "Abbrechen",
     "wallet.entwurf.ruhe": "Zwei Minuten ohne Eingabe: Der Entwurf ist verworfen, es wurde nichts angelegt.",
+    "wallet.passwort": "Passwort für den Keystore (leer: unverschlüsselt, nur für Spielgeld)",
+    "wallet.passwort2": "Passwort noch einmal",
+    "wallet.passwort_ungleich": "Die Passwörter stimmen nicht überein.",
+    "wallet.verschluesselt": "Keystore",
+    "wallet.entsperrt": "entsperrt",
+    "wallet.entsperren": "Entsperren",
+    "wallet.verschluesseln": "Verschlüsseln",
     "wallet.einstieg": "Einstieg ins Netz",
     "wallet.einstieg.platz": "Multiadresse oder Datei (einstieg.txt des Probenetzes)",
     "wallet.einstieg.setzen": "Setzen",
@@ -722,6 +729,13 @@ const TEXTE = {
     "wallet.entwurf.bestaetigen": "Confirm",
     "wallet.entwurf.abbrechen": "Cancel",
     "wallet.entwurf.ruhe": "Two minutes without input: the draft was discarded, nothing was created.",
+    "wallet.passwort": "Keystore password (empty: unencrypted, play money only)",
+    "wallet.passwort2": "Password again",
+    "wallet.passwort_ungleich": "The passwords do not match.",
+    "wallet.verschluesselt": "keystore",
+    "wallet.entsperrt": "unlocked",
+    "wallet.entsperren": "Unlock",
+    "wallet.verschluesseln": "Encrypt",
     "wallet.einstieg": "Network entry",
     "wallet.einstieg.platz": "Multiaddress or file (einstieg.txt of the probe network)",
     "wallet.einstieg.setzen": "Set",
@@ -3156,7 +3170,12 @@ function wallet_zeichnen(l) {
     const name = document.createElement("strong");
     name.textContent = w.name;
     kopf.append(name);
-    for (const [an, schluessel] of [[w.gewaehlt, "wallet.gewaehlt"], [w.eingetragen, "wallet.eingetragen"]]) {
+    for (const [an, schluessel] of [
+      [w.gewaehlt, "wallet.gewaehlt"],
+      [w.eingetragen, "wallet.eingetragen"],
+      [w.verschluesselt, "wallet.verschluesselt"],
+      [w.entsperrt, "wallet.entsperrt"],
+    ]) {
       if (!an) continue;
       const marke = document.createElement("span");
       marke.className = "walletmarke";
@@ -3189,6 +3208,16 @@ function wallet_zeichnen(l) {
         wallet_laden();
       });
       knoepfe.append(knopf);
+    }
+    // ⚑ Keystore (CLIENT 7.10): entsperren fuer diesen Lauf, oder ein
+    //   Klartext-Wallet verschluesseln. Das Passwort steht in einem Feld der
+    //   Reihe, nie in einem Dialog des Systems.
+    if (w.verschluesselt && !w.entsperrt) {
+      knoepfe.append(passwortknopf("wallet.entsperren", 1, (pw) =>
+        invoke("wallet_entsperren", { name: w.name, passwort: pw[0] }).then(() => "")));
+    } else if (!w.verschluesselt) {
+      knoepfe.append(passwortknopf("wallet.verschluesseln", 2, (pw) =>
+        invoke("wallet_verschluesseln", { name: w.name, passwort: pw[0], passwort2: pw[1] })));
     }
     // ⚑ Der Verlauf klappt unter der Reihe auf und bleibt offen, wenn die
     //   Liste neu gezeichnet wird; dieselben Zeilen wie `myl wallet verlauf`.
@@ -3262,6 +3291,8 @@ async function wallet_anlegen(ereignis) {
   $("entwurf-weiter").disabled = true;
   $("entwurf-a").value = "";
   $("entwurf-b").value = "";
+  $("entwurf-pw").value = "";
+  $("entwurf-pw2").value = "";
   $("entwurf-schritt1").hidden = false;
   $("entwurf-schritt2").hidden = true;
   $("walletentwurf").hidden = false;
@@ -3279,12 +3310,19 @@ function wallet_entwurf_weiter() {
 
 async function wallet_entwurf_bestaetigen(ereignis) {
   ereignis.preventDefault();
+  // Ungleiche Passwoerter vorher: Der Entwurf bleibt dann offen.
+  if ($("entwurf-pw").value !== $("entwurf-pw2").value) {
+    $("walletmeldung").textContent = t("wallet.passwort_ungleich");
+    return;
+  }
   entwurf_wache_aus();
   try {
     $("walletmeldung").textContent = await invoke("wallet_bestaetigen", {
       notiert: $("entwurf-notiert").checked,
       wortA: $("entwurf-a").value,
       wortB: $("entwurf-b").value,
+      passwort: $("entwurf-pw").value,
+      passwort2: $("entwurf-pw2").value,
     });
     $("wallet-name").value = "";
   } catch (f) {
@@ -3308,6 +3346,8 @@ function entwurf_leeren() {
   $("entwurf-woerter").replaceChildren();
   $("entwurf-a").value = "";
   $("entwurf-b").value = "";
+  $("entwurf-pw").value = "";
+  $("entwurf-pw2").value = "";
   $("walletentwurf").hidden = true;
 }
 
@@ -3339,15 +3379,63 @@ for (const art of ["copy", "cut", "dragstart", "contextmenu"]) {
   $("walletentwurf").addEventListener(art, (e) => e.preventDefault());
 }
 
+/// Ein Knopf, der ein oder zwei Passwortfelder in der Reihe aufklappt und
+/// mit dem zweiten Klick `aktion` mit den Feldern ruft.
+function passwortknopf(schluessel, felder, aktion) {
+  const rahmen = document.createElement("span");
+  rahmen.className = "walletpasswort";
+  const eingaben = [];
+  for (let i = 0; i < felder; i++) {
+    const f = document.createElement("input");
+    f.type = "password";
+    f.autocomplete = i ? "new-password" : "current-password";
+    f.placeholder = t(i ? "wallet.passwort2" : "wallet.passwort");
+    f.hidden = true;
+    eingaben.push(f);
+  }
+  const knopf = document.createElement("button");
+  knopf.type = "button";
+  knopf.textContent = t(schluessel);
+  knopf.addEventListener("click", async () => {
+    if (eingaben[0].hidden) {
+      for (const f of eingaben) f.hidden = false;
+      eingaben[0].focus();
+      return;
+    }
+    const werte = eingaben.map((f) => f.value);
+    for (const f of eingaben) f.value = "";
+    if (felder === 2 && werte[0] !== werte[1]) {
+      $("walletmeldung").textContent = t("wallet.passwort_ungleich");
+      return;
+    }
+    try {
+      $("walletmeldung").textContent = await aktion(werte);
+    } catch (f) {
+      $("walletmeldung").textContent = String(f);
+    }
+    wallet_laden();
+  });
+  rahmen.append(...eingaben, knopf);
+  return rahmen;
+}
+
 async function wallet_wiederherstellen(ereignis) {
   ereignis.preventDefault();
+  if ($("wallet-wieder-pw").value !== $("wallet-wieder-pw2").value) {
+    $("walletmeldung").textContent = t("wallet.passwort_ungleich");
+    return;
+  }
   try {
     $("walletmeldung").textContent = await invoke("wallet_wiederherstellen", {
       name: $("wallet-wieder-name").value,
       woerter: $("wallet-wieder-woerter").value,
+      passwort: $("wallet-wieder-pw").value,
+      passwort2: $("wallet-wieder-pw2").value,
     });
     $("wallet-wieder-name").value = "";
     $("wallet-wieder-woerter").value = "";
+    $("wallet-wieder-pw").value = "";
+    $("wallet-wieder-pw2").value = "";
   } catch (f) {
     $("walletmeldung").textContent = String(f);
   }

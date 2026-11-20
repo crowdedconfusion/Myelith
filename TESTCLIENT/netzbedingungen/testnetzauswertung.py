@@ -64,6 +64,9 @@ def main() -> int:
         abgelehnt = collections.Counter()
         warten = []
         mesh = []                                   # (bloecke, konsens) je Aufnahme
+        fuehler = collections.Counter()             # gelungen / gescheitert (A9)
+        gruppe_voll = 0                             # ausgehend abgewiesen, Netzgruppe voll
+        anker = {"gewaehlt": [], "gesichert": 0}
         letzte = {}
         erzeugt = 0
         for f in sorted((aus / n / "logs").glob("*.jsonl")):
@@ -81,7 +84,16 @@ def main() -> int:
                     warten.append(d.get("grund"))
                 elif a == "aufnahme" and "mesh_blocks" in d:
                     mesh.append((d["mesh_blocks"], d.get("mesh_consensus", 0)))
-        je[n] = {"arten": z, "abgelehnt": abgelehnt, "warten": warten, "letzte": letzte, "erzeugt": erzeugt, "mesh": mesh}
+                elif a == "fuehler":
+                    fuehler["gelungen" if d.get("gelungen") else "gescheitert"] += 1
+                elif a == "abgewiesen" and "Netzgruppe" in (d.get("grund") or ""):
+                    gruppe_voll += 1
+                elif a == "anker_gewaehlt":
+                    anker["gewaehlt"].append(d.get("gewaehlt", 0))
+                elif a == "anker_gesichert":
+                    anker["gesichert"] += 1
+        je[n] = {"arten": z, "abgelehnt": abgelehnt, "warten": warten, "letzte": letzte, "erzeugt": erzeugt, "mesh": mesh,
+                 "fuehler": fuehler, "gruppe_voll": gruppe_voll, "anker": anker}
 
     out = [f"# Auswertung `{aus.name}`", ""]
     dauer = (messungen[-1]["t_min"] if messungen else 0)
@@ -113,6 +125,15 @@ def main() -> int:
         if m:
             null = sum(1 for b, _ in m if b == 0) / len(m)
             out.append(f"| {n} | {len(m)} | {statistics.median(b for b, _ in m):.0f} | {statistics.median(k for _, k in m):.0f} | {100 * null:.0f} % |")
+    out.append("")
+
+    # Umzingelung (A9): Fuehler fuer eingehende Gegenstellen, ausgehende
+    # Wahl an der Grenze je Netzgruppe, Anker ueber Neustarts.
+    out += ["## Umzingelung (A9)", "", "| Knoten | Fuehler gelungen | gescheitert | ausgehend abgewiesen (Gruppe voll) | Anker gesichert | Anker gewaehlt beim Start |", "|---|---|---|---|---|---|"]
+    for n in knoten:
+        j = je[n]
+        out.append(f"| {n} | {j['fuehler']['gelungen']} | {j['fuehler']['gescheitert']} | {j['gruppe_voll']} | "
+                   f"{j['anker']['gesichert']} | {j['anker']['gewaehlt']} |")
     out.append("")
 
     # Abstimmung: haelt die Frist des Vorschlags (Vorgabe 1 000 ms) gegen

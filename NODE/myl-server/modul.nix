@@ -58,9 +58,31 @@ in
       '';
     };
 
+    netz = lib.mkOption {
+      type = lib.types.str;
+      default = "test-int4";
+      description = ''
+        Das Netz (--netz). ⛔️ **Ohne diese Option lief der Dienst bis zum
+        2026-11-19 auf der Probekette**, der Vorgabe des Knotens: Jeder
+        Start begann dort eine eigene Kette, und der Server war fuer das
+        Testnetz unsichtbar.
+      '';
+    };
+
+    zeugenBereithalten = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Als voller Knoten die Zeugen der Bloecke bereithalten und
+        zustandslosen Knoten auf Nachfrage liefern (--zeugen-bereithalten).
+        Ein langlebiger Knoten tut das, wie der Einstiegsknoten der
+        Anleitung.
+      '';
+    };
+
     p2pPort = lib.mkOption {
       type = lib.types.port;
-      default = 4001;
+      default = 4150;
       description = ''
         Der einzige Port, der nach aussen offen ist (--port). Genau diesen
         leitet der Router weiter (siehe Router-Anleitung.md). Ueber 1024,
@@ -95,9 +117,19 @@ in
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = ''
-        Pfad zum Konformitaetsnachweis (--konformitaet). Ist er `null`,
-        laeuft der Dienst mit `--ohne-konformitaet`; ⚠️ das ist nur fuer
-        einen Probelauf gedacht.
+        Pfad zu den Op-Vektoren (--konformitaet). Ist er `null`, sucht der
+        Knoten sie neben seinem Programm; das Paket der Flake legt sie dort
+        ab (seit 2026-11-19). Bis dahin hiess `null` `--ohne-konformitaet`.
+      '';
+    };
+
+    ohneKonformitaet = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Ohne die Pruefung der Op-Vektoren starten (--ohne-konformitaet).
+        ⚠️ Nur fuer einen Probelauf: Ein Knoten, der anders rechnet, wird
+        geschlachtet.
       '';
     };
 
@@ -162,16 +194,19 @@ in
 
     aufnahmeSekunden = lib.mkOption {
       type = lib.types.ints.positive;
-      default = 300;
+      default = 60;
       description = ''
         Abstand der Zustandsaufnahmen im Protokoll, in Sekunden
         (--aufnahme).
 
-        ⚑ **Hier steht 300 und nicht die 30 des Knotens**, und der Grund
-        ist die Betriebsdauer: Dreissig Sekunden sind fuer einen
-        Probelauf von Minuten gedacht. Ein Server laeuft Monate, und
-        dann ist der Abstand der Aufnahmen die Rate, mit der
-        `/var/lib/myl-server/protokolle` waechst.
+        ⚑ **60 statt 300 seit dem 2026-11-19:** Im Aufnahmetakt setzt der
+        Knoten auch `/metriken` und `/bereit` neu und verbreitet die
+        Abrechnungen; mit 300 hinkten beide fuenf Minuten nach. Das
+        Wachstum der Protokolle begrenzt seither `--protokoll-mb`.
+
+        Bis dahin stand hier 300 statt der 30 des Knotens, wegen der
+        Rate, mit der `/var/lib/myl-server/protokolle` waechst; eine
+        Aufnahme je Minute sind rund 2 MB am Tag.
       '';
     };
 
@@ -274,6 +309,7 @@ in
           [
             "${cfg.paket}/bin/myl-node"
             "--name" cfg.name
+            "--netz" cfg.netz
             "--rolle" cfg.rolle
             "--port" (toString cfg.p2pPort)
             # ⚑ Der Identitaetsschluessel kommt aus dem Credential-Verzeichnis.
@@ -298,9 +334,10 @@ in
               then [ "--beobachtung" "127.0.0.1:${toString cfg.beobachtungPort}" ]
               else [ "--ohne-beobachtung" ])
           ++ lib.optional cfg.erzeuger "--erzeuger"
-          ++ (if cfg.konformitaetspfad != null
-              then [ "--konformitaet" (toString cfg.konformitaetspfad) ]
-              else [ "--ohne-konformitaet" ])
+          ++ lib.optional cfg.zeugenBereithalten "--zeugen-bereithalten"
+          ++ (if cfg.ohneKonformitaet
+              then [ "--ohne-konformitaet" ]
+              else lib.optionals (cfg.konformitaetspfad != null) [ "--konformitaet" (toString cfg.konformitaetspfad) ])
           ++ lib.concatMap (b: [ "--bootstrap" b ]) cfg.bootstrap
           ++ lib.concatMap (a: [ "--oeffentlich" a ]) cfg.oeffentlicheAdressen
           ++ lib.optionals (cfg.konsensCredential != null) [ "--konsensschluessel" "%d/konsens" ]
@@ -342,7 +379,11 @@ in
         # `/proc` dazu, die kein Dienst braucht und die einem Angreifer
         # sagen, worauf er gestossen ist.
         ProcSubset = "pid";
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        # ⛔️ **AF_NETLINK gehoert dazu** (2026-11-19, im Behaelter mit
+        # systemd gefunden): libp2p beobachtet die Schnittstellen ueber
+        # Netlink, und ohne es endet der Start mit „Address family not
+        # supported by protocol“.
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_NETLINK" ];
         RestrictNamespaces = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;

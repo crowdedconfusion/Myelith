@@ -79,6 +79,11 @@ myl: lokaler Betrieb von Myelith
   myl wallet credits NAME MYL | sitzung NAME AGENT [BUDGET] [EPOCHEN] | widerrufen NAME SITZUNG
   myl wallet ueberweisen NAME EMPFAENGER MYL [--ja]   zeigt erst, was unterschrieben wird
                                   Bezahlen: Credits kaufen, Sitzung mit Vollmacht fuer einen Agenten, Widerruf
+  myl wallet oeffentlich NAME | beobachten NAME SCHLUESSEL
+                                  Kaltes Konto: den oeffentlichen Schluessel zeigen, ein Wallet nur aus ihm
+                                  anlegen (taugt als Auszahlungskonto; ueberweisen schreibt dann einen Auftrag)
+  myl wallet unterschreiben NAME AUFTRAG | einreichen UNTERSCHRIFT
+                                  Den Auftrag auf dem Geraet mit dem Schluessel unterschreiben, am Netz einreichen
   myl frage --tuer HOST:PORT --agent NAME TEXT
                                   Eine Frage ueber die Tuer eines Knotens, mit der Vollmacht des Agenten
   myl einstellungen               Zeigt die Einstellungen
@@ -643,6 +648,23 @@ fn wallet(args: &[String]) -> i32 {
             let an = myl_types::adresstext::aus_text(args.get(2).map(String::as_str).unwrap_or(""), myl_types::adresstext::PRAEFIX_TESTNETZ).map_err(|f| format!("Empfänger: {f}"))?;
             let betrag = myl_betrag(args.get(3).map(String::as_str).unwrap_or(""))?;
             let v = myl_client::bezahlen::ueberweisung_vorschauen(&l, &w, an, betrag)?;
+            // ⚑ CLIENT 7.12: Ein kaltes Wallet unterschreibt hier nicht; es
+            //   schreibt den Auftrag für das Gerät mit dem Schlüssel.
+            if wallet::ist_kalt(name) {
+                let auftrag = myl_client::bezahlen::ueberweisung_als_auftrag(&v, wallet::oeffentlicher_schluessel(name)?)?;
+                let datei = args
+                    .iter()
+                    .position(|a| a == "--datei")
+                    .and_then(|i| args.get(i + 1))
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from(format!("{name}-nonce{}.auftrag", auftrag.nonce)));
+                std::fs::write(&datei, auftrag.als_text()).map_err(|e| format!("{}: {e}", datei.display()))?;
+                println!("{}", auftrag.beschreibung());
+                println!("Auftrag geschrieben: {}", datei.display());
+                println!("Weiter auf dem Gerät mit dem Schlüssel: myl wallet unterschreiben <name> {}", datei.display());
+                println!("Danach hier: myl wallet einreichen <unterschrift>");
+                return Ok(());
+            }
             println!("Überweisung, noch nicht unterschrieben:");
             println!("  von      {} ({})", myl_types::adresstext::als_text(&v.von, myl_types::adresstext::PRAEFIX_TESTNETZ), w.name);
             println!("  an       {}", myl_types::adresstext::als_text(&v.an, myl_types::adresstext::PRAEFIX_TESTNETZ));
@@ -667,6 +689,38 @@ fn wallet(args: &[String]) -> i32 {
             entsperren_falls_noetig(name)?;
             let id = args.get(2).and_then(|t| hex32(t)).ok_or("erwartet die Sitzung als 64 Hexzeichen")?;
             myl_client::bezahlen::sitzung_widerrufen(&l, &w, myl_types::ids::SitzungId::new(id)).map(|z| println!("Widerruf verbreitet ({z})."))
+        }),
+        Some("oeffentlich") => wallet::oeffentlicher_schluessel(name).map(|pk| {
+            println!("{}", hex(&pk.0));
+            eprintln!("Öffentlich; auf dem Rechner, der mint: myl wallet beobachten <name> <diese Zeile>");
+        }),
+        Some("beobachten") => wallet::beobachten(name, args.get(2).map(String::as_str).unwrap_or("")).map(|w| {
+            println!("Kaltes Wallet {} angelegt: {}", w.name, w.adresse_text());
+            println!("Es taugt als Auszahlungskonto (myl wallet waehle {}); Überweisungen werden auf dem Gerät mit dem Schlüssel unterschrieben.", w.name);
+        }),
+        Some("unterschreiben") => (|| {
+            let datei = args.get(2).ok_or("erwartet die Auftragsdatei")?;
+            let text = std::fs::read_to_string(datei).map_err(|e| format!("{datei}: {e}"))?;
+            let auftrag = myl_client::kalt::Auftrag::aus_text(&text)?;
+            entsperren_falls_noetig(name)?;
+            println!("{}", auftrag.beschreibung());
+            let ja = args.iter().any(|a| a == "--ja")
+                || zeile_lesen("Genau das unterschreiben? [j/N] ").is_some_and(|z| z.trim().eq_ignore_ascii_case("j"));
+            if !ja {
+                println!("Nichts unterschrieben.");
+                return Ok(());
+            }
+            let tx = myl_client::bezahlen::kalt_unterschreiben(name, &auftrag)?;
+            let ziel = datei.strip_suffix(".auftrag").map(|s| format!("{s}.unterschrift")).unwrap_or_else(|| format!("{datei}.unterschrift"));
+            std::fs::write(&ziel, myl_client::kalt::unterschrift_als_text(&auftrag.netzwert, &tx)).map_err(|e| format!("{ziel}: {e}"))?;
+            println!("Unterschrift geschrieben: {ziel}. Am Rechner mit dem Netz: myl wallet einreichen {ziel}");
+            Ok::<(), String>(())
+        })(),
+        Some("einreichen") => leitung(args).and_then(|l| {
+            // Hier ist der zweite Wert die Datei, nicht ein Name.
+            let text = std::fs::read_to_string(name).map_err(|e| format!("{name}: {e}"))?;
+            let (_, tx) = myl_client::kalt::unterschrift_aus_text(&text)?;
+            myl_client::bezahlen::einreichen(&l, &tx).map(|z| println!("Eingereicht ({z})."))
         }),
         Some("verlauf") => wallet::laden(name).and_then(|w| {
             let zeilen = wallet::verlauf(&w.adresse)?;

@@ -187,6 +187,33 @@ async fn ein_wallet_kauft_credits_eroeffnet_eine_sitzung_und_widerruft_sie() {
     let zweimal = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || myl_client::bezahlen::ueberweisen(&l, &z, &v))).await;
     assert!(zweimal.is_err(), "eine veraltete Vorschau wurde unterschrieben");
 
+    // ---- Das kalte Konto (CLIENT 7.12, 2026-11-19) ---------------------------
+    // Ein Wallet nur aus dem öffentlichen Schlüssel des Zahlers: Vorschau und
+    // Auftrag am Netz, unterschrieben „auf dem anderen Gerät“ mit dem
+    // Schlüssel, über Textdateien hin und zurück, eingereicht, angekommen.
+    let pk = myl_client::wallet::oeffentlicher_schluessel(&zahler.name).expect("öffentlicher Schlüssel");
+    let pk_hex: String = pk.0.iter().map(|b| format!("{b:02x}")).collect();
+    let kalt = myl_client::wallet::beobachten("zahlerkalt", &pk_hex).expect("kaltes Wallet");
+    assert_eq!(kalt.adresse, a, "das kalte Wallet hat eine andere Adresse");
+    let (l, k) = (leitung, kalt.clone());
+    let vorschau = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || myl_client::bezahlen::ueberweisung_vorschauen(&l, &k, f, 1_000_000)))
+        .await
+        .expect("Vorschau des kalten Wallets");
+    // ⛔️ Das kalte Wallet selbst unterschreibt nicht.
+    let (l, k, v) = (leitung, kalt.clone(), vorschau.clone());
+    let selbst = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || myl_client::bezahlen::ueberweisen(&l, &k, &v))).await;
+    assert!(matches!(&selbst, Err(f) if f.contains("kaltes Wallet")), "{selbst:?}");
+    let auftrag = myl_client::bezahlen::ueberweisung_als_auftrag(&vorschau, pk).expect("Auftrag");
+    let gelesen = myl_client::kalt::Auftrag::aus_text(&auftrag.als_text()).expect("Auftrag lesbar");
+    let tx = myl_client::bezahlen::kalt_unterschreiben(&zahler.name, &gelesen).expect("unterschreiben");
+    let (_, tx) = myl_client::kalt::unterschrift_aus_text(&myl_client::kalt::unterschrift_als_text(&gelesen.netzwert, &tx)).expect("Unterschrift lesbar");
+    let vor_kalt = knoten[0].kette().zustand().account(&a).balance;
+    let l = leitung;
+    let r = treiben_bis(&mut knoten, tokio::task::spawn_blocking(move || myl_client::bezahlen::einreichen(&l, &tx))).await;
+    assert!(r.is_ok(), "{r:?}");
+    bis(&mut knoten, "die kalt unterschriebene Überweisung kam nicht an", |k| k.kette().zustand().account(&f).balance == 2_000_000).await;
+    assert_eq!(knoten[0].kette().zustand().account(&a).balance, vor_kalt - 1_000_000 - vorschau.gebuehr, "abgebucht wurde nicht, was der Auftrag sagte");
+
     // ---- ⛔️ Gegenproben -------------------------------------------------------
     // Ein fremdes Wallet kann nicht widerrufen: Die Transaktion geht ins Netz,
     // die Kette lehnt sie ab, und die Sitzung bleibt offen.

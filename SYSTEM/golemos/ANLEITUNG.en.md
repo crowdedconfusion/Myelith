@@ -321,7 +321,7 @@ undoes that. `golem-knoten protokoll` shows what it is doing, `golem-knoten
 stoppen` ends it. After five crashes within five minutes it stops by itself
 instead of retrying forever.
 
-**Good to know:** Only port 4001 is open to the outside. Its settings and its
+**Good to know:** Only port 4150 is open to the outside. Its settings and its
 identity are kept on the system, not on the readable part **Golem** of the
 stick. ⚠️ A new installation deletes both, and the node then gets a new
 identity.

@@ -225,7 +225,12 @@ where
 /// Sie wird jeder Nachricht vorangestellt und nicht nur der ersten. Das
 /// ist im Test die einfachere Wahrheit und kostet 1088 Byte; im Betrieb
 /// gehört sie einmal je Richtung gesendet.
-const KAPSELRAHMEN: usize = 8 + 32 + 32 + 32 + myl_net::KAPSEL_LEN;
+///
+/// 📌 Bis 2026-11-19 stand hier die Länge nachgerechnet
+/// (`8 + 32 + 32 + 32 + KAPSEL_LEN`); mit dem Verfahrenskennzeichen (3b.4)
+/// wurde der Rahmen ein Byte länger, und vier Proben lasen „unleserlicher
+/// Rahmen“. Jetzt die Konstante der Kiste, die den Rahmen baut.
+const KAPSELRAHMEN: usize = myl_net::sitzung::KAPSELRAHMEN_LEN;
 
 fn auf_den_draht(kanal: &mut Kanal, klartext: &[u8]) -> Vec<u8> {
     let mut roh = kanal.eigene_kapsel().zu_bytes();

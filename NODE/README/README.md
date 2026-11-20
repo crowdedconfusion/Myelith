@@ -1,7 +1,7 @@
 # NODE: der Myelith-Knoten (`myl-node`)
 
-> **Version:** 0.135.0
-> **Datum:** 2026-11-18
+> **Version:** 0.136.1
+> **Datum:** 2026-11-19
 > **Status:** Läuft als Probekette und in Proben über mehrere Rechner.
 > Das geschlossene Testnetz `test-int4` ist im Knoten angelegt; es beginnt,
 > sobald der Startsatz seiner Validatoren im Release steht.
@@ -149,6 +149,60 @@ myl-node --netz test-int4 --konsensschluessel <datei> --erzeuger \
   Adresse mit Namen statt Zahl übersteht einen Umzug ohne neues Release.
   Ein gefälschter DNS-Eintrag kann keinen fremden Knoten unterschieben,
   denn die Adresse trägt die Kennung des Knotens.
+
+### Ein Einstiegsknoten unter Linux, als Dienst
+
+Für einen Rechner, der dauerhaft läuft, liegen ein Dienst für systemd
+(`NODE/myl-server/myl-einstieg.service`) und ein Skript, das ihn einrichtet
+(`NODE/myl-server/einstieg-einrichten.sh`); unter NixOS gilt stattdessen das
+Modul `NODE/myl-server/modul.nix`.
+
+1. **Bauen**, als gewöhnlicher Nutzer: `sh SYSTEM/install/installieren-linux.sh --ohne-fenster`.
+2. **Die Zeile für den Startsatz**, wenn der Knoten Validator wird:
+   `sudo sh NODE/myl-server/einstieg-einrichten.sh --zeile` und die Zeile
+   ans Projekt schicken. Der Schlüssel liegt danach unter
+   `/var/lib/myl-einstieg/konsens.key` und gehört dem Dienstnutzer.
+3. **Einrichten und starten:**
+   ```sh
+   sudo sh NODE/myl-server/einstieg-einrichten.sh --oeffentlich /dns4/<name>/tcp/4150 --erzeuger
+   ```
+   `--erzeuger` nur mit einer Zeile im Startsatz. Das Skript legt den
+   Dienstnutzer `myl-einstieg` an, kopiert das Programm samt
+   Konformitätsvektoren nach `/usr/local/lib/myelith`, schreibt die
+   Einstellungen nach `/etc/myl-einstieg/einstieg.env` und startet den
+   Dienst. Schlüssel, Kette und Protokolle liegen unter
+   `/var/lib/myl-einstieg`.
+4. **Firewall öffnen:** Port 4150 für TCP und UDP, etwa
+   `sudo ufw allow 4150/tcp && sudo ufw allow 4150/udp`.
+5. **Router:** dem Rechner eine feste Adresse im LAN geben
+   (DHCP-Reservierung) und Port 4150 für TCP und UDP an ihn weiterleiten.
+   UPnP bleibt aus.
+6. **Dynamisches DNS:** Der Name aus Schritt 3 muss auf die wechselnde
+   Adresse des Anschlusses zeigen; viele Router können das selbst, sonst
+   ein Dienst wie `ddclient`.
+7. **Die Adresse fürs Release:** `sudo sh NODE/myl-server/einstieg-einrichten.sh --adresse`
+   gibt `/dns4/<name>/tcp/4150/p2p/<kennung>` aus; diese Zeile geht ans
+   Projekt.
+8. **Prüfen:** `sudo sh NODE/myl-server/einstieg-einrichten.sh --stand`
+   (Dienst, Höhe, Gegenstellen). Von außen erreichbar ist der Knoten erst,
+   wenn ein Rechner in einem anderen Netz (etwa über Mobilfunk) Port 4150
+   erreicht; aus dem eigenen LAN sagt der Versuch wenig.
+
+**Gegen Umzingelung** hält jeder Knoten höchstens zwei ausgehende
+Verbindungen je Netz (/16) und merkt sich zwei bewährte Gegenstellen für den
+nächsten Start (`knoten.anker` neben dem Schlüssel). Wer eine AS-Zuordnung
+hat (eine Zeile `<präfix>/<länge> <AS>` je Präfix, etwa `table.txt` von
+bgp.tools), gibt sie mit `--asmap <datei>` (beim Dienst in `ZUSATZ`); dann
+zählt das AS statt des /16.
+
+**Nach einem Update** (`sh SYSTEM/install/installieren-linux.sh --aktualisieren`
+als Nutzer): `sudo sh NODE/myl-server/einstieg-einrichten.sh --aktualisieren`
+legt das neue Programm und startet den Dienst neu. Der Dienst läuft als
+eigener Nutzer ohne Rechte in der Sandbox von systemd (`systemd-analyze
+security myl-einstieg` bewertet ihn mit 1,3 von 10, „OK“); nach außen offen
+ist nur Port 4150, die Beobachtung bleibt auf `127.0.0.1:4151`, eine Tür
+öffnet er nicht. Startet er fünfmal in fünf Minuten nicht, bleibt er liegen;
+den Grund nennt `journalctl -u myl-einstieg`.
 
 ### Nach dem Start
 
@@ -306,6 +360,57 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.136.1 (2026-11-20): Ein Stau auf der eigenen Verbindung ist keine Weigerung (Fund 715)
+
+- **Gefunden im Auftragslauf mit dem 35B:** „max sub-streams reached“ heißt,
+  alle `MAX_ANFRAGEN_ZUGLEICH` Plätze für Anfragen auf der eigenen
+  Verbindung sind belegt; die Anfrage kam nie hinaus. Zwei Folgen:
+  1. Eine gescheiterte Nachforderung fragte sofort die nächste Gegenstelle,
+     die ebenso scheiterte: rund 11 000 Protokollzeilen je Sekunde, 1,17 GB
+     in einer Stunde, Rechenzeit, die dem eigenen Shard fehlte. Jetzt gilt
+     die Gegenstelle für `LEER_SPERRE` (30 s) als belegt, wie eine, die eben
+     nichts hatte.
+  2. Eine Zeitprobe, die am eigenen Stau scheiterte, zählte wie eine
+     Weigerung des Gemessenen; ein ehrlicher Miner bekam ein Zeugnis. Jetzt
+     zählt sie nicht und wird später neu gestellt, wie ein Wählfehler
+     (Fund 674).
+- `ist_staufehler` erkennt den Text der Bibliothek; die Probe
+  `der_text_steht_so_in_der_bibliothek` liest ihn aus der Quelle von
+  `libp2p-request-response` im Lager und schlägt an, wenn ein neuer Stand
+  ihn ändert.
+- Proben: `knoten::stau_tests` (2).
+
+### v0.136.0 (2026-11-19): Anker über Neustarts, AS-Zuordnung, Fühler im Protokoll (A9)
+
+- **`--asmap <datei>`:** die AS-Zuordnung des Betreibers (eine Zeile
+  `<präfix>/<länge> <AS>` je Präfix, wie `table.txt` von bgp.tools); dann
+  hält der Knoten höchstens zwei ausgehende Verbindungen je AS statt je /16
+  (NETWORKING 0.28.0). Eine unlesbare Datei ist ein Startfehler; die Zeile
+  `asmap` nennt die Zahl der Präfixe.
+- **Ankerdatei** `<schlüsseldatei>.anker` (also `knoten.anker` neben
+  `knoten.key`): Beim Start wählt der Knoten die Anker des letzten Laufs
+  zuerst (`anker_gewaehlt`), in jeder Aufnahme sichert er die aktuellen,
+  wenn sie sich geändert haben (`anker_gesichert`). Ohne Kandidaten bleibt
+  die alte Datei stehen. Mit `--ohne-kette` keine Datei.
+- Zeile `fuehler` (Gegenstelle, gelungen, Grund) für jeden Fühler.
+- **GolemOS-Gleichheit:** `tests/golemknoten.rs` meldete, dass `golem-knoten`
+  kein Netz und Port 4001 übergab (GolemOS 0.8.2), und hält jetzt `--netz`,
+  `--zeugen-bereithalten` und Aufnahme 60 fest.
+- Proben: volle Sammlung 537, rot zuerst nur die zwei Gleichheitsproben von
+  GolemOS (behoben, grün); Clippy grün.
+
+### v0.135.1 (2026-11-19): Der Einstiegsknoten unter Linux als Dienst
+
+- „Betreiben“ hat einen neuen Abschnitt **„Ein Einstiegsknoten unter Linux,
+  als Dienst“**: bauen, Zeile für den Startsatz, einrichten mit
+  `NODE/myl-server/einstieg-einrichten.sh`, Firewall, Router, dynamisches
+  DNS, die eigene Adresse fürs Release, prüfen, aktualisieren. Dienst und
+  Skript liegen unter `NODE/myl-server/` (dort 0.3.0, mit den Funden
+  Netlink und fehlendem Netz im NixOS-Modul).
+- Proben: fünf neue in `tests/serverzuschnitt.rs` (Unit gegen Aufrufparser,
+  Zuschnitt, Startgrenze, Härtung gleich wie das Modul samt Netlink, Skript
+  gegen Unit). Am Knoten selbst nichts geändert.
 
 ### v0.135.0 (2026-11-19): Erst aufholen, dann erzeugen; ohne Mesh weiter warten; Atteste ohne Strafe
 

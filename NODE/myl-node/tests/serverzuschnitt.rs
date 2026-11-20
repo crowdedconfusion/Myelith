@@ -256,10 +256,157 @@ fn die_flake_gibt_das_paket_und_das_modul_heraus() {
     // Ohne sie faende `SYSTEM/full-build` auch ein `SYSTEM/full-build-x`, und die
     // Gegenprobe blieb genau daran stumm: Eine Teilzeichenkette ist
     // dieselbe Antwort auf eine andere Frage.
+    // ⛔️ **Drei Funde beim ersten echten `nix build` (2026-11-19)**, im
+    // Behaelter `nixos/nix` gegen das festgehaltene nixpkgs: Ohne `cargoRoot`
+    // fand der Bau die Sperrdatei nicht; ohne die Ausnahme fuer den Katalog
+    // fehlte eine eingebettete Datei; und ohne die Vektoren im Paket lief der
+    // Dienst des Moduls nur mit `--ohne-konformitaet`.
+    assert!(flake.contains("cargoRoot = \"NODE/myl-node\";"), "der Flake fehlt `cargoRoot`");
+    assert!(flake.contains("\"MODELS/llm/KATALOG.json\""), "der Quellfilter laesst den Katalog nicht durch");
+    assert!(
+        flake.contains("$out/bin/conformance/vectors/op"),
+        "das Paket legt die Konformitaetsvektoren nicht neben das Programm"
+    );
+    // Gefiltert wird nach dem Praefix: Ein Vergleich mit dem ersten Pfadteil
+    // traf `SYSTEM/full-build` nie.
+    assert!(flake.contains("pkgs.lib.hasPrefix (d + \"/\") rel"), "der Quellfilter vergleicht nicht nach dem Praefix");
+
     for ort in ["SYSTEM/full-build", "MODELS", "INTEGER_LLM/artifacts"] {
         assert!(
             flake.contains(&format!("\"{ort}\"")),
             "der Quellfilter der Flake nennt `{ort}` nicht; das Bauverzeichnis ginge mit in den Store"
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// Der Dienst fuer gewoehnliches Linux (`myl-einstieg.service`) und sein
+// Einrichtungsskript, seit 2026-11-19. Dieselben Zusagen wie das Modul,
+// dazu, dass Unit und Skript dieselben Pfade und Namen meinen.
+// ---------------------------------------------------------------------
+
+/// Die Befehlszeile der Unit: `ExecStart=` samt Fortsetzungszeilen.
+fn unit_befehlszeile(unit: &str) -> String {
+    let ab = unit.find("\nExecStart=").expect("kein ExecStart in der Unit");
+    let mut aus = String::new();
+    for zeile in unit[ab + 1..].lines() {
+        aus.push_str(zeile.trim_end_matches('\\'));
+        aus.push(' ');
+        if !zeile.trim_end().ends_with('\\') {
+            break;
+        }
+    }
+    aus
+}
+
+fn unit_flags(zeile: &str) -> Vec<String> {
+    let mut f: Vec<String> = zeile
+        .split_whitespace()
+        .filter(|w| w.starts_with("--") && w.len() > 2)
+        .map(str::to_string)
+        .collect();
+    f.sort();
+    f.dedup();
+    f
+}
+
+/// Der Abschnitt `[Name]` der Unit bis zum naechsten.
+fn unit_abschnitt<'a>(unit: &'a str, name: &str) -> &'a str {
+    let kopf = format!("\n[{name}]\n");
+    let ab = unit.find(&kopf).unwrap_or_else(|| panic!("kein Abschnitt [{name}]")) + kopf.len();
+    let rest = &unit[ab..];
+    match rest.find("\n[") {
+        Some(bis) => &rest[..bis],
+        None => rest,
+    }
+}
+
+/// **Jedes Flag der Unit kennt der Knoten**, wie beim Modul.
+#[test]
+fn jedes_flag_der_unit_kennt_der_knoten() {
+    let unit = lies("../myl-server/myl-einstieg.service");
+    let haupt = lies("src/main.rs");
+    let uebergeben = unit_flags(&unit_befehlszeile(&unit));
+    assert!(uebergeben.len() >= 12, "nur {} Flags in der Unit gefunden", uebergeben.len());
+    for f in &uebergeben {
+        assert!(
+            haupt.contains(&format!("\"{f}\"")),
+            "die Unit uebergibt `{f}`, und `myl-node` kennt es nicht"
+        );
+    }
+}
+
+/// **Die Unit oeffnet nach aussen nur den P2P-Port**: keine Tuer, keine
+/// Ortsleitung, die Beobachtung auf der Rueckschleife.
+#[test]
+fn die_unit_oeffnet_nur_den_p2p_port() {
+    let unit = lies("../myl-server/myl-einstieg.service");
+    let zeile = unit_befehlszeile(&unit);
+    let uebergeben = unit_flags(&zeile);
+    for verboten in ["--tuer", "--ortsleitung", "--ortsausweis"] {
+        assert!(!uebergeben.iter().any(|f| f == verboten), "die Unit uebergibt `{verboten}`");
+    }
+    assert!(uebergeben.iter().any(|f| f == "--ohne-tuer"), "ohne `--ohne-tuer` oeffnet der Knoten seine Tuer");
+    assert!(zeile.contains("--beobachtung 127.0.0.1:"), "die Beobachtung nicht auf der Rueckschleife");
+    assert!(zeile.contains("--netz ${NETZ}"), "ohne `--netz` laeuft der Dienst auf der Probekette");
+}
+
+/// **Die Startbegrenzung haengt an `[Unit]`**, wo sie wirkt.
+#[test]
+fn die_unit_begrenzt_neustarts_an_der_richtigen_stelle() {
+    let unit = lies("../myl-server/myl-einstieg.service");
+    for feld in ["StartLimitIntervalSec=", "StartLimitBurst="] {
+        assert!(unit_abschnitt(&unit, "Unit").contains(feld), "`{feld}` fehlt in [Unit]");
+        assert!(!unit_abschnitt(&unit, "Service").contains(feld), "`{feld}` steht in [Service] und wirkt dort nicht");
+    }
+}
+
+/// **Unit und Modul haerten gleich**, und beide erlauben Netlink.
+///
+/// ⛔️ **Gefunden am 2026-11-19 im Behaelter mit systemd:** Ohne
+/// `AF_NETLINK` endet der Start mit „Address family not supported by
+/// protocol“ (libp2p beobachtet die Schnittstellen ueber Netlink). Das
+/// Modul trug denselben Fehler, ungeprueft seit dem 2026-09-14.
+#[test]
+fn unit_und_modul_haerten_gleich_und_erlauben_netlink() {
+    let unit = lies("../myl-server/myl-einstieg.service");
+    let modul = lies("../myl-server/modul.nix");
+    let dienst = unit_abschnitt(&unit, "Service");
+    for direktive in [
+        "NoNewPrivileges", "ProtectSystem", "ProtectHome", "PrivateTmp", "PrivateDevices",
+        "ProtectKernelTunables", "ProtectKernelModules", "ProtectKernelLogs",
+        "ProtectControlGroups", "ProtectClock", "ProtectHostname", "ProtectProc", "ProcSubset",
+        "RestrictAddressFamilies", "RestrictNamespaces", "RestrictRealtime", "RestrictSUIDSGID",
+        "LockPersonality", "MemoryDenyWriteExecute", "SystemCallArchitectures",
+        "SystemCallFilter", "CapabilityBoundingSet", "AmbientCapabilities", "UMask",
+        "LimitNOFILE", "TasksMax",
+    ] {
+        assert!(modul.contains(&format!("{direktive} = ")), "das Modul setzt `{direktive}` nicht");
+        assert!(dienst.contains(&format!("\n{direktive}=")), "die Unit setzt `{direktive}` nicht");
+    }
+    let familien = dienst.lines().find(|z| z.starts_with("RestrictAddressFamilies=")).expect("Familien");
+    assert!(familien.contains("AF_NETLINK"), "die Unit verbietet Netlink: {familien}");
+    assert!(modul.contains("\"AF_NETLINK\""), "das Modul verbietet Netlink");
+    assert!(befehlszeile(&modul).contains("\"--netz\" cfg.netz"), "das Modul uebergibt kein Netz");
+}
+
+/// **Skript und Unit meinen dieselben Pfade und Variablen.** Jede
+/// Variable der Befehlszeile schreibt das Skript in die Einstellungen,
+/// und das Programm liegt dort, wo die Unit es startet.
+#[test]
+fn skript_und_unit_passen_zusammen() {
+    let unit = lies("../myl-server/myl-einstieg.service");
+    let skript = lies("../myl-server/einstieg-einrichten.sh");
+    let zeile = unit_befehlszeile(&unit);
+    for var in ["NAME", "NETZ", "PORT", "OEFFENTLICH", "ZUSATZ"] {
+        assert!(zeile.contains(&format!("${var}")) || zeile.contains(&format!("${{{var}}}")), "die Unit nutzt `{var}` nicht");
+        assert!(skript.contains(&format!("\n{var}=\"$")), "das Skript schreibt `{var}` nicht in die Einstellungen");
+    }
+    let programm = zeile.split_whitespace().next().expect("Programm").trim_start_matches("ExecStart=");
+    assert_eq!(programm, "/usr/local/lib/myelith/myl-node");
+    assert!(skript.contains("ZIEL=/usr/local/lib/myelith"), "das Skript legt das Programm woanders hin");
+    assert!(unit.contains("EnvironmentFile=/etc/myl-einstieg/einstieg.env"));
+    assert!(skript.contains("KONF=/etc/myl-einstieg"));
+    assert!(unit.contains("StateDirectory=myl-einstieg") && skript.contains("ZUSTAND=/var/lib/myl-einstieg"));
+    assert!(unit.contains("User=myl-einstieg") && skript.contains("NUTZER=myl-einstieg"));
 }
