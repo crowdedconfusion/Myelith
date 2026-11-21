@@ -3,28 +3,28 @@ umschlag_sim: Was kostet die Kapsel vor jeder Nachricht?
 ======================================================================
 
   Kapselrahmen   1,192 B  (davon Chiffrat 1,088 B)
-  Siegelrahmen     132 B  (Kopf 112, Tag 16, Laenge 4)
-  Vorspann       1,324 B  je Nachricht
+  Siegelrahmen     133 B  (Kopf 113, Tag 16, Laenge 4)
+  Vorspann       1,325 B  je Nachricht
 
 Anteil des Vorspanns, nach Promptlaenge
 ----------------------------------------------------------------------
-  Nahttest dieses Projektes           33 B Klartext  →     1,357 B Draht   Vorspann  97.6 %
-  Kurze Frage ohne Systemteil         60 B Klartext  →     1,384 B Draht   Vorspann  95.7 %
-  Frage mit kurzem Systemteil        300 B Klartext  →     1,624 B Draht   Vorspann  81.5 %
-  Frage mit Beispielen             2,000 B Klartext  →     3,324 B Draht   Vorspann  39.8 %
-  Eine Seite Kontext               8,000 B Klartext  →     9,324 B Draht   Vorspann  14.2 %
-  Zehn Seiten Kontext             80,000 B Klartext  →    81,324 B Draht   Vorspann   1.6 %
-  Ein Megabyte Kontext         1,048,576 B Klartext  → 1,049,900 B Draht   Vorspann   0.1 %
+  Nahttest dieses Projektes           33 B Klartext  →     1,358 B Draht   Vorspann  97.6 %
+  Kurze Frage ohne Systemteil         60 B Klartext  →     1,385 B Draht   Vorspann  95.7 %
+  Frage mit kurzem Systemteil        300 B Klartext  →     1,625 B Draht   Vorspann  81.5 %
+  Frage mit Beispielen             2,000 B Klartext  →     3,325 B Draht   Vorspann  39.8 %
+  Eine Seite Kontext               8,000 B Klartext  →     9,325 B Draht   Vorspann  14.2 %
+  Zehn Seiten Kontext             80,000 B Klartext  →    81,325 B Draht   Vorspann   1.6 %
+  Ein Megabyte Kontext         1,048,576 B Klartext  → 1,049,901 B Draht   Vorspann   0.1 %
 
-  Unter 10 % Vorspann ab 11,916 B Klartext
-  Unter  1 % Vorspann ab 131,076 B Klartext
+  Unter 10 % Vorspann ab 11,925 B Klartext
+  Unter  1 % Vorspann ab 131,175 B Klartext
 
 Was 'einmal je Richtung' sparen wuerde
 ----------------------------------------------------------------------
-    1 Nachrichten je 300 B: jetzt    1,624 B, gespart        0 B  (  0.0 %)
-    2 Nachrichten je 300 B: jetzt    3,248 B, gespart    1,192 B  ( 36.7 %)
-    8 Nachrichten je 300 B: jetzt   12,992 B, gespart    8,344 B  ( 64.2 %)
-   64 Nachrichten je 300 B: jetzt  103,936 B, gespart   75,096 B  ( 72.3 %)
+    1 Nachrichten je 300 B: jetzt    1,625 B, gespart        0 B  (  0.0 %)
+    2 Nachrichten je 300 B: jetzt    3,250 B, gespart    1,192 B  ( 36.7 %)
+    8 Nachrichten je 300 B: jetzt   13,000 B, gespart    8,344 B  ( 64.2 %)
+   64 Nachrichten je 300 B: jetzt  104,000 B, gespart   75,096 B  ( 72.2 %)
 
   ⚑ Der Preis dafuer ist Zustand je (Pod, Endpunkt, Epoche):
     Der Absender muesste wissen, ob die Gegenstelle die Kapsel
