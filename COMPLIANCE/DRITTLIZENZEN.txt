@@ -1349,7 +1349,7 @@ find-msvc-tools 0.1.15 (LICENSE-APACHE)
 flate2 1.1.10 (LICENSE-APACHE)
 flate2 1.1.11 (LICENSE-APACHE)
 fnv 1.0.7 (LICENSE-APACHE)
-form_urlencoded 1.2.2 (LICENSE-APACHE)
+form_urlencoded 1.2.3 (LICENSE-APACHE)
 futures-lite 2.6.1 (LICENSE-APACHE)
 futures-timer 3.0.3 (LICENSE-APACHE)
 glob 0.3.4 (LICENSE-APACHE)
@@ -1468,7 +1468,7 @@ unicode-normalization-alignments 0.1.12 (LICENSE-APACHE)
 unicode-segmentation 1.13.3 (LICENSE-APACHE)
 unicode-width 0.2.2 (LICENSE-APACHE)
 unicode-width 0.2.3 (LICENSE-APACHE)
-url 2.5.8 (LICENSE-APACHE)
+url 2.5.9 (LICENSE-APACHE)
 uuid 1.24.0 (LICENSE-APACHE)
 uuid 1.25.0 (LICENSE-APACHE)
 uuid 1.26.0 (LICENSE-APACHE)
@@ -5864,7 +5864,7 @@ SOFTWARE.
 
 ========================================================================
 Text 67, gilt für:
-cookie 0.18.2 (LICENSE-APACHE)
+cookie 0.18.3 (LICENSE-APACHE)
 ========================================================================
 
 Apache License
@@ -6072,7 +6072,7 @@ limitations under the License.
 
 ========================================================================
 Text 68, gilt für:
-cookie 0.18.2 (LICENSE-MIT)
+cookie 0.18.3 (LICENSE-MIT)
 ========================================================================
 
 Copyright (c) 2017 Sergio Benitez
@@ -10454,7 +10454,7 @@ SOFTWARE.
 
 ========================================================================
 Text 134, gilt für:
-form_urlencoded 1.2.2 (LICENSE-MIT)
+form_urlencoded 1.2.3 (LICENSE-MIT)
 ========================================================================
 
 Copyright (c) 2013-2016 The rust-url developers
@@ -12678,7 +12678,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 Text 171, gilt für:
 idna 1.1.0 (LICENSE-MIT)
 percent-encoding 2.3.2 (LICENSE-MIT)
-url 2.5.8 (LICENSE-MIT)
+url 2.5.9 (LICENSE-MIT)
 ========================================================================
 
 Copyright (c) 2013-2025 The rust-url developers

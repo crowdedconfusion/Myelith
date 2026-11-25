@@ -1,7 +1,7 @@
 # TESTCLIENT: das Messgerät (`myl-testclient`, Programm `myl-test`)
 
-> **Version:** 0.78.4
-> **Datum:** 2026-11-24
+> **Version:** 0.78.5
+> **Datum:** 2026-11-25
 > **Status:** `myl-test` fährt Hardware-, Determinismus- und
 > Konformitätsläufe mit einem Protokoll, das zwischen Maschinen und
 > Modellständen vergleichbar bleibt; `vergleich` urteilt über zwei
@@ -537,6 +537,10 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.78.5 (2026-11-25): `url` 2.5.9 wegen RUSTSEC-2026-0592 (`myl-testclient` 0.78.5)
+
+- Die Sperrdatei hebt `url` von 2.5.8 auf 2.5.9 (mit `form_urlencoded` 1.2.3): `Url::origin()` rief sich bei verschachtelten `blob:`-Adressen ohne Grenze selbst auf und konnte den Stapel sprengen (RUSTSEC-2026-0592 vom 2026-11-20), und cargo-deny war damit rot. `url` kommt über `myl-net` herein; der eigene Code ruft `origin()` nicht auf. Geändert hat sich nur die Sperrdatei, mit `myl-net` 0.30.1 und `myl-node` 0.140.1.
 
 ### v0.78.4 (2026-11-24): Der Auftragslauf wartet auf einen eben gelosten Lügner (`myl-testclient` 0.78.4)
 

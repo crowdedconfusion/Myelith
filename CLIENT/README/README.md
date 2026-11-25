@@ -1,7 +1,7 @@
 # CLIENT: Myelith auf dem eigenen Rechner
 
-> **Version:** 0.249.1 (`myl-client` 0.144.1, `myl-oberflaeche` 0.95.0, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
-> **Datum:** 2026-11-19
+> **Version:** 0.249.2 (`myl-client` 0.144.1, `myl-oberflaeche` 0.95.1, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
+> **Datum:** 2026-11-25
 > **Status:** Alles, was auf dem eigenen Rechner läuft, ist da: Gespräch,
 > Agent, Loop, Module, Sehen, Hören und Sprechen, Modelle holen und bauen,
 > Updates nur mit der Signatur des Projekts. Mining und Testwallets laufen
@@ -209,6 +209,12 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.249.2 (2026-11-25): `url` 2.5.9 und `cookie` 0.18.3 wegen RUSTSEC-2026-0592 und RUSTSEC-2026-0594 (`myl-oberflaeche` 0.95.1)
+
+- Die Sperrdatei hebt `url` von 2.5.8 auf 2.5.9 (mit `form_urlencoded` 1.2.3): `Url::origin()` rief sich bei verschachtelten `blob:`-Adressen ohne Grenze selbst auf und konnte den Stapel sprengen (RUSTSEC-2026-0592 vom 2026-11-20), und cargo-deny war damit rot. `url` kommt über Tauri herein; der eigene Code ruft `origin()` nicht auf.
+- Die Sperrdatei hebt `cookie` von 0.18.2 auf 0.18.3: Verschlüsselte Cookies konnten nach einem `fork()` dieselbe Nonce zweimal tragen (RUSTSEC-2026-0594 vom 2026-11-23). Tauri zieht `cookie` nur mit den Vorgaben herein, ohne verschlüsselte Cookies; erreichbar war die Stelle nicht.
+- Geändert haben sich nur die Sperrdatei und die Fassung des Fensters (auch in `tauri.conf.json`).
 
 ### v0.249.1 (2026-11-20): Nach einer Ablehnung der Tür wird gekauft (Fund 716, `myl-client` 0.144.1)
 

@@ -1,7 +1,7 @@
 # NETWORKING: das Netz zwischen den Knoten (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.30.0
-> **Datum:** 2026-11-24
+> **Version:** 0.30.1
+> **Datum:** 2026-11-25
 > **Status:** In Gebrauch im Knoten: Gegenstellen finden (Einstiegsliste,
 > Kademlia, mDNS, Adressen mit Namen), Gossip, das nur Geprüftes
 > weitergibt, ein Anfragekanal, Latenzmessung mit Attesten,
@@ -108,6 +108,10 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.30.1 (2026-11-25): `url` 2.5.9 wegen RUSTSEC-2026-0592 (`myl-net` 0.30.1)
+
+- Die Sperrdatei hebt `url` von 2.5.8 auf 2.5.9 (mit `form_urlencoded` 1.2.3): `Url::origin()` rief sich bei verschachtelten `blob:`-Adressen ohne Grenze selbst auf und konnte den Stapel sprengen (RUSTSEC-2026-0592 vom 2026-11-20), und cargo-deny war damit rot. `url` kommt über `multiaddr` und `hickory-proto` herein; der eigene Code ruft `origin()` nicht auf. Geändert hat sich nur die Sperrdatei, der Vorrat trägt die neue Fassung.
 
 ### v0.30.0 (2026-11-24): Eine Vorrangspur mit Zweck, eine Schlange nach Bytes und die Frist einer Anfrage (`myl-net` 0.30.0)
 

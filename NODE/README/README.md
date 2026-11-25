@@ -1,7 +1,7 @@
 # NODE: der Myelith-Knoten (`myl-node`)
 
-> **Version:** 0.140.0
-> **Datum:** 2026-11-24
+> **Version:** 0.140.1
+> **Datum:** 2026-11-25
 > **Status:** Läuft als Probekette und in Proben über mehrere Rechner.
 > Das geschlossene Testnetz `test-int4` ist im Knoten angelegt; es beginnt,
 > sobald der Startsatz seiner Validatoren im Release steht.
@@ -360,6 +360,10 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.140.1 (2026-11-25): `url` 2.5.9 wegen RUSTSEC-2026-0592 (`myl-node` 0.140.1)
+
+- Die Sperrdatei hebt `url` von 2.5.8 auf 2.5.9 (mit `form_urlencoded` 1.2.3): `Url::origin()` rief sich bei verschachtelten `blob:`-Adressen ohne Grenze selbst auf und konnte den Stapel sprengen (RUSTSEC-2026-0592 vom 2026-11-20), und cargo-deny war damit rot. `url` kommt über `myl-net` herein; der eigene Code ruft `origin()` nicht auf. Geändert hat sich nur die Sperrdatei, mit `myl-net` 0.30.1.
 
 ### v0.140.0 (2026-11-25): Ein Prüfer rechnet eine Sitzung einmal und der Reihe nach, und eine Rechnung ohne Wartenden fällt (Funde 729 und 730, `myl-node` 0.140.0)
 

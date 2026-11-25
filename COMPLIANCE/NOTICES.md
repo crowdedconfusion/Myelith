@@ -275,7 +275,7 @@ Release bundles contain only those the respective program pulls in.
 | `const-oid` | 0.9.6 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats/tree/master/const-oid |
 | `const-str` | 0.4.3 | MIT | https://github.com/Nugine/const-str |
 | `convert_case` | 0.10.0 | MIT | https://github.com/rutrum/convert-case |
-| `cookie` | 0.18.2 | MIT OR Apache-2.0 | https://github.com/SergioBenitez/cookie-rs |
+| `cookie` | 0.18.3 | MIT OR Apache-2.0 | https://github.com/SergioBenitez/cookie-rs |
 | `core-foundation` | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | `core-foundation` | 0.9.4 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | `core-foundation-sys` | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
@@ -395,7 +395,7 @@ Release bundles contain only those the respective program pulls in.
 | `foreign-types` | 0.5.0 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | `foreign-types-macros` | 0.2.4 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | `foreign-types-shared` | 0.3.1 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
-| `form_urlencoded` | 1.2.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
+| `form_urlencoded` | 1.2.3 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | `fs_extra` | 1.3.0 | MIT | https://github.com/webdesus/fs_extra |
 | `futures` | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | `futures-bounded` | 0.3.0 | MIT | https://github.com/thomaseizinger/rust-futures-bounded |
@@ -936,7 +936,7 @@ Release bundles contain only those the respective program pulls in.
 | `universal-hash` | 0.5.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | `unsigned-varint` | 0.8.0 | MIT | https://github.com/paritytech/unsigned-varint |
 | `untrusted` | 0.9.0 | ISC | https://github.com/briansmith/untrusted |
-| `url` | 2.5.8 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
+| `url` | 2.5.9 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | `urlpattern` | 0.3.0 | MIT | https://github.com/denoland/rust-urlpattern |
 | `utf8_iter` | 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter |
 | `uuid` | 1.24.0 | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid |
