@@ -1,7 +1,7 @@
 # COMPLIANCE: was Myelith dem Recht zusagt
 
-> **Version:** 0.10.2
-> **Datum:** 2026-11-18
+> **Version:** 0.10.3
+> **Datum:** 2026-11-25
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
 > der [Selbsteinschätzung](../de/Selbsteinschaetzung.md). Offen: ein
@@ -46,6 +46,14 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.10.3 (2026-11-25): Die festgenagelten Actions auf Node 24
+
+- Übernommen, was Dependabot am 2026-11-02 vorschlug, mit denselben Commit-Summen, lokal statt über die Oberfläche (der Commit trägt so die Unterschrift des Projektinhabers): `actions/checkout` 4.4.0 auf 7.0.1, `actions/setup-python` 5.6.0 auf 7.1.0, `actions/upload-artifact` 4.6.2 auf 7.0.2, `actions/download-artifact` 4.3.0 auf 8.0.2, `actions/cache` 4.3.0 auf 6.1.0, `taiki-e/install-action` 2.87.30 auf 2.89.1; 25 Stellen in `ci.yml`, `release.yml` und der Aktion `einrichten`.
+- Jede Summe ist gegen den Tag ihres Projekts aufgelöst und stimmt.
+- Anlass: Die CI warnte bei jedem Lauf, dass Node 20 abgekündigt ist und die alten Fassungen unter Node 24 erzwungen laufen.
+- Was sich ändert: `checkout` verweigert ab 7 das Auschecken fremder Forks unter `pull_request_target` und `workflow_run` (beides nutzt Myelith nicht); `download-artifact` bricht ab 8 bei einer falschen Prüfsumme ab, statt zu warnen.
+- ⚠️ `upload-artifact` und `download-artifact` in `release.yml` laufen erst mit dem nächsten Release; ein Handstart zum Probieren veröffentlichte eins.
 
 ### v0.10.2 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
 
