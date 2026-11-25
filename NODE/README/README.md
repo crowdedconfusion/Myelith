@@ -1,6 +1,6 @@
 # NODE: der Myelith-Knoten (`myl-node`)
 
-> **Version:** 0.140.1
+> **Version:** 0.140.2
 > **Datum:** 2026-11-25
 > **Status:** Läuft als Probekette und in Proben über mehrere Rechner.
 > Das geschlossene Testnetz `test-int4` ist im Knoten angelegt; es beginnt,
@@ -360,6 +360,10 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.140.2 (2026-11-25): Die CI gibt den Kisten unter Linux 60 statt 40 Minuten (`myl-node` 0.140.2)
+
+- Der Auftrag „Kisten knoten (Linux)“ (Clippy und Proben von `myl-node` und `myl-testclient`, danach der Konformitätswert unter x86_64) brauchte im Lauf zu 0.140.0 38:52 Minuten und wurde im Lauf zu 0.140.1 nach 40 Minuten abgebrochen, im letzten Schritt und ohne rote Probe; die Proben der Prüfer und des Abbruchs (Funde 729 und 730) hatten ihn über die Grenze geschoben. `timeout-minutes` der Kisten-Matrix in `.github/workflows/ci.yml` steht jetzt bei 60, wie bei den Plattformaufträgen. Am Code des Knotens hat sich nichts geändert.
 
 ### v0.140.1 (2026-11-25): `url` 2.5.9 wegen RUSTSEC-2026-0592 (`myl-node` 0.140.1)
 

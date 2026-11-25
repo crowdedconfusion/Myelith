@@ -196,10 +196,13 @@ jobs:
   #   baute jede Kiste in einen eigenen Ordner und mit Debug-Informationen.
   #   Ob es diesmal traegt, zeigt die Groesse der Eintraege nach den ersten
   #   Laeufen.
+  #   Die Grenze steht bei 60 Minuten: Die Gruppe `knoten` brauchte am
+  #   2026-11-25 38:52 und im naechsten Lauf mehr als 40, ohne dass eine
+  #   Probe rot war.
   kisten:
     name: Kisten ${{ matrix.gruppe }} (Linux)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
