@@ -108,6 +108,17 @@ pub enum NodeCommand {
         an: libp2p::PeerId,
         daten: Vec<u8>,
     },
+    /// ⚑ **Wie [`NodeCommand::Anfrage`], mit Vorrang** (Fund 720): wartet
+    /// vor allen Anfragen ohne Vorrang ([`crate::stau::VORRANG_HOECHSTENS`]).
+    /// Für Anfragen, die der Knoten für seinen eigenen Pod weiterreicht.
+    /// Antwort und Fehlschlag tragen den `zweck` zurück wie bei
+    /// [`NodeCommand::AnfrageMitZweck`], auch wenn sie in der Schlange
+    /// scheitert (Fund 721).
+    AnfrageVorrang {
+        an: libp2p::PeerId,
+        daten: Vec<u8>,
+        zweck: u64,
+    },
     /// ⚑ **Wie [`NodeCommand::Anfrage`], mit einem Zweck** (2026-10-30):
     /// Antwort und Fehlschlag tragen ihn zurück
     /// ([`NodeEvent::AntwortEingegangen`], [`NodeEvent::AnfrageGescheitert`]).
@@ -284,6 +295,17 @@ pub enum NodeEvent {
         /// Der Zweck aus [`NodeCommand::AnfrageMitZweck`], sonst `None`.
         zweck: Option<u64>,
     },
+    /// ⚑ **Eine eigene Anfrage scheiterte am Stau der Verbindung** (Simulation
+    /// vom 2026-11-20): was zu dieser Gegenstelle gerade unterwegs ist, je
+    /// Art (erstes Byte der Nachricht) mit Anzahl und Alter der ältesten
+    /// ([`crate::stau`]). Kommt zusätzlich zu [`NodeEvent::AnfrageGescheitert`],
+    /// je Gegenstelle höchstens einmal je [`crate::stau::STAU_MELDEABSTAND`].
+    Stau {
+        an: libp2p::PeerId,
+        offen: Vec<crate::stau::Stauanteil>,
+        /// Eigene Anfragen unterwegs, über alle Gegenstellen.
+        gesamt: usize,
+    },
     /// Ein Lochstanzversuch (DCUtR) ist abgeschlossen.
     ///
     /// **Das Messgerät für die teuerste offene Frage der Netzschicht.**
@@ -426,6 +448,8 @@ pub async fn run_node_mit(
     // Tabelle hält also nur, was unterwegs ist.
     let mut zweck_je_anfrage: std::collections::HashMap<libp2p::request_response::OutboundRequestId, u64> =
         std::collections::HashMap::new();
+    // Was je Gegenstelle unterwegs ist, für das Bild eines Staus.
+    let mut unterwegs: crate::stau::Unterwegs<libp2p::request_response::OutboundRequestId> = Default::default();
     // 📌 **Fund 587 (2026-10-22, gefunden im Netzlauf): Kademlia wurde nie
     //    angestoßen.** `start_bootstrap` hatte keinen Aufrufer, und die
     //    Horchadressen aus `identify` kamen nicht in die Routing-Tabelle.
@@ -624,11 +648,43 @@ pub async fn run_node_mit(
                             let _ = tx.send(true);
                         }
                     }
-                    NodeCommand::Anfrage { an, daten } => {
-                        swarm.behaviour_mut().anfrage.send_request(&an, daten);
+                    befehl @ (NodeCommand::Anfrage { .. } | NodeCommand::AnfrageVorrang { .. }) => {
+                        // ⚑ Über der Grenze warten statt scheitern
+                        //   ([`crate::stau::WARTESCHLANGE_HOECHSTENS_BYTES`]),
+                        //   mit Vorrang vor den übrigen (Fund 720).
+                        let (an, zweck, eingereiht) = match befehl {
+                            NodeCommand::AnfrageVorrang { an, daten, zweck } => {
+                                (an, Some(zweck), unterwegs.einreihen_vorrang(an, daten, zweck, crate::MAX_ANFRAGEN_ZUGLEICH))
+                            }
+                            NodeCommand::Anfrage { an, daten } => (an, None, unterwegs.einreihen(an, daten, crate::MAX_ANFRAGEN_ZUGLEICH)),
+                            _ => unreachable!("nur die beiden Anfragen"),
+                        };
+                        match eingereiht {
+                            crate::stau::Einreihen::Senden(daten) => {
+                                let art = daten.first().copied();
+                                let id = swarm.behaviour_mut().anfrage.send_request(&an, daten);
+                                unterwegs.beginnen(id, an, art.as_slice(), std::time::Instant::now());
+                                if let Some(z) = zweck {
+                                    zweck_je_anfrage.insert(id, z);
+                                }
+                            }
+                            crate::stau::Einreihen::Wartet => {}
+                            crate::stau::Einreihen::Voll => {
+                                if let Some(offen) = unterwegs.bild(&an, std::time::Instant::now()) {
+                                    let _ = events.send(NodeEvent::Stau { an, offen, gesamt: unterwegs.anzahl() });
+                                }
+                                let _ = events.send(NodeEvent::AnfrageGescheitert {
+                                    an,
+                                    grund: crate::stau::WARTESCHLANGE_VOLL.to_string(),
+                                    zweck,
+                                });
+                            }
+                        }
                     }
                     NodeCommand::AnfrageMitZweck { an, daten, zweck } => {
+                        let art = daten.first().copied();
                         let id = swarm.behaviour_mut().anfrage.send_request(&an, daten);
+                        unterwegs.beginnen(id, an, art.as_slice(), std::time::Instant::now());
                         zweck_je_anfrage.insert(id, zweck);
                     }
                     NodeCommand::Urteil { marke, urteil } => {
@@ -671,6 +727,15 @@ pub async fn run_node_mit(
                                     });
                                 }
                                 RrMsg::Response { request_id, response } => {
+                                    unterwegs.beenden(&request_id);
+                                    while let Some((d, zweck)) = unterwegs.naechste(&peer, crate::MAX_ANFRAGEN_ZUGLEICH) {
+                                        let art = d.first().copied();
+                                        let id = swarm.behaviour_mut().anfrage.send_request(&peer, d);
+                                        unterwegs.beginnen(id, peer, art.as_slice(), std::time::Instant::now());
+                                        if let Some(z) = zweck {
+                                            zweck_je_anfrage.insert(id, z);
+                                        }
+                                    }
                                     let _ = events.send(NodeEvent::AntwortEingegangen {
                                         von: peer,
                                         daten: response,
@@ -679,9 +744,24 @@ pub async fn run_node_mit(
                                 }
                             },
                             RrEvent::OutboundFailure { peer, request_id, error, .. } => {
+                                unterwegs.beenden(&request_id);
+                                while let Some((d, zweck)) = unterwegs.naechste(&peer, crate::MAX_ANFRAGEN_ZUGLEICH) {
+                                    let art = d.first().copied();
+                                    let id = swarm.behaviour_mut().anfrage.send_request(&peer, d);
+                                    unterwegs.beginnen(id, peer, art.as_slice(), std::time::Instant::now());
+                                    if let Some(z) = zweck {
+                                        zweck_je_anfrage.insert(id, z);
+                                    }
+                                }
+                                let grund = error.to_string();
+                                if crate::stau::ist_stau(&grund) {
+                                    if let Some(offen) = unterwegs.bild(&peer, std::time::Instant::now()) {
+                                        let _ = events.send(NodeEvent::Stau { an: peer, offen, gesamt: unterwegs.anzahl() });
+                                    }
+                                }
                                 let _ = events.send(NodeEvent::AnfrageGescheitert {
                                     an: peer,
-                                    grund: error.to_string(),
+                                    grund,
                                     zweck: zweck_je_anfrage.remove(&request_id),
                                 });
                             }
@@ -800,8 +880,20 @@ pub async fn run_node_mit(
                             eingehend: !endpoint.is_dialer(),
                         });
                     }
-                    SwarmEvent::ConnectionClosed { peer_id, connection_id, cause, .. } => {
+                    SwarmEvent::ConnectionClosed { peer_id, connection_id, cause, num_established, .. } => {
                         ausgehend.remove(&connection_id);
+                        // Ohne Verbindung geht keine wartende mehr hinaus:
+                        // jede als gescheitert melden, wie libp2p die
+                        // unterwegs meldet.
+                        if num_established == 0 {
+                            for zweck in unterwegs.vergessen(&peer_id) {
+                                let _ = events.send(NodeEvent::AnfrageGescheitert {
+                                    an: peer_id,
+                                    grund: "die Verbindung ging zu, bevor die Anfrage hinausging".to_string(),
+                                    zweck,
+                                });
+                            }
+                        }
                         let _ = events.send(NodeEvent::Getrennt {
                             peer: peer_id,
                             grund: match cause {

@@ -130,6 +130,7 @@ import pathlib
 import random
 import signal
 import subprocess
+import threading
 import sys
 import tempfile
 import time
@@ -614,8 +615,14 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             aus += ["--konto", zahler_adresse if name == "m00" else testkonto(name)]
         return aus
 
+    # ⚑ Vor jeder Frage an die Tuer (`myl frage`) der Nachkauf, wenn er
+    #   gesetzt ist (siehe `credits_auffrischen`).
+    vor_frage: dict = {"f": None}
+
     def myl(*befehl: str, eingabe: str | None = None) -> subprocess.CompletedProcess:
         """`myl` im Namensraum des Torknotens, mit Wallets in seinem Ordner."""
+        if befehl and befehl[0] == "frage" and vor_frage["f"] is not None:
+            vor_frage["f"]()
         umgebung = {**os.environ, "MYL_WALLETS": str(erzeuger.ordner / "wallets"),
                     "MYL_EINSTELLUNGEN": str(erzeuger.ordner / "client.json")}
         return subprocess.run(["ip", "netns", "exec", erzeuger.ns, str(args.myl), *befehl], input=eingabe,
@@ -858,6 +865,31 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> None:
             raise Befund(f"Sitzung eroeffnen: {r.stderr.strip()}")
         warte(lambda: nonce() >= 2, 120, "die Sitzung kommt in die Kette", alle)
         melde("Credits gekauft, Sitzung fuer den Agenten eroeffnet: " + r.stdout.strip().splitlines()[0])
+
+        # 📌 **Credits verfallen am Epochenwechsel** (Fund 707, seit dem
+        #    2026-11-16). Der Podlauf kaufte einmal am Anfang; am 2026-11-23
+        #    scheiterte deshalb die zweite Frage in Epoche 3 an der Tuer mit
+        #    402. Jetzt kauft er vor jeder Frage nach, sobald seit dem letzten
+        #    Kauf die Epoche gewechselt hat, und wartet, bis der Kauf in der
+        #    Kette steht. Fragen aus mehreren Faeden kaufen einmal.
+        gekauft = {"epoche": epoche()}
+        kaufsperre = threading.Lock()
+
+        def credits_auffrischen() -> None:
+            with kaufsperre:
+                e = epoche()
+                if e == gekauft["epoche"]:
+                    return
+                n0 = nonce()
+                r = myl("wallet", "credits", "zahler", "2", *relais_angaben)
+                if r.returncode != 0:
+                    melde(f"Nachkauf in Epoche {e} gescheitert: {r.stderr.strip()[-200:]}")
+                    return
+                warte(lambda: nonce() > n0, 120, "der Nachkauf kommt in die Kette", alle)
+                gekauft["epoche"] = e
+                melde(f"Credits nachgekauft in Epoche {e} (sie verfallen am Wechsel)")
+
+        vor_frage["f"] = credits_auffrischen
         if args.real:
             ueberweisen_und_hinterlegen(guthaben, nonce)
         # ⚑ W7 (`--paare`): weitere Sitzungen, die spaeter zugleich fragen;

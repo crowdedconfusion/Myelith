@@ -38,11 +38,15 @@ fn artefakte() -> std::path::PathBuf {
 }
 
 fn shards(model: &Arc<IntegerModel>, saat: u8) -> Vec<Arc<ShardNode>> {
+    shards_mit(model, saat, 4)
+}
+
+fn shards_mit(model: &Arc<IntegerModel>, saat: u8, deckel: u64) -> Vec<Arc<ShardNode>> {
     let nl = model.num_layers;
     (0..4usize)
         .map(|s| {
             let sk = BlsSecretKey::key_gen(&[(s as u8 + 1).wrapping_mul(17) ^ saat; 32]).expect("BLS");
-            Arc::new(ShardNode::new(s, nl * s / 4, nl * (s + 1) / 4, s == 0, s == 3, Arc::clone(model), sk, 4))
+            Arc::new(ShardNode::new(s, nl * s / 4, nl * (s + 1) / 4, s == 0, s == 3, Arc::clone(model), sk, deckel))
         })
         .collect()
 }
@@ -62,6 +66,14 @@ struct Relais {
     anlauf: AtomicUsize,
     pods: Vec<ImProzess>,
     schichten: usize,
+    /// Fund 726: Die Mitglieder der alten Epoche rechnen nach dem Wechsel
+    /// weiter, mit dieser Verzögerung je Frage (wie ein Knoten, der seinen
+    /// Shard noch nicht abgebaut hat); `None` heisst „kein Shard“.
+    alt_weiter: Option<std::time::Duration>,
+    /// Wie viele Rechenfragen der alte Pod nach dem Wechsel bekam.
+    alt_danach: AtomicUsize,
+    /// Fund 730: so lange braucht jede Rechenfrage im Pod der Epoche.
+    pause: Option<std::time::Duration>,
 }
 
 impl Relais {
@@ -89,6 +101,20 @@ impl Relais {
             }),
             Relaisfrage::Shard { an, anfrage } => {
                 let Some(i) = (0..4).find(|i| mitglied(e, *i) == an) else {
+                    // Ein Mitglied der alten Epoche, das noch rechnet.
+                    if let (Some(pause), Some(i)) = (self.alt_weiter, (0..4).find(|i| e > ERSTE && mitglied(e - 1, *i) == an)) {
+                        let Ok(anfrage) = borsh::from_slice::<Shardanfrage>(&anfrage) else {
+                            return Relaisantwort::Fehler("unlesbar".into());
+                        };
+                        if matches!(anfrage, Shardanfrage::Rechne(_) | Shardanfrage::RechneStapel(_)) {
+                            self.alt_danach.fetch_add(1, Ordering::SeqCst);
+                            std::thread::sleep(pause);
+                        }
+                        return match self.pods[(e - 1 - ERSTE) as usize].frage(i, &anfrage) {
+                            Ok(a) => Relaisantwort::Shard(borsh::to_vec(&a).expect("Borsh")),
+                            Err(f) => Relaisantwort::Fehler(f),
+                        };
+                    }
                     return Relaisantwort::Fehler("kein Shard an diesem Knoten".into());
                 };
                 if e > ERSTE && self.anlauf.load(Ordering::SeqCst) > 0 {
@@ -98,6 +124,9 @@ impl Relais {
                 let Ok(anfrage) = borsh::from_slice::<Shardanfrage>(&anfrage) else {
                     return Relaisantwort::Fehler("unlesbar".into());
                 };
+                if let (Some(p), true) = (self.pause, matches!(anfrage, Shardanfrage::Rechne(_) | Shardanfrage::RechneStapel(_))) {
+                    std::thread::sleep(p);
+                }
                 if matches!(anfrage, Shardanfrage::Rechne(_)) && self.runden.fetch_add(1, Ordering::SeqCst) + 1 == self.wechsel_nach {
                     // Der Wechsel kommt mitten im Auftrag: Diese Runde geht
                     // noch durch, die nächste trifft schon die neue Epoche.
@@ -136,11 +165,15 @@ fn relais_starten(relais: Arc<Relais>, ausweis: [u8; 32]) -> std::net::SocketAdd
 }
 
 fn auftrag(sitzung: u64) -> Inferenzauftrag {
+    auftrag_mit(sitzung, 4, PROMPT)
+}
+
+fn auftrag_mit(sitzung: u64, max_token: u32, prompt: &str) -> Inferenzauftrag {
     Inferenzauftrag {
         sitzung,
-        bindung: Anfragebindung::neu(sitzung, PROMPT.as_bytes(), EpochId(ERSTE)),
+        bindung: Anfragebindung::neu(sitzung, prompt.as_bytes(), EpochId(ERSTE)),
         prompt_versiegelt: Vec::new(),
-        max_token: 4,
+        max_token,
         pipeline: Hash::sha256(b"probe"),
         hoechstens: u64::MAX,
     }
@@ -174,6 +207,9 @@ fn ein_auftrag_ueber_die_epochengrenze_bekommt_seine_antwort() {
         anlauf: AtomicUsize::new(5),
         pods: vec![ImProzess::neu(shards(&model, 0)), ImProzess::neu(shards(&model, 1))],
         schichten: model.num_layers,
+        alt_weiter: None,
+        alt_danach: AtomicUsize::new(0),
+        pause: None,
     });
     let wo = relais_starten(Arc::clone(&relais), ausweis);
     let werk = Podwerk::neu(&dir, wo, datei, Hash::sha256(b"probe"), 16).expect("Podwerk");
@@ -212,6 +248,9 @@ fn ein_ungedeckter_auftrag_kostet_keinen_pod() {
         anlauf: AtomicUsize::new(0),
         pods: vec![ImProzess::neu(shards(&model, 0))],
         schichten: model.num_layers,
+        alt_weiter: None,
+        alt_danach: AtomicUsize::new(0),
+        pause: None,
     });
     let wo = relais_starten(Arc::clone(&relais), ausweis);
     let werk = Podwerk::neu(&dir, wo, datei, Hash::sha256(b"probe"), 16).expect("Podwerk");
@@ -231,4 +270,114 @@ fn ein_ungedeckter_auftrag_kostet_keinen_pod() {
         andere => panic!("gedeckt und nicht gerechnet: {andere:?}"),
     }
     assert!(relais.runden.load(Ordering::SeqCst) > 0, "Gegenprobe: mit Betrag fragt das Podwerk den Pod");
+}
+
+/// ⚑ **Fund 726 (2026-11-24): Beim Epochenwechsel hält der alte Lauf an.**
+/// Im Netz bauten Knoten ihren Shard nicht sofort ab, und der Lauf der alten
+/// Epoche rechnete 13 bis 21 Minuten weiter, neben dem Pod der neuen. Hier
+/// rechnen die alten Mitglieder nach dem Wechsel weiter, langsam (300 ms je
+/// Frage). Verlangt: dieselbe Antwort, vom Pod der neuen Epoche, und der
+/// alte bekommt danach höchstens die Fragen bis zur nächsten Prüfung des
+/// Wächters (`EPOCHE_PRUEFEN`), nicht den Rest des Auftrags. Gegenprobe ohne
+/// Wächter: 40 Token zu je vier Shards, also über 100 Fragen an den alten.
+#[test]
+fn beim_epochenwechsel_haelt_der_alte_lauf_an() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let model = Arc::new(load_model(&dir).expect("Modell"));
+    let tok = Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad")).expect("Wortschatz");
+    // Ein Prompt, der weiterzählt: 40 Token ohne Endmarke (sonst bliebe dem
+    // alten Pod nach dem Wechsel kaum etwas, und die Gegenprobe ohne Wächter
+    // blieb grün).
+    let zaehlen = "Eins, zwei, drei, vier, fünf, sechs, sieben, acht, neun, zehn, elf, zwölf,";
+    let ids: Vec<u32> = tok.encode(zaehlen).iter().map(|t| *t as u32).collect();
+    let soll = Coordinator::new(PodId::new([1; 32]), EpochId(ERSTE), shards_mit(&model, 0, 64)).run_prompt(11, &ids, 40);
+    assert_eq!(soll.len(), 40, "der Zählprompt endet vor 40 Token; die Probe prüfte zu wenig");
+
+    let ordner = std::env::temp_dir().join(format!("myl-podwerk-anhalten-{}", std::process::id()));
+    std::fs::create_dir_all(&ordner).expect("Ordner");
+    let ausweis = [7u8; 32];
+    let datei = ordner.join("relais.ausweis");
+    std::fs::write(&datei, format!("{}\n", "07".repeat(32))).expect("Ausweis");
+    let relais = Arc::new(Relais {
+        epoche: AtomicU64::new(ERSTE),
+        runden: AtomicUsize::new(0),
+        wechsel_nach: 6,
+        anlauf: AtomicUsize::new(0),
+        pods: vec![ImProzess::neu(shards_mit(&model, 0, 64)), ImProzess::neu(shards_mit(&model, 1, 64))],
+        schichten: model.num_layers,
+        alt_weiter: Some(std::time::Duration::from_millis(300)),
+        alt_danach: AtomicUsize::new(0),
+        pause: None,
+    });
+    let wo = relais_starten(Arc::clone(&relais), ausweis);
+    let werk = Podwerk::neu(&dir, wo, datei, Hash::sha256(b"probe"), 64).expect("Podwerk");
+    let antwort = werk.rechne(&auftrag_mit(11, 40, zaehlen), zaehlen.as_bytes());
+    let _ = std::fs::remove_dir_all(&ordner);
+
+    assert!(relais.epoche.load(Ordering::SeqCst) > ERSTE, "der Wechsel kam nicht; der Test prüft nichts");
+    match antwort {
+        Inferenzantwort::Ergebnis { token, .. } => assert_eq!(token, soll, "über die Grenze kam eine andere Antwort"),
+        andere => panic!("über die Epochengrenze keine Antwort: {andere:?}"),
+    }
+    let alt = relais.alt_danach.load(Ordering::SeqCst);
+    assert!(alt > 0, "der alte Pod rechnete nach dem Wechsel nicht weiter; der Test prüft nichts");
+    // Höchstens zwei Prüfabstände zu je 300 ms je Frage, mit Luft.
+    let grenze = 2 * (myl_pod::podwerk::EPOCHE_PRUEFEN.as_millis() as usize) / 300 + 4;
+    assert!(alt <= grenze, "der alte Lauf bekam nach dem Wechsel noch {alt} Fragen (höchstens {grenze})");
+}
+
+/// ⛔️ **Fund 730 (2026-11-25): Wartet niemand mehr, hält der Lauf an.** Im
+/// langen Auftragslauf rechnete eine aufgegebene Runde 27 Minuten weiter und
+/// wurde am Wechsel noch an den Pod der neuen Epoche gegeben. Hier braucht
+/// jede Rechenfrage 100 ms, 40 Token also über 16 s; nach den ersten
+/// Token kommt der Abbruch. Verlangt: keine Antwort, binnen kurzem, und danach
+/// höchstens die Frage, die gerade lief. Gegenprobe ohne Abbruch im
+/// Koordinator: Der Lauf rechnet zu Ende.
+#[test]
+fn eine_aufgegebene_anfrage_haelt_an() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let model = Arc::new(load_model(&dir).expect("Modell"));
+    let zaehlen = "Eins, zwei, drei, vier, fünf, sechs, sieben, acht, neun, zehn, elf, zwölf,";
+    let ordner = std::env::temp_dir().join(format!("myl-podwerk-abbruch-{}", std::process::id()));
+    std::fs::create_dir_all(&ordner).expect("Ordner");
+    let ausweis = [7u8; 32];
+    let datei = ordner.join("relais.ausweis");
+    std::fs::write(&datei, format!("{}\n", "07".repeat(32))).expect("Ausweis");
+    let relais = Arc::new(Relais {
+        epoche: AtomicU64::new(ERSTE),
+        runden: AtomicUsize::new(0),
+        wechsel_nach: usize::MAX,
+        anlauf: AtomicUsize::new(0),
+        pods: vec![ImProzess::neu(shards_mit(&model, 0, 64))],
+        schichten: model.num_layers,
+        alt_weiter: None,
+        alt_danach: AtomicUsize::new(0),
+        pause: Some(std::time::Duration::from_millis(100)),
+    });
+    let wo = relais_starten(Arc::clone(&relais), ausweis);
+    let werk = Podwerk::neu(&dir, wo, datei, Hash::sha256(b"probe"), 64).expect("Podwerk");
+    let (antwort, beim_abbruch, dauer) = std::thread::scope(|f| {
+        let lauf = f.spawn(|| werk.rechne(&auftrag_mit(11, 40, zaehlen), zaehlen.as_bytes()));
+        // Abgebrochen wird mitten im Dekodieren.
+        let warten = std::time::Instant::now();
+        while relais.runden.load(Ordering::SeqCst) < 8 && warten.elapsed() < std::time::Duration::from_secs(60) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let beim_abbruch = relais.runden.load(Ordering::SeqCst);
+        let beginn = std::time::Instant::now();
+        werk.abbrechen(11);
+        (lauf.join().expect("Lauf"), beim_abbruch, beginn.elapsed())
+    });
+    let _ = std::fs::remove_dir_all(&ordner);
+    assert!(beim_abbruch > 0, "beim Abbruch war noch nichts gerechnet; der Test prüft nichts");
+    assert!(matches!(antwort, Inferenzantwort::Abgelehnt { sitzung: 11 }), "{antwort:?}");
+    let danach = relais.runden.load(Ordering::SeqCst) - beim_abbruch;
+    assert!(danach <= 2, "nach dem Abbruch noch {danach} Fragen");
+    assert!(dauer < std::time::Duration::from_secs(2), "erst {dauer:?} nach dem Abbruch");
 }

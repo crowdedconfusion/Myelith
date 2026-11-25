@@ -68,6 +68,11 @@ pub trait Rechenwerk: Send + Sync {
     /// Pipeline-Stand; das entscheidet die Umsetzung.
     fn rechne(&self, auftrag: &Inferenzauftrag) -> Inferenzantwort;
 
+    /// ⛔️ Fund 730: Auf `sitzung` wartet niemand mehr, die Leitung des
+    /// Knotens ist zu; ein laufendes [`Self::rechne`] dazu darf aufhören.
+    /// Vorgabe: nichts.
+    fn abbrechen(&self, _sitzung: u64) {}
+
     /// Für welchen Pipeline-Stand dieser Prozess geladen ist.
     fn pipeline(&self) -> myl_types::hash::Hash;
 
@@ -231,7 +236,7 @@ impl Ortsdienst {
             match entrahmen(&puffer, &self.schluessel) {
                 Ok((verbraucht, nutzlast)) => {
                     puffer.drain(..verbraucht);
-                    let antwort = self.beantworte(&nutzlast);
+                    let antwort = self.beantworte_wachsam(&nutzlast, &strom);
                     let roh = borsh::to_vec(&antwort).map_err(|e| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
                     })?;
@@ -274,6 +279,37 @@ impl Ortsdienst {
                 Err(_) => return Ok(beantwortet),
             }
         }
+    }
+
+    /// ⛔️ **Fund 730 (2026-11-25): Während gerechnet wird, sieht eine Wache
+    /// nach der Leitung.** Schliesst der Knoten sie, weil niemand mehr auf
+    /// die Antwort wartet, hält das Rechenwerk die Sitzung an
+    /// ([`Rechenwerk::abbrechen`]). Bis hierher rechnete es zu Ende, auch
+    /// über Epochen hinweg. Nur eine Inferenz wartet so; alles andere
+    /// antwortet sofort.
+    fn beantworte_wachsam(&self, nutzlast: &[u8], strom: &TcpStream) -> Ortsantwort {
+        let sitzung = match borsh::from_slice::<Ortsfrage>(nutzlast) {
+            Ok(Ortsfrage::Inferenz(a)) => a.sitzung,
+            _ => return self.beantworte(nutzlast),
+        };
+        let Ok(wache) = strom.try_clone() else {
+            return self.beantworte(nutzlast);
+        };
+        let (fertig, warten) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|faeden| {
+            faeden.spawn(move || {
+                while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = warten.recv_timeout(LEITUNG_PRUEFEN) {
+                    if leitung_zu(&wache) {
+                        eprintln!("[myl-pod] Sitzung {sitzung}: niemand wartet mehr, sie wird angehalten");
+                        self.werk.abbrechen(sitzung);
+                        return;
+                    }
+                }
+            });
+            let antwort = self.beantworte(nutzlast);
+            drop(fertig);
+            antwort
+        })
     }
 
     fn beantworte(&self, nutzlast: &[u8]) -> Ortsantwort {
@@ -322,6 +358,25 @@ impl Ortsdienst {
                 Ortsantwort::Inferenz(self.werk.rechne(&auftrag))
             }
         }
+    }
+}
+
+/// So oft sieht die Wache nach der Leitung (Fund 730).
+pub const LEITUNG_PRUEFEN: Duration = Duration::from_secs(2);
+
+/// Ob der Knoten die Leitung geschlossen hat: Ein Blick ohne Lesen sieht das
+/// Ende oder einen Fehler. Daten, die warten, oder nichts heissen offen. Die
+/// Lesefrist ändert er nur, solange niemand sonst liest; der Fristleser setzt
+/// sie vor jedem Lesen neu.
+fn leitung_zu(strom: &TcpStream) -> bool {
+    if strom.set_read_timeout(Some(Duration::from_millis(1))).is_err() {
+        return false;
+    }
+    let mut blick = [0u8; 1];
+    match strom.peek(&mut blick) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted),
     }
 }
 
@@ -575,5 +630,55 @@ mod tests {
                 .expect("der Ausweis liegt nicht, wo er soll");
         assert_eq!(vom_datenträger, d.schluessel());
         let _ = std::fs::remove_dir_all(&verz);
+    }
+
+    /// Ein Rechenwerk, das rechnet, bis es abgebrochen wird, höchstens zehn
+    /// Sekunden; es merkt sich die abgebrochene Sitzung.
+    struct Wartewerk {
+        abgebrochen: Arc<(std::sync::Mutex<Option<u64>>, std::sync::Condvar)>,
+    }
+
+    impl Rechenwerk for Wartewerk {
+        fn rechne(&self, auftrag: &Inferenzauftrag) -> Inferenzantwort {
+            let (m, cv) = &*self.abgebrochen;
+            let g = m.lock().expect("Sperre");
+            let _ = cv.wait_timeout_while(g, Duration::from_secs(10), |a| a.is_none()).expect("Sperre");
+            Inferenzantwort::Abgelehnt { sitzung: auftrag.sitzung }
+        }
+        fn abbrechen(&self, sitzung: u64) {
+            let (m, cv) = &*self.abgebrochen;
+            *m.lock().expect("Sperre") = Some(sitzung);
+            cv.notify_all();
+        }
+        fn pipeline(&self) -> Hash {
+            Hash::sha256(b"probe-pipeline")
+        }
+        fn shards(&self) -> u32 {
+            4
+        }
+    }
+
+    /// ⛔️ Fund 730: Schliesst der Knoten die Leitung, während gerechnet
+    /// wird, hält das Rechenwerk genau diese Sitzung an, binnen zweier
+    /// Prüfabstände. Gegenprobe ohne Wache: Es rechnet seine zehn Sekunden.
+    #[test]
+    fn eine_geschlossene_leitung_bricht_die_rechnung_ab() {
+        let abgebrochen = Arc::new((std::sync::Mutex::new(None), std::sync::Condvar::new()));
+        let verz = std::env::temp_dir().join(format!("myl-ortsdienst-abbruch-{}", std::process::id()));
+        let (d, _) = Ortsdienst::oeffnen("127.0.0.1:0".parse().expect("Adresse"), &verz, Box::new(Wartewerk { abgebrochen: Arc::clone(&abgebrochen) }))
+            .expect("Tuer geht auf");
+        let (adresse, schluessel) = (d.adresse().expect("Adresse"), d.schluessel());
+        let dienst = std::thread::spawn(move || d.bediene_eine());
+        let roh = rahmen(&schluessel, &borsh::to_vec(&Ortsfrage::Inferenz(auftrag(8))).expect("kodieren")).expect("rahmen");
+        let mut strom = TcpStream::connect(adresse).expect("verbinden");
+        strom.write_all(&roh).expect("senden");
+        std::thread::sleep(Duration::from_millis(300));
+        let beginn = std::time::Instant::now();
+        drop(strom);
+        dienst.join().expect("Dienst").expect("bedient");
+        let dauer = beginn.elapsed();
+        let _ = std::fs::remove_dir_all(&verz);
+        assert_eq!(*abgebrochen.0.lock().expect("Sperre"), Some(11), "die Sitzung wurde nicht angehalten");
+        assert!(dauer < 2 * LEITUNG_PRUEFEN + Duration::from_secs(1), "erst nach {dauer:?}");
     }
 }

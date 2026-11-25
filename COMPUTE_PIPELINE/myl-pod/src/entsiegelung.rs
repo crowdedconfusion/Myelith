@@ -96,6 +96,8 @@ pub trait Gegenstellen: Send + Sync {
 pub trait Klartextwerk: Send + Sync {
     /// Rechnet einen entsiegelten und gebundenen Auftrag.
     fn rechne(&self, auftrag: &Inferenzauftrag, prompt: &[u8]) -> Inferenzantwort;
+    /// Wie `Rechenwerk::abbrechen` (Fund 730). Vorgabe: nichts.
+    fn abbrechen(&self, _sitzung: u64) {}
     /// Für welchen Pipeline-Stand dieser Prozess geladen ist.
     fn pipeline(&self) -> Hash;
     /// Wie viele Shards die Pipeline hat.
@@ -235,6 +237,10 @@ impl Rechenwerk for Entsiegelndes {
             return self.abweisen(Abweisungsgrund::BindungPasstNicht, auftrag.sitzung);
         }
         self.werk.rechne(auftrag, &klartext)
+    }
+
+    fn abbrechen(&self, sitzung: u64) {
+        self.werk.abbrechen(sitzung);
     }
 
     fn pipeline(&self) -> Hash {

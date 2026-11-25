@@ -1,7 +1,7 @@
 # NETWORKING: das Netz zwischen den Knoten (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.28.0
-> **Datum:** 2026-11-19
+> **Version:** 0.30.0
+> **Datum:** 2026-11-24
 > **Status:** In Gebrauch im Knoten: Gegenstellen finden (Einstiegsliste,
 > Kademlia, mDNS, Adressen mit Namen), Gossip, das nur Geprüftes
 > weitergibt, ein Anfragekanal, Latenzmessung mit Attesten,
@@ -108,6 +108,65 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.30.0 (2026-11-24): Eine Vorrangspur mit Zweck, eine Schlange nach Bytes und die Frist einer Anfrage (`myl-net` 0.30.0)
+
+- **Gefunden im Auftragslauf vom 24. November (Fund 720 im Knoten):** Am
+  Wechsel schickt die Stichprobe eines Knotens jedem Mitglied eines Pods
+  eine Spuranfrage je gezogenem Segment, bei 5 % von rund 12 500 Segmenten
+  über 600 auf einmal. Die Schlange (16 unterwegs, höchstens 256 wartend)
+  lief über; der Rest der Stichprobe scheiterte, und die Stapel des
+  Koordinators im selben Knoten an dasselbe Mitglied scheiterten mit „die
+  Warteschlange zu dieser Gegenstelle ist voll“. Die Runde ging verloren
+  (sichtbar, wie seit Fund 719 gewollt) und wurde neu gerechnet.
+- **Die Schlange ist nach Bytes begrenzt** (`WARTESCHLANGE_HOECHSTENS_BYTES`,
+  16 MiB je Gegenstelle, statt 256 Anfragen): Eine Spuranfrage hat 45 Byte,
+  die Stichprobe am Deckel (5 000 je Pod) rund 225 KB.
+- **Neu `NodeCommand::AnfrageVorrang`:** wartet in einer eigenen Spur
+  (höchstens `VORRANG_HOECHSTENS`, 256) und geht vor jeder wartenden Anfrage
+  ohne Vorrang hinaus, sobald ein Platz frei ist; das Bild des Staus zählt
+  beide Spuren. Gedacht für das, was ein Knoten für seinen eigenen Pod
+  weiterreicht. Die Zeitprobe (`AnfrageMitZweck`) wartet weiter nie.
+- **Der Vorrang trägt einen Zweck** (Fund 721 im Knoten): Antwort und
+  Fehlschlag melden ihn zurück, auch wenn die Anfrage in der Schlange
+  scheitert (voll, oder die Verbindung geht zu, bevor sie hinausgeht);
+  `Unterwegs::vergessen` gibt dafür die Zwecke der Wartenden zurück.
+- **Fund 722: die Frist einer Anfrage ausdrücklich, 30 s statt der Vorgabe
+  von libp2p (10 s)** (`ANFRAGEFRIST`, in beide Richtungen). Im dritten
+  Kurzlauf vom 24. brauchten Stapel des Prefills an kalten Shards am Anfang
+  der Epoche bis 9,7 s; die nächsten liefen in die 10 s („Timeout while
+  waiting for a response“, beim Mitglied danach „unexpected end of file“),
+  obwohl der Koordinator einem Shard 30 s lässt. Der Preis: Eine schweigende
+  Gegenstelle hält die Plätze zu ihr 30 s; das trifft nur Anfragen an sie.
+- Proben: `stau` (7: Grenze nach Bytes, die Stichprobe am Deckel passt ganz
+  hinein, Vorrang überholt die Wartenden); `anfragegrenzen` im echten Swarm
+  mit 600 Spuranfragen und zwei mit Vorrang hinter belegten Plätzen, keine
+  scheitert.
+
+### v0.29.0 (2026-11-23): Über der Grenze warten statt scheitern, und ein Stau sagt, wer ihn macht (`myl-net` 0.29.0)
+
+- **Gefunden in der Simulation vom 20. und den Kurzläufen vom 23. November:**
+  Je Verbindung laufen höchstens `MAX_ANFRAGEN_ZUGLEICH` (16) eigene
+  Anfragen; jede weitere scheiterte sofort mit „max sub-streams reached“,
+  tausendfach je Lauf (Fund 715 im Knoten). Was die Plätze hielt, stand
+  nirgends.
+- **Neu `stau.rs`:** je eigener Anfrage Gegenstelle, Art (erstes Byte der
+  Nachricht) und Beginn. Scheitert eine am Stau, meldet `NodeEvent::Stau`
+  je Art die Zahl unterwegs, das Alter der ältesten und die Wartenden, je
+  Gegenstelle höchstens einmal in 10 s. Das erste Bild nannte die Ursache:
+  Salven von Spuranfragen der Stichprobe, 27 bis 35 auf einmal, die
+  älteste 1 bis 3 ms alt.
+- **Warten statt scheitern:** Eine Anfrage ohne Zweck wartet, wenn zur
+  Gegenstelle schon 16 unterwegs sind, in einer Schlange (höchstens 256) und
+  geht hinaus, sobald eine Antwort oder ein Fehlschlag einen Platz frei
+  macht; geht die letzte Verbindung zu, scheitern die wartenden. ⛔️ Eine
+  Anfrage mit Zweck (die Zeitprobe) wartet nie, denn die Wartezeit zählte
+  sonst als Rechenzeit des Gemessenen. Eine volle Schlange scheitert mit
+  `stau::WARTESCHLANGE_VOLL`, und `stau::ist_stau` erkennt beide Texte.
+- Proben: `stau` (5), `tests/anfragegrenzen.rs`
+  `ein_stau_nennt_was_die_verbindung_belegt` (eine schweigende Gegenstelle:
+  vier ohne Zweck warten, eine mit Zweck scheitert, ein Bild mit 16 der
+  Art 9). Im Kurzlauf mit Lügner und Störer gefahren: ohne Befund.
 
 ### v0.28.0 (2026-11-19): Abwehr gegen Umzingelung (A9), Verfahrenskennzeichen der Sitzungen (`myl-net` 0.28.0, `myl-siegel` 0.4.0)
 

@@ -1,7 +1,7 @@
 # COMPUTE_PIPELINE: das Rechnen im Netz (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.72.2 (`myl-pod` 0.63.0, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-11-18
+> **Version:** 0.76.0 (`myl-pod` 0.67.0, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-11-24
 > **Status:** In Gebrauch: der Shard (`myl-shard`) rechnet seinen
 > Ebenenbereich, ein Koordinator schickt mehrere Sitzungen zugleich durch
 > die Pipeline, der KV-Cache bleibt bei seiner Sitzung, Ausfälle werden aus
@@ -104,6 +104,167 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.76.0 (2026-11-25): Eine aufgegebene Anfrage hält an (Fund 730, `myl-pod` 0.67.0)
+
+- **Fund 730, im langen Auftragslauf vom 24. November:** Der Ortsdienst
+  rechnete eine Anfrage zu Ende, auch wenn der Knoten nicht mehr wartete,
+  und gab sie am Epochenwechsel noch an den Pod der neuen Epoche. Die letzte
+  Runde des ersten Auftrags lief so 27 Minuten in den zweiten hinein, auf
+  denselben Pods, und nahm ihm die Rechenzeit.
+- **Eine Wache im Ortsdienst sieht alle 2 s nach der Leitung**
+  (`LEITUNG_PRUEFEN`), solange eine Inferenz rechnet. Schliesst der Knoten
+  sie, ruft er `Rechenwerk::abbrechen` (neu, Vorgabe: nichts), über das
+  Entsiegelnde bis zum Podwerk.
+- **Das Podwerk hält die Sitzung in jedem stehenden Koordinator an**, beider
+  Zwillinge, und rechnet sie weder nach einer Neubesetzung noch im Pod der
+  neuen Epoche neu. Neu `Coordinator::sitzung_abbrechen`: wie `anhalten`
+  (Fund 726), nur für diese Sitzung; die übrigen rechnen weiter.
+- **Proben:** `ortsdienst::tests::eine_geschlossene_leitung_bricht_die_rechnung_ab`
+  und `tests/podwerk_epochenwechsel.rs` `eine_aufgegebene_anfrage_haelt_an`
+  (40 Token zu 100 ms je Frage, Abbruch mitten im Dekodieren: keine Antwort,
+  höchstens zwei Fragen danach). Gegenproben ohne Wache und ohne Abbruch im
+  Koordinator sind rot.
+- **Dazu die Probe zu Fund 729** in `tests/nachrechnen.rs` (siehe
+  VERIFICATION 0.30.0).
+
+### v0.75.0 (2026-11-24): Robust über Transportfehler und den Epochenwechsel (Funde 723 bis 726, `myl-pod` 0.66.0)
+
+- **Gefunden im langen Auftragslauf vom 24. November:** Seit Fund 719 gab
+  der Koordinator eine Runde nach jedem Transportfehler auf und rechnete sie
+  von vorn. Am Anfang von Epoche 2 wurden die Stapel des Prefills (6 442
+  Token) am Shard von Position 0 von Stapel zu Stapel langsamer, 7 bis 38 s,
+  liefen in die Frist des Netzes, und jeder Neubeginn lief neben dem alten
+  Lauf derselben Runde her (zwei Sitzungen mit derselben Eingabe im selben
+  Pod). Die doppelte Last brachte die nächste Zeitüberschreitung; die Reserve
+  übernahm, und der erste Auftrag endete mit „kein Pod hat gerechnet“. Bis
+  Fund 719 fing das stille Einzelrechnen solche Fehler ab, falsch, aber
+  robust.
+- **Der Shard rechnet eine Anfrage einmal** (`ShardNode::einmal_rechnen`,
+  in `bedienen` für `Rechne` und `RechneStapel`): Je Sitzung merkt er sich
+  die zuletzt gerechnete Anfrage (Abdruck über alle Nachrichten), die Länge
+  jedes beteiligten Speichers danach und die Antwort. Kommt dieselbe Anfrage
+  wieder und hat keine ihrer Sitzungen seitdem gerechnet oder vergessen,
+  geht dieselbe Antwort zurück, ohne den Speicher zu berühren; der Zustand
+  schiebt sich nicht weiter (Fund 719 bleibt zu). Rechnet er sie noch, wartet
+  die Wiederholung darauf (höchstens `EINMAL_WARTEN`, 120 s); Anfragen
+  derselben Sitzung rechnen nicht mehr gleichzeitig. 📌 Bis hierher sah eine
+  zweite Anfrage derselben Sitzung während einer Rechnung einen leeren
+  Speicher („hinter dem Ende des KV-Speichers (0 Positionen)“, gesehen in der
+  Gegenprobe). Die Zeitprobe läuft über `zeitprobe_bis` und ist unberührt.
+- **Der Koordinator fragt nach einem Transportfehler dieselbe Anfrage noch
+  einmal** (`WIEDERHOLUNGEN_NACH_TRANSPORTFEHLER`, 2), bevor er die Runde
+  aufgibt; eine Antwort, auch eine Ablehnung, wird nie wiederholt.
+- Proben: neu `einmal_rechnen` (2: dieselbe Antwort, kein verschobener
+  Zustand gegen einen Maßstab-Shard, eine ältere oder andere Anfrage bleibt
+  abgelehnt, nach dem Vergessen keine Wiederholung; drei gleichzeitige
+  Wiederholungen schreiben den Speicher einmal fort); `stapel_transportfehler`
+  verliert jetzt einen Stapel hinter Position 0 und erwartet keinen
+  Neubeginn. Grün am sparrow und am 35B; Gegenprobe ohne `einmal_rechnen`
+  rot (42 Positionen still einzeln nachgerechnet, „schon gerechnet“, „hinter
+  dem Ende“). 📌 Die erste Fassung beider Proben wiederholte nur Stapel ab
+  Position 0, wo eine Sitzung ohnehin neu beginnt (Fund 709), und blieb in
+  der Gegenprobe grün.
+- Abgleich mit dem Whitepaper: Kap. 6 verlangt Bitgleichheit und eine Spur
+  je Segment; eine Wiederholung liefert dieselben Bytes und dieselbe
+  Unterschrift und rechnet nichts. Die Reserve (6.8) übernimmt bei einem
+  Shard, der fort ist, nach höchstens drei Versuchen.
+- ⛔️ **Fund 724: Die Spur sagt, für welche Ebene eine Nachricht ist**
+  (`ShardNode::spur_passt`, einzeln und im Stapel, vor jedem Speicher). Im
+  fünften Kurzlauf vom 24. rechnete der Koordinator von Epoche 2 bis in
+  Epoche 5 weiter; die Knoten seiner alten Mitglieder reichten an den Shard
+  weiter, den sie jetzt hatten (k8: in Epoche 2 die Ebenen 9 bis 19, in
+  Epoche 3 die Ebenen 0 bis 13), und der rechnete die Nachricht an der
+  falschen Stelle des Modells. 14 538 Relais an k8, die Antworten wuchsen in
+  24 Minuten auf 4 MiB, bis die Leitung sie abwies („Nachricht mit
+  4194474 Bytes ist zu gross“). Bis hierher fiel so etwas nur auf, wenn
+  zufällig das Embedding fehlte. Jetzt gilt: Ein Token-Eingang hat keine
+  Spur, eine Aktivierung für einen Shard ab Ebene `L` genau `L` Einträge.
+  Probe `eine_nachricht_fuer_eine_andere_ebene_wird_abgelehnt`; die von Hand
+  gebauten Nachrichten in `adversarial` und `einmal_rechnen` tragen jetzt
+  die Spur ihrer Ebene. Abgleich mit dem Whitepaper: Die Spur je Ebene
+  (6.6) war schon da; neu ist nur, dass der Shard ihre Länge prüft, so
+  unterschreibt er keinen Übergang an der falschen Stelle.
+- **Fund 725: Die Wiederholung einer verlorenen Runde geht als Stapel**
+  (`Coordinator::rechne`). Bis hierher ging sie Token für Token, damit sie
+  auch über einen Shard trägt, der den Stapel nicht kennt (Fund 650); das
+  tut heute `stapel_rechnen` selbst. Token für Token kostet eine Runde je
+  Token und Shard: Im sechsten Kurzlauf vom 24. rechnete eine am Wechsel
+  verlorene Runde (4 693 Prompt-Token) 15 bis 21 Minuten über den alten Pod
+  weiter, neben dem Pod der neuen Epoche, ehe das Podwerk den Auftrag
+  weitergeben konnte, und die ganze Epoche 2 brachte keine Runde zu Ende.
+  Probe `die_wiederholung_einer_verlorenen_runde_geht_als_stapel` (Gegenprobe
+  mit der alten Wiederholung rot: kein Stapel).
+- ⚑ **Fund 726: Beim Epochenwechsel hält der Lauf der alten Epoche an**
+  (`Coordinator::anhalten`, Entscheidung des Projektinhabers vom 24.).
+  Solange ein Lauf rechnet, sieht in `ueber_pod` ein Wächter alle
+  `EPOCHE_PRUEFEN` (2 s) im Podbild nach der Epoche; ist sie vorbei, hält er
+  den Koordinator an: Jede weitere Frage an einen Shard scheitert sofort
+  ohne Wiederholung, der Lauf wird nicht neu gerechnet, und das Podwerk gibt
+  den Auftrag an den Pod der neuen Epoche (Fund 649). Das Ende des Laufs
+  weckt den Wächter über einen Kanal, ohne Wartezeit. 📌 Bis hierher
+  rechnete ein Lauf der alten Epoche weiter, bis er von selbst scheiterte:
+  im sechsten und siebten Kurzlauf 13 bis 21 Minuten neben dem Pod der neuen
+  Epoche, der unter dieser Last in Epoche 2 und 3 keine Runde zu Ende
+  brachte. Probe `beim_epochenwechsel_haelt_der_alte_lauf_an` (alte
+  Mitglieder rechnen langsam weiter; dieselbe Antwort vom neuen Pod, der
+  alte bekommt höchstens 17 Fragen); Gegenprobe ohne Wächter rot: 150
+  Fragen, 48 statt 4 s. 📌 Die erste Fassung fragte „Die Hauptstadt von
+  Frankreich ist“ mit Shards vom Deckel 4 und blieb in der Gegenprobe grün;
+  jetzt zählt der Prompt 40 Token weit. Abgleich mit dem Whitepaper (4.2):
+  „Pod-Wechsel … werden nur bei Ausfall oder Epochenwechsel ausgelöst“; am
+  Wechsel zieht die Sitzung in den neuen Pod, der alte bedient sie nicht
+  weiter.
+
+### v0.74.0 (2026-11-23): Die Abweichung der Zwillinge, gefunden (Fund 719, `myl-pod` 0.65.0)
+
+- **Der Hergang**, aus der Mitschrift der Zwillinge (0.73.0) und den
+  Relaisprotokollen des Kurzlaufs: Der Shard des Lügners rechnete einen
+  Stapel, die Antwort ging verloren („unexpected end of file“), und
+  `stapel_rechnen` fiel bei **jedem** Fehler darauf zurück, die Nachrichten
+  einzeln neu zu rechnen, ohne eine Zeile. Der Shard nahm die schon
+  gerechneten Positionen ein zweites Mal an. Beim Netzmodell schiebt das den
+  rekurrenten Zustand der linearen Attention ein zweites Mal weiter
+  (gemessen: eine wiederholte Position, danach eine andere Ausgabe; beim
+  0,6B mit reiner Attention dieselbe). Die Abweichung ist klein, nach rund
+  250 Token lieferten die Zwillinge verschiedene Token.
+- **Behoben, zweifach:**
+  1. `stapel_rechnen` rechnet nur nach einer **Ablehnung** des Shards
+     (`Shardantwort::Fehler`: nichts gerechnet) einzeln; ein Transportfehler
+     lässt die Runde sichtbar scheitern, und der Auftrag wird nach dem
+     Vergessen der Sitzung einmal neu gerechnet (Fund 654).
+  2. Der Shard nimmt nur **genau die nächste Position** an; eine schon
+     gerechnete lehnt er ab („ist schon gerechnet“), sein Zustand bleibt.
+     Auch eine Wiederholung nach einem verschluckten `SitzungVergessen`
+     läuft damit nicht mehr still auf altem Zustand.
+- Proben: `tests/stapel_transportfehler.rs` (ein Weg rechnet den Stapel und
+  meldet dann einen Transportfehler: kein stilles Einzelrechnen, der Lauf
+  gilt als wiederholt, dieselben Token; am 0,6B und am 35B grün;
+  Gegenprobe mit dem alten Rückfall rot), `adversarial.rs` um die
+  schon gerechnete Position.
+
+### v0.73.0 (2026-11-23): Die Mitschrift der Zwillinge (`myl-pod` 0.64.0)
+
+- **Anlass:** In der Simulation vom 20. November rechneten die Zwillinge
+  einmal verschieden (436 gegen 419 Token bei gleichem Deckel), und aus der
+  Zeile je Runde ließ sich nicht sagen, warum.
+- **Jetzt trägt die Zeile je Pod und Runde** Sitzung, Deckel, einen Abdruck
+  der Eingabe und der Ausgabe (`abdruck_der_token`, acht Byte SHA-256) und,
+  ob der Auftrag nach einer verlorenen Runde wiederholt wurde
+  (`Lauf::wiederholt`, neu). Der Auftragslauf vergleicht die Paare selbst.
+- **Erster Befund damit (Kurzlauf vom 23.):** Epoche 1, Sitzung 2, gleiche
+  Eingabe, gleicher Deckel, keine Wiederholung, Pod 0 248 Token in 415 s,
+  Pod 1 254 in 216 s. Ausgeschlossen: Stapel über Sitzungen (am 35B
+  bitgleich, `stapel_ueber_sitzungen_rechnen_bitgleich` und neu
+  `ein_langer_prefill_neben_einem_decode_rechnet_bitgleich`), die Zeitprobe
+  (eigener KV-Speicher), ein Wechsel der Besetzung. Beide Fälle hatten den
+  Lügner im langsameren Pod und ein abgebrochenes Relais zu ihm („unexpected
+  end of file“); im zweiten Kurzlauf sah der Koordinator denselben Abbruch,
+  rechnete neu, und die Zwillinge waren einig. Offen.
+- Proben: `der_abdruck_unterscheidet_laeufe`,
+  `ein_langer_prefill_neben_einem_decode_rechnet_bitgleich` (am 35B 53 s).
+- `MAX_ABGESCHLOSSENE` ist jetzt `myl_types::MAX_SEGMENTE_JE_BUENDEL`:
+  dieselbe Zahl, die die Kette je Bündel durchsetzt (CONSENSUS 0.92.0).
 
 ### v0.72.2 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
 

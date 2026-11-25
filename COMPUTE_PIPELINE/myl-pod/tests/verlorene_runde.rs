@@ -100,3 +100,65 @@ fn eine_verlorene_runde_kostet_nicht_den_auftrag() {
     assert!(weg.run_prompt(7, &ids, 4).is_empty(), "ohne Shard 1 kamen Token");
     assert_eq!(weg.completed_segments().len(), 0, "ein gescheiterter Auftrag hinterliess Segmente");
 }
+
+/// Scheitert jeder Stapel zu Shard 1, bis der Koordinator die Sitzung
+/// vergessen lässt; zählt danach Stapel und Einzelrechnungen an Shard 1.
+struct BisZumVergessen {
+    innen: ImProzess,
+    vergessen: std::sync::atomic::AtomicBool,
+    stapel_danach: AtomicUsize,
+    einzeln_danach: AtomicUsize,
+}
+
+impl Shardweg for BisZumVergessen {
+    fn shardzahl(&self) -> usize {
+        self.innen.shardzahl()
+    }
+    fn frage(&self, nummer: usize, anfrage: &Shardanfrage) -> Result<Shardantwort, String> {
+        let danach = self.vergessen.load(Ordering::SeqCst);
+        match anfrage {
+            Shardanfrage::SitzungVergessen(_) => self.vergessen.store(true, Ordering::SeqCst),
+            Shardanfrage::RechneStapel(_) if nummer == 1 && !danach => {
+                return Err("IO error on outbound stream: unexpected end of file".into());
+            }
+            Shardanfrage::RechneStapel(_) if nummer == 1 => {
+                self.stapel_danach.fetch_add(1, Ordering::SeqCst);
+            }
+            Shardanfrage::Rechne(_) if nummer == 1 && danach => {
+                self.einzeln_danach.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+        self.innen.frage(nummer, anfrage)
+    }
+}
+
+/// ⚑ **Fund 725 (2026-11-24): Die Wiederholung geht als Stapel.** Bis
+/// hierher rechnete der Koordinator eine verlorene Runde Token für Token
+/// neu; im Auftragslauf mit 4 693 Prompt-Token dauerte das 20 bis 37
+/// Minuten. Verlangt: dieselben Token wie ohne Verlust, und an Shard 1 nach
+/// dem Vergessen ein Stapel für den Prompt und einzeln nur die neuen Token.
+#[test]
+fn die_wiederholung_einer_verlorenen_runde_geht_als_stapel() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let tok = Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad")).expect("Wortschatz");
+    let ids: Vec<u32> = tok.encode("Die Hauptstadt von Frankreich ist").iter().map(|t| *t as u32).collect();
+    assert!(ids.len() > 2, "ein Prompt über mehrere Positionen");
+    let soll = koordinator(&dir, usize::MAX, false).run_prompt(7, &ids, 4);
+
+    let weg = Arc::new(BisZumVergessen {
+        innen: ImProzess::neu(shards(&dir)),
+        vergessen: std::sync::atomic::AtomicBool::new(false),
+        stapel_danach: AtomicUsize::new(0),
+        einzeln_danach: AtomicUsize::new(0),
+    });
+    let k = Coordinator::ueber_weg(PodId::new([0xAA; 32]), EpochId(0), Arc::clone(&weg) as Arc<dyn Shardweg>).expect("Koordinator");
+    let lauf = k.rechne(7, &ids, 4);
+    assert!(lauf.wiederholt, "der erste Durchlauf sollte scheitern; die Probe prüft nichts");
+    assert_eq!(lauf.token, soll, "die Wiederholung lieferte andere Token");
+    assert_eq!(weg.stapel_danach.load(Ordering::SeqCst), 1, "der Prompt ging in der Wiederholung nicht als ein Stapel");
+    assert_eq!(weg.einzeln_danach.load(Ordering::SeqCst), 3, "in der Wiederholung gingen mehr als die drei neuen Token einzeln");
+}

@@ -58,6 +58,12 @@ pub const FRIST: Duration = Duration::from_secs(45);
 /// für alle anderen.
 pub const TUERFRIST: Duration = Duration::from_secs(540);
 
+/// ⚑ **So lange darf ein Auftrag der Tür im Ortsdienst laufen, auch wenn an
+/// der Tür niemand mehr wartet** (Fund 727): drei Türfristen. Ein neuer
+/// Anlauf desselben Klienten holt das Ergebnis ab ([`crate::einmal`]);
+/// danach gilt die Rechnung als verloren.
+pub const LAUF_HOECHSTENS: Duration = Duration::from_secs(3 * 540);
+
 /// Der Anschluss an einen lokalen Shard-Prozess.
 #[derive(Debug, Clone)]
 pub struct Ortsanschluss {
@@ -106,6 +112,12 @@ impl Ortsanschluss {
     /// Eine Frage für die eigene Tür, mit [`TUERFRIST`] (Fund 650).
     pub async fn frage_fuer_die_tuer(&self, frage: &Ortsfrage) -> Option<Ortsantwort> {
         self.frage_mit_frist(frage, TUERFRIST).await
+    }
+
+    /// Ein Auftrag der Tür, der weiterläuft, wenn die Tür nicht mehr wartet,
+    /// mit [`LAUF_HOECHSTENS`] (Fund 727).
+    pub async fn frage_fuer_einen_lauf(&self, frage: &Ortsfrage) -> Option<Ortsantwort> {
+        self.frage_mit_frist(frage, LAUF_HOECHSTENS).await
     }
 
     /// Wie [`Self::frage`], mit einer anderen Frist.
@@ -171,6 +183,9 @@ mod tests {
     fn die_tuerfrist_liegt_zwischen_netz_und_klient() {
         assert!(TUERFRIST > FRIST);
         assert!(TUERFRIST < Duration::from_secs(600));
+        // Fund 727: Ein Lauf überdauert die Frist der Tür, damit ein neuer
+        // Anlauf ihn abholen kann.
+        assert!(LAUF_HOECHSTENS > TUERFRIST);
     }
 
     fn verzeichnis(marke: &str) -> std::path::PathBuf {

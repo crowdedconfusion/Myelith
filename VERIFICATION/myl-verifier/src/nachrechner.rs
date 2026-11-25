@@ -194,6 +194,111 @@ pub fn verlauf_nachrechnen(
     }
 }
 
+/// ⛔️ **Fund 729 (2026-11-25): eine Sitzung einmal nachrechnen, nicht je
+/// Ziehung.** Gezogen wird je Position. Der Verlauf zu einer Ziehung an
+/// Position `t` ist die Sitzung von Position null bis `t`, und jede Ziehung
+/// rechnete diesen Verlauf von vorn. Im langen Auftragslauf bekam ein Prüfer
+/// 2 615 Ziehungen aus fünf Sitzungen und rechnete dieselben Prompts bis zu
+/// 45-mal, alle zugleich. Der Knoten belegte mehr Speicher, als der Rechner
+/// hatte, und wurde abgeschossen, und die Pods rechneten achtmal langsamer.
+///
+/// Hier geht **ein** Durchgang über den längsten Verlauf. Er liefert für
+/// jedes Ende `n` in `enden` genau das, was [`verlauf_nachrechnen`] über
+/// `tokens[..n]` und `ketten[..n]` ergäbe. Das trägt, weil die
+/// Aufmerksamkeit kausal ist: Was an Position `p` herauskommt, hängt nur an
+/// den Positionen bis `p`. Die Probe gegen den einzelnen Weg steht im Test
+/// mit echtem Modell. Für jedes Ende zählt:
+///
+/// - die erste Abweichung, nach Position und dann Eintrag, unter den
+///   Positionen vor `n`;
+/// - die Wahl an `p` nur, wenn `p + 1 < n`, denn sonst steht das nächste
+///   Token nicht im Verlauf;
+/// - die Logits an Position `n - 1`.
+///
+/// Fehler wie bei [`verlauf_nachrechnen`], dazu ein Ende außerhalb von
+/// `1..=tokens.len()`.
+pub fn verlauf_nachrechnen_bis(
+    modell: &integer_llm_runtime::model::IntegerModel,
+    tokens: &[u32],
+    ketten: &[Vec<Hash>],
+    prompt_laenge: usize,
+    enden: &[usize],
+) -> Result<Vec<Verlaufspruefung>, CheckError> {
+    if tokens.is_empty() || tokens.len() != ketten.len() {
+        return Err(CheckError::Verlauf { position: tokens.len().min(ketten.len()) });
+    }
+    if let Some(&n) = enden.iter().find(|&&n| n == 0 || n > tokens.len()) {
+        return Err(CheckError::Verlauf { position: n });
+    }
+    let mut ids = Vec::with_capacity(tokens.len());
+    for (q, t) in tokens.iter().enumerate() {
+        if *t as usize >= modell.vocab_size {
+            return Err(CheckError::Verlauf { position: q });
+        }
+        ids.push(*t as usize);
+    }
+    let schichten = modell.num_layers;
+    let gesamt = ids.len();
+    // Je Position: die kleinste abweichende Layer, ob die Wahl abweicht, und
+    // die Logits, wo ein Ende liegt.
+    let mut ebene: Vec<Option<usize>> = vec![None; gesamt];
+    let mut wahl = vec![false; gesamt];
+    let mut logits: std::collections::BTreeMap<usize, Hash> = enden.iter().map(|&n| (n - 1, Hash([0u8; 32]))).collect();
+    let fenster = integer_llm_runtime::model::VORBEREITUNGSFENSTER;
+    let mut cache = integer_llm_runtime::kv_cache::KVCache::new(schichten, modell.num_kv_heads);
+    for (f, stueck) in ids.chunks(fenster).enumerate() {
+        let start = f * fenster;
+        let mut blick = |e: usize, zustaende: &[Vec<i16>]| {
+            for (b, z) in zustaende.iter().enumerate() {
+                let position = start + b;
+                let gleich = ketten[position]
+                    .get(e + 1)
+                    .is_some_and(|h| *h.as_bytes() == myl_types::uebergang::activation_hash(z));
+                if !gleich && ebene[position].is_none() {
+                    ebene[position] = Some(e + 1);
+                }
+                if e + 1 != schichten {
+                    continue;
+                }
+                let gebraucht = logits.contains_key(&position);
+                let gewaehlt = gewaehlt(position, gesamt, prompt_laenge);
+                if !gebraucht && !gewaehlt {
+                    continue;
+                }
+                let kopf = modell.head_logits(z);
+                if gewaehlt && modell.greedy_next(&kopf) != ids[position + 1] {
+                    wahl[position] = true;
+                }
+                if let Some(h) = logits.get_mut(&position) {
+                    *h = logits_hash(&kopf);
+                }
+            }
+        };
+        if modell.vorbereiten_stapel_mit_ebenen(stueck, start, &mut cache, &mut blick).is_none() {
+            // Ein Modell ohne Ausgang je Ebene im Stapel: je Ende einzeln,
+            // wie bisher.
+            return enden.iter().map(|&n| verlauf_schrittweise(modell, &tokens[..n], &ketten[..n], prompt_laenge)).collect();
+        }
+    }
+    Ok(enden
+        .iter()
+        .map(|&n| {
+            let erste = (0..n).find_map(|p| match ebene[p] {
+                Some(e) => Some((p, e)),
+                // Eine Kette mit mehr Einträgen als Layern behauptet Arbeit,
+                // die es nicht gibt.
+                None if ketten[p].len() != schichten + 1 || (wahl[p] && p + 1 < n) => Some((p, schichten + 1)),
+                None => None,
+            });
+            let ergebnis = match erste {
+                None => Verlaufsergebnis::Gleich,
+                Some((position, eintrag)) => Verlaufsergebnis::Abweichung { position, eintrag },
+            };
+            Verlaufspruefung { ergebnis, logits: logits[&(n - 1)] }
+        })
+        .collect())
+}
+
 /// Ob an `position` gewählt wurde (das nächste Token erzeugt ist) und ein
 /// nächstes Token im Verlauf steht.
 fn gewaehlt(position: usize, laenge: usize, prompt_laenge: usize) -> bool {

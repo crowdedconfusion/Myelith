@@ -1,6 +1,6 @@
 # VERIFICATION: wer falsch rechnet, fällt auf (`myl-verifier`)
 
-> **Version:** 0.29.3
+> **Version:** 0.30.0
 > **Datum:** 2026-11-18
 > **Status:** In Gebrauch: Redundanzvergleich (Stufe 1), Bisektionsspiel
 > (Stufe 2) mit Prüfmodul, Schiedsrunde in der Kette und Bestrafung;
@@ -129,6 +129,26 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.30.0 (2026-11-25): Eine Sitzung einmal nachrechnen (Fund 729, `myl-verifier` 0.30.0)
+
+- **Fund 729, im langen Auftragslauf vom 24. November:** Gezogen wird je
+  Position, und der Verlauf zu einer Ziehung an Position `t` ist die Sitzung
+  von Position null bis `t`. Jede Ziehung rechnete ihren Verlauf von vorn:
+  Ein Prüfer bekam 2 615 Ziehungen aus fünf Sitzungen und rechnete dieselben
+  Prompts bis zu 45-mal.
+- **Neu `verlauf_nachrechnen_bis`:** ein Durchgang als Prefill über den
+  längsten Verlauf, und für jedes Ende `n` genau das Ergebnis, das
+  `verlauf_nachrechnen` über die ersten `n` Positionen ergäbe: die erste
+  Abweichung vor `n`, die Wahl nur, wo das nächste Token noch im Verlauf
+  steht, und die Logits an `n - 1`. Das trägt, weil die Aufmerksamkeit
+  kausal ist. Für ein Modell ohne Ausgang je Ebene im Stapel rechnet es je
+  Ende einzeln wie bisher.
+- **Probe mit echtem Modell** (`myl-pod`, `tests/nachrechnen.rs`): ehrlich,
+  mit gefälschter Layer, zu langer Kette und falscher Wahl, Enden um die
+  Prompt-Länge und die Fenstergrenze, jedes gleich dem einzelnen Weg.
+  Gegenprobe: ohne die Bedingung für die Wahl weicht das Ende vor der
+  letzten Wahl ab.
 
 ### v0.29.3 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-verifier` 0.29.3)
 

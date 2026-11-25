@@ -275,7 +275,8 @@ fn eine_luecke_und_eine_position_hinter_der_grenze_werden_abgelehnt() {
             sender_shard: 0,
             position,
             flags: 0,
-            trace: vec![myl_pod::trace::activation_hash(&payload)],
+            // Fund 724: eine Spur je Ebene vor diesem Shard (er beginnt bei 6).
+            trace: [vec![[0u8; 32]; 5], vec![myl_pod::trace::activation_hash(&payload)]].concat(),
             signature: myl_types::bls::BlsSignature([0u8; 96]),
             payload,
         }
@@ -288,9 +289,14 @@ fn eine_luecke_und_eine_position_hinter_der_grenze_werden_abgelehnt() {
     for position in 0..3 {
         assert!(shard.process(&nachricht(position)).is_ok(), "Position {position} setzt die Sitzung fort");
     }
+    // ⛔️ Fund 719: eine schon gerechnete Position wird abgelehnt, und der
+    //    Zustand bleibt, wie er war (die nächste setzt fort).
+    let wieder = shard.process(&nachricht(1));
+    assert!(wieder.as_ref().is_err_and(|e| e.contains("schon gerechnet")), "{:?}", wieder.err());
+    assert!(shard.process(&nachricht(3)).is_ok(), "nach der Ablehnung setzt Position 3 fort");
     assert_eq!(shard.gehaltene_sitzungen(), 1, "die abgelehnten Nachrichten haben die Sitzung nicht verworfen");
-    assert!(shard.process(&nachricht(5)).is_err(), "nach drei Positionen ist 5 wieder eine Luecke");
-    assert!(shard.process(&nachricht(3)).is_ok());
+    assert!(shard.process(&nachricht(5)).is_err(), "nach vier Positionen ist 5 wieder eine Luecke");
+    assert!(shard.process(&nachricht(4)).is_ok());
 }
 
 /// ⚑ **Ein Token hinter dem Vokabular wird abgelehnt, und die Sitzung

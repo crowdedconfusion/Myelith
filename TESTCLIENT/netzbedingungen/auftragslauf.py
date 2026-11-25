@@ -610,6 +610,19 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
                       (mehr + 1) * EPOCHE * slot / 1000 + 300, "die Sperre des Luegners", alle, 15)
             except Befund as b:
                 befunde.append(str(b))
+            # 📌 Kurzlauf vom 24. November: Der Luegner wurde erst in der
+            #   letzten gewarteten Epoche gelost, sein Shard startete 24 s vor
+            #   dem Ende, und der Lauf meldete „nie gesperrt“. Steht er gerade
+            #   auf Position, braucht die Messung diese Epoche noch.
+            jetzt = epoche()
+            auf_position = {int(z.get("epoche", -1)) for z in luegner.zeilen("shard_gestartet")}
+            if not luegner.zeilen("fristsperre") and jetzt in auf_position:
+                melde(f"der Luegner steht erst seit Epoche {jetzt} auf Position; warte noch einen Wechsel")
+                try:
+                    warte(lambda: bool(luegner.zeilen("fristsperre")) or epoche() > jetzt,
+                          2 * EPOCHE * slot / 1000 + 300, "die Sperre des Luegners", alle, 15)
+                except Befund as b:
+                    befunde.append(str(b))
         time.sleep(10)
         schluss = epochenstand()
         notiere("epochenstand", **schluss)
@@ -651,6 +664,16 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
             befunde.append("kein Zwillingspaar war einig: Stufe 1 hat nichts verguetet")
         if schluss["uneinig"] > 0:
             befunde.append(f"{schluss['uneinig']} uneinige Zwillingspaare ohne Faelscher")
+        # ⚑ Die Mitschrift der Zwillinge (Simulation vom 2026-11-20): je
+        #   Epoche und Sitzung beide Pods; verschiedene Ausgabe bei gleicher
+        #   Eingabe und gleichem Deckel ist eine echte Abweichung.
+        paare = zwillinge_vergleichen((erzeuger.ordner / "ortsdienst.txt").read_text(errors="ignore")
+                                      if (erzeuger.ordner / "ortsdienst.txt").exists() else "")
+        melde(f"Zwillinge im Ortsdienst: {paare['gleich']} gleich, {paare['leer']} mit leerem Zwilling, "
+              f"{len(paare['verschieden'])} verschieden")
+        notiere("zwillinge_ortsdienst", **paare)
+        for v in paare["verschieden"]:
+            befunde.append(f"Zwillinge rechneten verschieden: {v}")
         if not any(e["erfuellt"] == e["von"] for e in ergebnisse):
             befunde.append("kein Auftrag ganz geloest")
         sperren = [k.miner for k in miner if k is not luegner and k.zeilen("fristsperre")]
@@ -714,6 +737,40 @@ def bericht_schreiben(ordner: pathlib.Path, args, ergebnisse: list[dict], befund
     z += [f"- {b}" for b in befunde] or ["- keine"]
     (ordner / "bericht.md").write_text("\n".join(z) + "\n", encoding="utf-8")
 
+
+
+ZWILLINGSZEILE = re.compile(
+    r"\[myl-pod\] Epoche (\d+), Pod (\d+): (\d+) Prompt-Token, (\d+) neue in (\d+) ms"
+    r" \(Sitzung (\d+), Deckel (\d+), Eingabe ([0-9a-f]+), Ausgabe ([0-9a-f]+)(, wiederholt)?\)")
+
+
+def zwillinge_vergleichen(ortsdienst: str) -> dict:
+    """Die Runden je Epoche und Sitzung, Pod gegen Pod: gleich, mit einem
+    leeren Zwilling (Wechsel, Fund 706), oder verschieden bei gleicher
+    Eingabe und gleichem Deckel (eine echte Abweichung, mit Angabe, ob ein
+    Lauf wiederholt wurde)."""
+    runden: dict = {}
+    for z in ortsdienst.splitlines():
+        m = ZWILLINGSZEILE.search(z)
+        if not m:
+            continue
+        epoche, pod, _, neu, ms, sitzung, deckel, ein, aus, wdh = m.groups()
+        runden.setdefault((int(epoche), int(sitzung)), {})[int(pod)] = (ein, int(deckel), aus, int(neu), int(ms), bool(wdh))
+    gleich = leer = 0
+    verschieden = []
+    for (epoche, sitzung), pods in sorted(runden.items()):
+        if len(pods) < 2:
+            continue
+        (pa, a), (pb, b) = sorted(pods.items())[:2]
+        if a[3] == 0 or b[3] == 0:
+            leer += 1
+        elif a[2] == b[2]:
+            gleich += 1
+        elif a[0] == b[0] and a[1] == b[1]:
+            verschieden.append(f"Epoche {epoche}, Sitzung {sitzung}: Pod {pa} {a[3]} Token in {a[4]} ms"
+                               f"{' (wiederholt)' if a[5] else ''}, Pod {pb} {b[3]} in {b[4]} ms"
+                               f"{' (wiederholt)' if b[5] else ''}")
+    return {"gleich": gleich, "leer": leer, "verschieden": verschieden}
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])

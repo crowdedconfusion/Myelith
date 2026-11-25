@@ -605,6 +605,24 @@ pub fn naechster_bereich(eigene: u64, laufend: &[(u64, u64)], im_voraus: impl Fn
     Some((ab, bis))
 }
 
+/// **Die Namen der Varianten von [`Nachforderung`], in der Reihenfolge, in
+/// der Borsh sie als erstes Byte schreibt** (Mitschrift am Stau, Simulation
+/// vom 2026-11-20). ⚠️ Eine neue Variante wird angehängt (Drahtformat), und
+/// ihr Name hier ebenso; `die_arten_stehen_in_der_reihenfolge_der_varianten`
+/// prüft Stichproben.
+pub const ARTEN: [&str; 29] = [
+    "Bloecke", "Inferenz", "Zeitprobe", "Ping", "Datei", "Fristzeugnis", "Abzug", "Archiv", "Teil", "Shard", "Buendel", "Spur",
+    "ZeitprobeMitGrenze", "ZeitprobeMitSaat", "PositionUebernehmen", "SpurenAblegen", "Verlauf", "Schiedsbeleg", "Differenz",
+    "Zeugenstuecke", "LeichterAnker", "LeichterAbzug", "Kontobeweise", "Wechselbelege", "VollerAnker", "SchiedsbelegTeil",
+    "VerlaufTeil", "SpurenAblegenTeil", "WechselbelegeKompakt",
+];
+
+/// Der Name zum ersten Byte einer Anfrage, oder `andere` für alles, was keine
+/// [`Nachforderung`] ist.
+pub fn art_der_anfrage(erstes_byte: u8) -> &'static str {
+    ARTEN.get(usize::from(erstes_byte)).copied().unwrap_or("andere")
+}
+
 impl Nachforderung {
     /// Der Bereich, den ein Knoten auf Höhe `eigene` anfordern sollte,
     /// wenn er von Höhe `fremde` gehört hat.
@@ -647,6 +665,33 @@ impl Nachlieferung {
             Ok(n) if rest.is_empty() => Some(n),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod arten_tests {
+    use super::*;
+
+    /// Stichproben über die ganze Liste: Stimmt das erste Byte mit dem Namen,
+    /// ist die Reihenfolge nicht verrutscht.
+    #[test]
+    fn die_arten_stehen_in_der_reihenfolge_der_varianten() {
+        let proben = [
+            (Nachforderung::Bloecke { ab: 0, bis: 0 }, "Bloecke"),
+            (Nachforderung::Ping, "Ping"),
+            (Nachforderung::Zeugenstuecke(Vec::new()), "Zeugenstuecke"),
+            (Nachforderung::LeichterAnker, "LeichterAnker"),
+            (Nachforderung::LeichterAbzug { hoehe: 0, ab: 0 }, "LeichterAbzug"),
+            (Nachforderung::Kontobeweise(Vec::new()), "Kontobeweise"),
+            (Nachforderung::Wechselbelege { ab: 0 }, "Wechselbelege"),
+            (Nachforderung::VollerAnker, "VollerAnker"),
+            (Nachforderung::WechselbelegeKompakt { ab: 0 }, "WechselbelegeKompakt"),
+        ];
+        for (n, name) in proben {
+            let b = n.als_bytes().expect("kodiert");
+            assert_eq!(art_der_anfrage(b[0]), name);
+        }
+        assert_eq!(art_der_anfrage(200), "andere");
     }
 }
 

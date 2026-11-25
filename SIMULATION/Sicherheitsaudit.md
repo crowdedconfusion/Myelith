@@ -1,6 +1,6 @@
 # Sicherheitsaudit
 
-**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A31) am 2026-10-27, Saat und Unterschrift der Zeitprobe (A32) am 2026-10-28, der rotierende Erzeuger und die Prüfpunkte (A33 bis A40) am 2026-11-05, die Wahl des Tokens (A41) am selben Tag, die Kollusion beider Pods im Netz (A12) am 2026-11-06, die Lücke der Wechselbelege nach einer Ruhe der Finalität (A42) am 2026-11-07, der Durchgang vor dem Testnetz (A10, A12, A23 neu geprüft, A43 bis A45 neu) und seine Behebungen (A23, A43, A46) sowie der grosse Durchgang über die Eingänge des Knotens (A47 bis A50) am 2026-11-08, die Funde an Vorlage, Tür und Prüfvolumen (A54 bis A57) am 2026-11-17, der Durchgang über Saat, Agentenschicht und Update (A51 bis A53) am 2026-11-18
+**Stand:** 2026-08-28, Tür und Wallet (A16 bis A24) und Quorumsschnitt (A25) am 2026-10-26, Stichprobe im Netz (A27) und Zeitprobe (A28 bis A31) am 2026-10-27, Saat und Unterschrift der Zeitprobe (A32) am 2026-10-28, der rotierende Erzeuger und die Prüfpunkte (A33 bis A40) am 2026-11-05, die Wahl des Tokens (A41) am selben Tag, die Kollusion beider Pods im Netz (A12) am 2026-11-06, die Lücke der Wechselbelege nach einer Ruhe der Finalität (A42) am 2026-11-07, der Durchgang vor dem Testnetz (A10, A12, A23 neu geprüft, A43 bis A45 neu) und seine Behebungen (A23, A43, A46) sowie der grosse Durchgang über die Eingänge des Knotens (A47 bis A50) am 2026-11-08, die Funde an Vorlage, Tür und Prüfvolumen (A54 bis A57) am 2026-11-17, der Durchgang über Saat, Agentenschicht und Update (A51 bis A53) am 2026-11-18, das übergroße Bündel (A58) am 2026-11-23
 **Grundlage:** die Angreiferklassen aus Whitepaper Kap. 5.6 und 9.2, die
 Sicherheitsargumente aus Kap. 6.8 und Anhang B, sowie die Funde 41 bis 53
 dieses Projekts.
@@ -9,8 +9,8 @@ dieses Projekts.
 abgewehrt werden, welche gemessen offen sind und welche niemand geprüft
 hat. Es ist **kein externes Review** (K5, K9) und ersetzt keines.
 
-**Der wichtigste Satz vorweg:** Von den 57 Angriffsklassen
-unten (Stand 2026-11-19) sind **54 abgewehrt und belegt**, **zwei offen mit
+**Der wichtigste Satz vorweg:** Von den 58 Angriffsklassen
+unten (Stand 2026-11-23) sind **55 abgewehrt und belegt**, **zwei offen mit
 gemessener oder benannter Lücke** (A9, A12) und **eine
 ungeprüft** (A13, die Krypto-Primitiven ohne externes Review). A53 ist seit
 dem 2026-11-18 wirksam (Freigabeschlüssel eingetragen, Update echt
@@ -124,6 +124,7 @@ Kettenmigration.
 | A55 | **Ein Guthaben, mehrfach zugesagt** | ✅ | Gefunden 2026-11-17: Mehrere Sitzungen eines Inhabers bekamen an der Tür dasselbe Guthaben zugesagt; der Überhang war Rechenarbeit ohne Bezahlung. **Geschlossen** (GATEWAY 0.16.0): Vormerkung je Inhaber unter derselben Sperre, freigegeben beim Ende der Anfrage |
 | A56 | **Prüfvolumen ohne Deckel** | ✅ | Gefunden 2026-11-17: Ein Checker gab seine Positionen selbst an und nahm so den anderen ihren Anteil am Pool. **Geschlossen** (CONSENSUS 0.90.0): gedeckelt durch die Segmente des Bündels |
 | A57 | **Werkzeugaufrufe, die nicht angeboten wurden** | ✅ | Gefunden 2026-11-17: Die Tür gab jeden erkannten Werkzeugaufruf zurück, auch einen, den die Anfrage nicht angeboten hatte. **Geschlossen** (GATEWAY 0.16.0): nur angebotene Namen |
+| A58 | **Ein Bündel, zu groß für die Stichprobe** | ✅ | Gefunden 2026-11-23 bei den Folgerechnungen: Die Kette nahm Bündel mit beliebig vielen Segmenten an, die Spurablage eines Bündels durfte aber höchstens 64 MiB groß sein (rund 48 000 Segmente). Ein Pod mit mehr (im Testnetz schon ein ehrlicher auf CPU, rund 87 000 je Epoche) wurde bei keinem Mitglied abgelegt, kein Prüfer bekam den Verlauf, das Bündel blieb ungeprüft; ein Angreifer konnte das absichtlich herbeiführen. **Geschlossen** (Entscheidung des Projektinhabers): Deckel von 100 000 Segmenten in der Kette (CONSENSUS 0.92.0), Grenze der Ablage daraus und aus der Ebenenzahl (SHARED_TYPES 0.76.0, beim Netzmodell rund 133 MiB), Ablagen auf der Platte statt im Speicher (NODE 0.138.0) |
 | A25 | **Zwei Quoren ohne gemeinsamen Teilnehmer** | ✅ | **Fund 652** (2026-10-26) geschlossen: ein Gesamtgewicht über `u64` sättigte; Eigenschaftstest `quorumschnitt.rs` |
 
 ---

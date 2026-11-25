@@ -27,6 +27,10 @@ fn koordinator(dir: &std::path::Path) -> (Coordinator, Tokenizer) {
 }
 
 fn shards(dir: &std::path::Path) -> (Vec<Arc<ShardNode>>, Tokenizer) {
+    shards_mit(dir, 4)
+}
+
+fn shards_mit(dir: &std::path::Path, deckel: u64) -> (Vec<Arc<ShardNode>>, Tokenizer) {
     let model = load_model(dir).expect("Modell");
     let tok = Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad"))
         .expect("Wortschatz");
@@ -43,7 +47,7 @@ fn shards(dir: &std::path::Path) -> (Vec<Arc<ShardNode>>, Tokenizer) {
             s == 3,
             model.clone(),
             sk,
-            4,
+            deckel,
         )));
     }
     (shards, tok)
@@ -251,4 +255,58 @@ fn das_buendel_ist_der_anfang_der_liste_auch_wenn_danach_gerechnet_wird() {
     let (_, alle) = k.blaetter();
     assert!(alle.len() > n, "der dritte Lauf hat nicht angehängt");
     assert_ne!(myl_types::segments_root(&alle).expect("Wurzel"), buendel.segments_root);
+}
+
+/// ⚑ **Ein langer Prefill neben einem laufenden Decode** (Simulation vom
+/// 2026-11-20 und Kurzlauf vom 2026-11-23): Der langsamere Zwilling rechnete
+/// noch das Decode einer Sitzung, als der lange Prompt der nächsten kam, und
+/// lieferte andere Token als der Zwilling, der beides nacheinander rechnete.
+/// Hier: Sitzung A dekodiert, Sitzung B kommt mitten hinein mit einem langen
+/// Prompt (gruppierte Experten am Gemisch). Beide müssen bitgleich zu
+/// „nacheinander“ sein. Am 35B gefahren (`MYL_POD_MODELL=
+/// raven-35b-a3b-int4`, 2026-11-23): grün, 48 und 16 Token. Das 0,6B hat
+/// keinen rekurrenten Zustand und kein Gemisch. ⚠️ Prefill und Decode fuhren
+/// dabei nicht im selben Stapel (der Zähler steht in der Ausgabe); das
+/// belegt `stapel_ueber_sitzungen_rechnen_bitgleich`. Die Abweichung aus
+/// dem Lauf erklärt diese Probe also nicht.
+#[test]
+fn ein_langer_prefill_neben_einem_decode_rechnet_bitgleich() {
+    let dir = artefakte();
+    if !myl_pod::artefakte::vorhanden(&dir) {
+        return;
+    }
+    let (shards_a, tok) = shards_mit(&dir, 64);
+    let nacheinander = Coordinator::new(PodId::new([0xAA; 32]), EpochId(0), shards_a);
+    let (shards, _) = shards_mit(&dir, 64);
+    let weg = Arc::new(Zoegerer {
+        innen: myl_pod::shardweg::ImProzess::neu(shards),
+        gemischt: std::sync::atomic::AtomicUsize::new(0),
+        mit_prefill: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let gestapelt = Coordinator::ueber_weg(
+        PodId::new([0xAA; 32]),
+        EpochId(0),
+        Arc::clone(&weg) as Arc<dyn myl_pod::shardweg::Shardweg>,
+    )
+    .expect("Koordinator");
+    let ids = |p: &str| -> Vec<u32> { tok.encode(p).iter().map(|t| *t as u32).collect() };
+    // Ein Prompt, der weiterzählt und nicht nach wenigen Token endet.
+    let a = ids("Eins, zwei, drei, vier, fünf, sechs, sieben, acht,");
+    let lang: String = (0..48).map(|i| format!("Absatz {i}: {} ", PROMPTS[i % 4])).collect::<Vec<_>>().join("\n");
+    let b = ids(&lang);
+    assert!(b.len() > 64, "der Prompt muss ueber mehrere Stapel gehen: {}", b.len());
+    let soll_a = nacheinander.rechne(300, &a, 48).token;
+    let soll_b = nacheinander.rechne(301, &b, 16).token;
+    let (ist_a, ist_b) = std::thread::scope(|faeden| {
+        let k = &gestapelt;
+        let fa = faeden.spawn(|| k.rechne(300, &a, 48).token);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let fb = faeden.spawn(|| k.rechne(301, &b, 16).token);
+        (fa.join().expect("A"), fb.join().expect("B"))
+    });
+    let gemischt = weg.mit_prefill.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[nebenlaeufig] A {} Token, B {} Token; gemischte Stapel mit Prefill: {gemischt}", ist_a.len(), ist_b.len());
+    assert!(soll_a.len() > 16, "A endete zu frueh, um neben B zu laufen: {}", soll_a.len());
+    assert_eq!(soll_a, ist_a, "das Decode von A wurde durch den Prefill von B veraendert");
+    assert_eq!(soll_b, ist_b, "der Prefill von B rechnete neben A anders");
 }

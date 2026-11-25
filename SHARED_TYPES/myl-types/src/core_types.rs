@@ -216,6 +216,28 @@ pub struct Sitzungszeugnis {
 /// viele abgeschlossen hat: Er verwirft den Lauf und zaehlt ihn.
 pub const SITZUNGEN_JE_BUENDEL_HOECHSTENS: usize = 1024;
 
+/// ⚑ **Höchstens so viele Segmente trägt ein Bündel** (Entscheidung des
+/// Projektinhabers vom 2026-11-23, Folgerechnungen). Ein Segment ist eine
+/// Position. Die Kette weist ein Bündel mit mehr ab: Ohne Deckel konnte ein
+/// Pod sein Bündel so groß machen, dass seine Spurablage bei keinem Mitglied
+/// ankam ([`spurablage_hoechstens_bytes`]) und kein Prüfer nachrechnen
+/// konnte. Derselbe Wert ist die Notbremse des Koordinators; je Pod und
+/// Epoche wird höchstens so viel Arbeit vergütet (bei Epochen zu einer
+/// Stunde rund 28 Positionen je Sekunde; die Kapazität eines Pods ist noch
+/// ein Platzhalter und wird nach dem Miettag gesetzt).
+pub const MAX_SEGMENTE_JE_BUENDEL: u32 = 100_000;
+
+/// **Die größte Spurablage eines Bündels in Bytes**, bei `ebenen` Ebenen des
+/// Netzmodells: je Segment Zeugnis (64), Kette aus Eingang und je Ebene
+/// einem Hash (`(ebenen + 1) · 32`), Eingabe (zwei `i16`) und die Längen der
+/// Borsh-Vektoren (76 + 32 · (ebenen + 1) Bytes), mal
+/// [`MAX_SEGMENTE_JE_BUENDEL`], dazu 1 MiB für Kopf und Bündel. Beim
+/// Netzmodell (40 Ebenen) rund 133 MiB.
+pub fn spurablage_hoechstens_bytes(ebenen: u32) -> u64 {
+    let je_segment = 76 + 32 * (u64::from(ebenen) + 1);
+    je_segment * u64::from(MAX_SEGMENTE_JE_BUENDEL) + (1 << 20)
+}
+
 /// **Die Liste der Sitzungen eines Buendels**: die Ausgabenzeugnisse nach
 /// Sitzung gruppiert, aufsteigend nach Nummer, je Gruppe Zahl und
 /// [`ausgabenwurzel`]. Zwei Zwillinge, die dieselbe Sitzung gleich gerechnet
@@ -1271,5 +1293,42 @@ impl Spurablage {
             });
         }
         Some(aus)
+    }
+
+}
+
+#[cfg(test)]
+mod spurablage_grenze_tests {
+    use super::*;
+    use crate::ids::{EpochId, MerkleRoot, PodId};
+
+    /// Die Grenze einer Spurablage stimmt mit der Borsh-Kodierung überein:
+    /// Für 40 Ebenen sind es je Segment genau 1 388 Bytes; eine Ablage mit
+    /// dem Deckel an Segmenten und einem Bündel passt unter die Grenze, eine
+    /// mit einem Segment mehr nicht mehr ohne den Rand.
+    #[test]
+    fn die_grenze_der_spurablage_folgt_der_kodierung() {
+        let eintrag = |i: u32| {
+            (
+                Segmentzeugnis { id: crate::ids::SegmentId::new([i as u8; 32]), spurwurzel: MerkleRoot::new([1; 32]) },
+                vec![Hash([2; 32]); 41],
+            )
+        };
+        let ablage = |n: u32| Spurablage {
+            epoche: EpochId(1),
+            pod: PodId::new([1; 32]),
+            segments_root: MerkleRoot::new([3; 32]),
+            eintraege: (0..n).map(eintrag).collect(),
+            eingaben: (0..n).map(|_| vec![1i16, 2]).collect(),
+            buendel: None,
+        };
+        let eins = borsh::to_vec(&ablage(1)).expect("kodiert").len();
+        let zwei = borsh::to_vec(&ablage(2)).expect("kodiert").len();
+        assert_eq!(zwei - eins, 1_388, "Bytes je Segment bei 40 Ebenen");
+        let kopf = (eins - 1_388) as u64;
+        let voll = kopf + 1_388 * u64::from(MAX_SEGMENTE_JE_BUENDEL);
+        assert!(voll < spurablage_hoechstens_bytes(40));
+        assert!(spurablage_hoechstens_bytes(40) - voll < 2 << 20, "der Rand bleibt klein");
+        assert_eq!(spurablage_hoechstens_bytes(40), 1_388 * 100_000 + (1 << 20));
     }
 }

@@ -86,7 +86,7 @@ pub use core_types::{
     Spuranfrage, Spurantwort, lieferung_pruefen, Lieferfehler, prompt_laenge, Spurablage, sitzung_und_position, token_aus_eingabe,
     eingabe_aus_bytes, verlauf_pruefen, Verlauffehler,
     sitzungen_abgleichen, sitzungsliste_pruefen, sitzungszeugnisse, FehlendeSitzung, Sitzungsabgleich, Sitzungslistenfehler,
-    Sitzungszeugnis, SITZUNGEN_JE_BUENDEL_HOECHSTENS,
+    Sitzungszeugnis, SITZUNGEN_JE_BUENDEL_HOECHSTENS, MAX_SEGMENTE_JE_BUENDEL, spurablage_hoechstens_bytes,
 };
 pub use hash::Hash;
 pub use ids::{

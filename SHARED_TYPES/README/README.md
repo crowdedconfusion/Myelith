@@ -1,6 +1,6 @@
 # SHARED_TYPES: die gemeinsamen Typen (`myl-types`)
 
-> **Version:** 0.75.1
+> **Version:** 0.76.0
 > **Datum:** 2026-11-18
 > **Status:** In Gebrauch bei jeder Kiste des Protokolls: Hash,
 > Merkle-Baum, VRF (bitgenau gegen die Vektoren aus RFC 9381), BLS12-381
@@ -48,6 +48,22 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.76.0 (2026-11-23): Der Deckel je Bündel und die Grenze der Spurablage (`myl-types` 0.76.0)
+
+- **`MAX_SEGMENTE_JE_BUENDEL`** (100 000): so viele Segmente trägt ein
+  Bündel höchstens; die Kette setzt ihn durch (CONSENSUS 0.92.0), der
+  Koordinator nimmt ihn als Notbremse (COMPUTE_PIPELINE 0.73.0).
+- **`spurablage_hoechstens_bytes(ebenen)`**: die größte Spurablage eines
+  Bündels, `(76 + 32 · (ebenen + 1)) · Deckel + 1 MiB`, beim Netzmodell
+  (40 Ebenen) rund 133 MiB. Probe `die_grenze_der_spurablage_folgt_der_kodierung`
+  gegen die Borsh-Kodierung (genau 1 388 Bytes je Segment bei 40 Ebenen).
+- Anlass: die Folgerechnungen vom 23. November. Ein Pod auf CPU-Hardware
+  rechnet in einer Epoche des Testnetzes rund 87 000 Positionen; seine
+  Ablage (121 MB) lag über der alten Grenze eines Belegs (64 MiB), kein
+  Mitglied nahm sie an, und das Bündel blieb ungeprüft. Entscheidung des
+  Projektinhabers: Deckel in der Kette, Grenze daraus, Ablagen auf der
+  Platte.
 
 ### v0.75.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung (`myl-types` 0.75.1)
 

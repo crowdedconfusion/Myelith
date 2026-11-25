@@ -1,7 +1,7 @@
 # CONSENSUS: Abstimmung, Kette und Epochenplan (`myl-consensus`, `myl-ledger`, `myl-scheduler`)
 
-> **Version:** 0.91.1 (`myl-consensus` 0.52.1, `myl-scheduler` 0.19.2,
-> `myl-ledger` 0.61.0)
+> **Version:** 0.92.0 (`myl-consensus` 0.52.1, `myl-scheduler` 0.19.2,
+> `myl-ledger` 0.62.0)
 > **Datum:** 2026-11-18
 > **Status:** In Gebrauch im Knoten: BFT mit Gewicht nach Einsatz,
 > Rundenwechsel mit Sperre und Zertifikat, Beweis für Doppelsignaturen,
@@ -90,6 +90,21 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.92.0 (2026-11-23): Ein Bündel trägt höchstens 100 000 Segmente (`myl-ledger` 0.62.0)
+
+- ⚑ **Neue Gültigkeitsregel** (Entscheidung des Projektinhabers vom
+  2026-11-23): `buendel_einreichen` weist ein Bündel mit mehr als
+  `myl_types::MAX_SEGMENTE_JE_BUENDEL` Segmenten ab
+  (`TransitionError::ZuVieleSegmente`), vor der Signaturprüfung. Ohne sie
+  konnte ein Pod sein Bündel so groß machen, dass seine Spurablage bei
+  keinem Mitglied ankam und kein Prüfer der Stufe 2 nachrechnen konnte.
+- Vor dem Start des Testnetzes, also ohne Bruch einer laufenden Kette.
+  ⚠️ Je Pod und Epoche wird damit höchstens so viel Arbeit vergütet (bei
+  Epochen zu einer Stunde rund 28 Positionen je Sekunde); die Kapazität
+  eines Pods wird nach dem Miettag gesetzt.
+- Probe: in `die_liste_der_sitzungen_muss_gelten_und_unterschrieben_sein`
+  (Deckel plus eins abgewiesen, genau der Deckel angenommen).
 
 ### v0.91.1 (2026-11-18): Der Kopf für Nutzer, Betreiber und Entwicklung
 

@@ -106,6 +106,48 @@ pub struct ShardNode {
     /// [`integer_llm_runtime::generate::DekodierDigest`] und ist damit
     /// unmittelbar gegen den Einzelknotenlauf zu halten.
     dekodier_digest: Mutex<HashMap<u64, DekodierDigest>>,
+    /// ⚑ **Dieselbe Anfrage zweimal heißt einmal rechnen** (Fund 723,
+    /// [`Self::einmal_rechnen`]).
+    einmal: Mutex<Einmal>,
+    einmal_frei: std::sync::Condvar,
+}
+
+/// Was [`ShardNode::einmal_rechnen`] je Sitzung führt.
+#[derive(Default)]
+struct Einmal {
+    /// Sitzungen, für die gerade gerechnet wird.
+    in_arbeit: std::collections::HashSet<u64>,
+    /// Je Sitzung die zuletzt gerechnete Anfrage.
+    zuletzt: HashMap<u64, Arc<Zuletzt>>,
+}
+
+/// Eine gerechnete Anfrage: ihr Abdruck, die Länge jedes beteiligten
+/// Speichers danach und die Antwort.
+struct Zuletzt {
+    abdruck: [u8; 32],
+    laengen: Vec<(u64, usize)>,
+    aus: Vec<ShardOut>,
+}
+
+/// So lange wartet eine Anfrage höchstens auf eine laufende Rechnung
+/// derselben Sitzung (wie die Leitung des Knotens zum eigenen Shard).
+pub const EINMAL_WARTEN: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Gibt die Sitzungen frei, auch wenn die Rechnung in Panik ging.
+struct Belegt<'a> {
+    shard: &'a ShardNode,
+    sitzungen: &'a [u64],
+}
+
+impl Drop for Belegt<'_> {
+    fn drop(&mut self) {
+        let mut e = self.shard.einmal.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for s in self.sitzungen {
+            e.in_arbeit.remove(s);
+        }
+        drop(e);
+        self.shard.einmal_frei.notify_all();
+    }
 }
 
 /// Nimmt eine Sperre und macht aus einer **vergifteten** einen Fehler.
@@ -214,7 +256,85 @@ impl ShardNode {
             max_new_tokens,
             gen_count: Mutex::new(HashMap::new()),
             dekodier_digest: Mutex::new(HashMap::new()),
+            einmal: Mutex::new(Einmal::default()),
+            einmal_frei: std::sync::Condvar::new(),
         }
+    }
+
+    /// ⚑ **Eine Anfrage, die schon gerechnet ist, wird wiederholt, nicht
+    /// neu gerechnet** (Fund 723, Auftragslauf vom 2026-11-24).
+    ///
+    /// 📌 Seit Fund 719 lehnt der Shard eine schon gerechnete Position ab,
+    /// und der Koordinator gab die Runde nach jedem Transportfehler auf. Unter
+    /// Last (35B, Prefill von 6 442 Token, Stapel bis 38 s) lief so jede
+    /// Zeitüberschreitung in einen Neubeginn von vorn, während der alte Lauf
+    /// weiterrechnete, und die doppelte Last brachte die nächste: Der erste
+    /// Auftrag endete mit „kein Pod hat gerechnet“.
+    ///
+    /// Jetzt merkt sich der Shard je Sitzung die zuletzt gerechnete Anfrage
+    /// (Abdruck über alle Nachrichten), die Länge jedes beteiligten Speichers
+    /// danach und die Antwort. Kommt **dieselbe** Anfrage wieder und hat
+    /// keine ihrer Sitzungen seitdem gerechnet oder vergessen (jede Länge
+    /// gleich), geht dieselbe Antwort zurück, ohne den Speicher zu berühren:
+    /// Der Zustand schiebt sich nicht weiter (Fund 719 bleibt zu), und die
+    /// Unterschrift ist dieselbe. Rechnet der Shard die Anfrage gerade noch
+    /// (die Frist des Fragenden lief vorher ab), wartet die Wiederholung
+    /// darauf, höchstens [`EINMAL_WARTEN`]. Anfragen verschiedener Sitzungen
+    /// warten nicht aufeinander.
+    pub fn einmal_rechnen(
+        &self,
+        msgs: &[PodMessage],
+        rechnen: impl FnOnce() -> Result<Vec<ShardOut>, String>,
+    ) -> Result<Vec<ShardOut>, String> {
+        let mut sitzungen: Vec<u64> = Vec::new();
+        for m in msgs {
+            if !sitzungen.contains(&m.session_id) {
+                sitzungen.push(m.session_id);
+            }
+        }
+        let Some(erste) = sitzungen.first().copied() else {
+            return rechnen();
+        };
+        let bytes = borsh::to_vec(msgs).map_err(|e| format!("Anfrage nicht kodierbar: {e}"))?;
+        let abdruck = *myl_types::Hash::sha256(&bytes).as_bytes();
+        let ende = std::time::Instant::now() + EINMAL_WARTEN;
+        let mut e = sperre(&self.einmal, "Wiederholung")?;
+        while sitzungen.iter().any(|s| e.in_arbeit.contains(s)) {
+            let rest = ende.saturating_duration_since(std::time::Instant::now());
+            if rest.is_zero() {
+                return Err(format!("Sitzung {erste} wird noch gerechnet (Shard {})", self.shard_index));
+            }
+            e = self.einmal_frei.wait_timeout(e, rest).unwrap_or_else(std::sync::PoisonError::into_inner).0;
+        }
+        if let Some(z) = e.zuletzt.get(&erste).cloned() {
+            if z.abdruck == abdruck && self.laengen_unveraendert(&z.laengen)? {
+                return Ok(z.aus.clone());
+            }
+        }
+        for s in &sitzungen {
+            e.in_arbeit.insert(*s);
+        }
+        drop(e);
+        let belegt = Belegt { shard: self, sitzungen: &sitzungen };
+        let ergebnis = rechnen();
+        if let Ok(aus) = &ergebnis {
+            let laengen = {
+                let c = sperre(&self.caches, "KV-Cache")?;
+                sitzungen.iter().map(|s| (*s, c.get(s).map_or(0, KVCache::laenge))).collect()
+            };
+            let z = Arc::new(Zuletzt { abdruck, laengen, aus: aus.clone() });
+            let mut e = sperre(&self.einmal, "Wiederholung")?;
+            for s in &sitzungen {
+                e.zuletzt.insert(*s, Arc::clone(&z));
+            }
+        }
+        drop(belegt);
+        ergebnis
+    }
+
+    fn laengen_unveraendert(&self, laengen: &[(u64, usize)]) -> Result<bool, String> {
+        let c = sperre(&self.caches, "KV-Cache")?;
+        Ok(laengen.iter().all(|(s, n)| c.get(s).map(KVCache::laenge) == Some(*n)))
     }
 
     /// Dekodier-Digest einer Session: Hexwert und Zahl der Schritte.
@@ -518,6 +638,10 @@ impl ShardNode {
         if let Ok(mut c) = self.caches.lock() {
             c.remove(&session_id);
         }
+        // Fund 723: Was zur Wiederholung gemerkt war, gehört dazu.
+        if let Ok(mut e) = self.einmal.lock() {
+            e.zuletzt.remove(&session_id);
+        }
         if let Ok(mut d) = self.dekodier_digest.lock() {
             d.remove(&session_id);
         }
@@ -553,6 +677,29 @@ impl ShardNode {
     /// ⚑ **Hinter der Kontextgrenze** begann die RoPE-Tabelle frueher von
     /// vorn (Fund 368); jetzt bricht das Modell dort ab, und auch das wird
     /// hier zur abgelehnten Nachricht.
+    /// ⛔️ **Fund 724 (2026-11-24): Die Spur sagt, für welche Ebene eine
+    /// Nachricht ist.** Ein Token-Eingang hat keine Spur, eine Aktivierung für
+    /// einen Shard ab Ebene `L` genau `L` Einträge, einen je Ebene davor. 📌 Im
+    /// Auftragslauf vom 24. rechnete der Koordinator einer abgelaufenen Epoche
+    /// über seine alten Mitglieder weiter; deren Knoten reichten an den Shard
+    /// weiter, den sie **jetzt** hatten, mit anderen Ebenen, und der rechnete
+    /// die Nachricht an der falschen Stelle des Modells. Die Antworten wuchsen
+    /// über 24 Minuten auf 4 MiB, bis die Leitung sie nicht mehr trug. Bis
+    /// hierher fiel das nur auf, wenn zufällig das Embedding fehlte.
+    fn spur_passt(&self, m: &PodMessage) -> Result<(), String> {
+        let soll = if m.carries_tokens() { 0 } else { self.layer_start };
+        if m.trace.len() != soll {
+            return Err(format!(
+                "die Nachricht ist für Ebene {}, dieser Shard beginnt bei Ebene {} (Shard {}, Position {})",
+                m.trace.len(),
+                soll,
+                self.shard_index,
+                m.position
+            ));
+        }
+        Ok(())
+    }
+
     fn position_pruefen(&self, session_id: u64, pos: usize, cache: KVCache) -> Result<KVCache, String> {
         let laenge = cache.laenge();
         let grenze = self.model.kontextgrenze();
@@ -567,6 +714,21 @@ impl ShardNode {
             self.put_cache(session_id, cache)?;
             return Err(format!(
                 "Position {pos} liegt hinter dem Ende des KV-Speichers ({laenge} Positionen, Shard {})",
+                self.shard_index
+            ));
+        }
+        // ⛔️ **Fund 719 (2026-11-23): Eine schon gerechnete Position wird
+        //    abgelehnt.** Bei reiner Attention überschrieb eine Wiederholung
+        //    denselben Eintrag mit denselben Werten; die lineare Attention des
+        //    Netzmodells führt aber einen rekurrenten Zustand, und eine zweimal
+        //    gerechnete Position schob ihn ein zweites Mal weiter, still und
+        //    falsch. So rechneten Zwillinge verschieden, nachdem der
+        //    Koordinator einen Stapel nach einem Transportfehler einzeln
+        //    wiederholt hatte, den der Shard schon gerechnet hatte.
+        if pos < laenge {
+            self.put_cache(session_id, cache)?;
+            return Err(format!(
+                "Position {pos} ist schon gerechnet ({laenge} Positionen, Shard {}); eine Wiederholung verschöbe den Zustand",
                 self.shard_index
             ));
         }
@@ -586,6 +748,7 @@ impl ShardNode {
         if msg.flags & crate::wire::FLAG_ABORT != 0 {
             return Err("Request abgebrochen".to_string());
         }
+        self.spur_passt(msg)?;
 
         let pos = msg.position as usize;
         let session_id = msg.session_id;
@@ -728,6 +891,7 @@ impl ShardNode {
                 if m.flags & crate::wire::FLAG_ABORT != 0 {
                     return Err(fehler("Request abgebrochen".to_string()));
                 }
+                self.spur_passt(m).map_err(fehler)?;
                 let pos = m.position as usize;
                 if pos >= grenze {
                     return Err(fehler(format!("Position {pos} liegt hinter der Kontextgrenze {grenze} des Modells (Shard {})", self.shard_index)));
@@ -738,7 +902,14 @@ impl ShardNode {
                 if pos > n {
                     return Err(fehler(format!("Position {pos} liegt hinter dem Ende des KV-Speichers ({n} Positionen, Shard {})", self.shard_index)));
                 }
-                laenge.insert(m.session_id, n.max(pos + 1));
+                // ⛔️ Fund 719: nur genau die nächste Position.
+                if pos < n {
+                    return Err(fehler(format!(
+                        "Position {pos} ist schon gerechnet ({n} Positionen, Shard {}); eine Wiederholung verschöbe den Zustand",
+                        self.shard_index
+                    )));
+                }
+                laenge.insert(m.session_id, pos + 1);
                 // ⚠️ Je Sitzung aufsteigend, sonst Token für Token.
                 if zuletzt.insert(m.session_id, pos).is_some_and(|vorher| vorher >= pos) {
                     drop(caches);

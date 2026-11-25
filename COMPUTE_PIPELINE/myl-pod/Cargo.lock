@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.63.0"
+version = "0.67.0"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",
@@ -909,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.75.1"
+version = "0.76.0"
 dependencies = [
  "blst",
  "borsh",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.29.3"
+version = "0.30.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",

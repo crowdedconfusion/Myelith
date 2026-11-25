@@ -95,6 +95,11 @@ pub enum TransitionError {
     /// aufsteigend, eine leere Sitzung, oder ihre Summe ist nicht die
     /// Segmentzahl des Bündels.
     SitzungslisteUngueltig,
+    /// ⚑ Das Bündel trägt mehr als [`myl_types::MAX_SEGMENTE_JE_BUENDEL`]
+    /// Segmente (Entscheidung des Projektinhabers vom 2026-11-23): Seine
+    /// Spurablage käme bei keinem Mitglied an, und kein Prüfer könnte
+    /// nachrechnen.
+    ZuVieleSegmente,
     /// Dieser Pod war in dieser Epoche nicht zum Training bestellt.
     ///
     /// ⚑ **Die Kernprüfung des Trainingsweges.** Ohne sie könnte jeder
@@ -291,6 +296,7 @@ impl std::fmt::Display for TransitionError {
                 f.write_str("fuer diesen Pod liegt in dieser Epoche schon ein Buendel vor")
             }
             Self::SitzungslisteUngueltig => f.write_str("die Liste der Sitzungen im Buendel gilt nicht"),
+            Self::ZuVieleSegmente => f.write_str("das Buendel traegt mehr Segmente, als ein Buendel tragen darf"),
             Self::WurzelPasstNicht => write!(
                 f,
                 "das Manifest nennt eine andere Wurzel als die, unter der \
@@ -1324,6 +1330,12 @@ pub fn buendel_einreichen(
     // aus der die Stichprobe zieht. Leer gilt (keine Liste).
     if myl_types::sitzungsliste_pruefen(&buendel.sitzungen, buendel.segmente).is_err() {
         return Err(TransitionError::SitzungslisteUngueltig);
+    }
+    // ⚑ **Der Deckel je Bündel** (2026-11-23), ebenfalls vor der Signatur:
+    //   Ohne ihn konnte ein Pod sein Bündel so groß machen, dass es der
+    //   Stichprobe entging.
+    if buendel.segmente > myl_types::MAX_SEGMENTE_JE_BUENDEL {
+        return Err(TransitionError::ZuVieleSegmente);
     }
     let schluessel: Vec<myl_types::bls::BlsPublicKey> =
         mitglieder.iter().map(|(_, k)| *k).collect();
@@ -3666,6 +3678,14 @@ mod tests {
         // ⛔️ Nach dem Unterschreiben verändert (zwei Segmente von der
         //    einen Sitzung zur anderen, die Summe stimmt weiter) oder
         //    gestrichen: Das Aggregat trägt nicht mehr.
+        // ⛔️ Über dem Deckel je Bündel, richtig unterschrieben, die Liste
+        //    stimmt: abgewiesen. Gegenprobe: genau der Deckel geht.
+        let mut st = frisch();
+        let n = myl_types::MAX_SEGMENTE_JE_BUENDEL;
+        assert_eq!(ein(&mut st, mit(vec![z(3, n + 1)], n + 1)), Err(TransitionError::ZuVieleSegmente));
+        assert!(st.buendel.is_empty());
+        let mut st = frisch();
+        ein(&mut st, mit(vec![z(3, n)], n)).expect("genau der Deckel");
         let mut verschoben = mit(vec![z(3, 2), z(8, 5)], 7);
         verschoben.sitzungen = vec![z(3, 4), z(8, 3)];
         let mut st = frisch();

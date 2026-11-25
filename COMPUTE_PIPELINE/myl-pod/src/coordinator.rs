@@ -38,6 +38,13 @@ use myl_types::ids::{EpochId, MinerId, PodId, SegmentId};
 use crate::shard::{ShardNode, ShardOut};
 use crate::wire::{self, PodMessage, FLAG_SAMPLE};
 
+/// So oft fragt der Koordinator dieselbe Anfrage nach einem Transportfehler
+/// noch einmal, bevor er die Runde aufgibt (Fund 723). Zwei: Eine verlorene
+/// Antwort braucht eine, eine abgelaufene Frist bei einem Shard, der noch
+/// rechnet, meist auch; mehr verlängerte nur das Warten auf einen Shard,
+/// der wirklich fort ist, bevor die Reserve übernimmt (6.8).
+pub const WIEDERHOLUNGEN_NACH_TRANSPORTFEHLER: usize = 2;
+
 /// Wie viele abgeschlossene Segmente höchstens ungezogen liegen.
 ///
 /// ⚑ **Eine Notbremse und keine Politik** (Fund 164). Der vorgesehene
@@ -45,7 +52,10 @@ use crate::wire::{self, PodMessage, FLAG_SAMPLE};
 /// Deckel fängt nur den Fall, dass niemand zieht. 100 000 Einträge sind
 /// bei rund vierzehn je Anfrage über siebentausend Anfragen, also weit
 /// jenseits einer Epoche, und trotzdem endlich.
-pub const MAX_ABGESCHLOSSENE: usize = 100_000;
+/// ⚑ Seit dem 2026-11-23 derselbe Wert, den die Kette durchsetzt
+/// ([`myl_types::MAX_SEGMENTE_JE_BUENDEL`]): Ein Bündel darüber nähme sie
+/// nicht an.
+pub const MAX_ABGESCHLOSSENE: usize = myl_types::MAX_SEGMENTE_JE_BUENDEL as usize;
 
 /// Ein abgeschlossenes Segment mit den gesammelten Übergangs-Signaturen.
 #[derive(Debug, Clone)]
@@ -201,6 +211,11 @@ fn segment_id_from(session_id: u64, position: u64, prompt_laenge: u64) -> Segmen
 pub struct Lauf {
     pub token: Vec<u32>,
     pub letztes_segment: Option<SegmentId>,
+    /// ⚑ Ob der Auftrag nach einer verlorenen Runde ein zweites Mal
+    /// gerechnet wurde (Fund 654). Für die Mitschrift der Zwillinge
+    /// (Simulation vom 2026-11-20): Eine Abweichung nach einer Wiederholung
+    /// zeigt auf einen Shard, der die Sitzung nicht vergessen hatte.
+    pub wiederholt: bool,
 }
 
 /// ⚑ **Eine Grenze für gleichzeitige Läufe** (2026-11-15), vor der Arbeit:
@@ -361,6 +376,12 @@ pub struct Coordinator {
     /// Die Endmarken des Modells: Ist das gezogene Token eine davon, ist die
     /// Antwort zu Ende. Leer heisst: bis zum Deckel, wie vor dem 2026-11-15.
     haltemarken: Vec<u32>,
+    /// ⚑ **Angehalten, weil die Epoche vorbei ist** (Fund 726,
+    /// [`Self::anhalten`]).
+    angehalten: std::sync::atomic::AtomicBool,
+    /// ⛔️ **Abgebrochene Sitzungen, auf die niemand mehr wartet** (Fund
+    /// 730, [`Self::sitzung_abbrechen`]).
+    abgebrochen: Mutex<std::collections::BTreeSet<u64>>,
 }
 
 impl Coordinator {
@@ -397,7 +418,41 @@ impl Coordinator {
             sammelstellen,
             vertreter: Vec::new(),
             haltemarken: Vec::new(),
+            angehalten: std::sync::atomic::AtomicBool::new(false),
+            abgebrochen: Mutex::new(std::collections::BTreeSet::new()),
         })
+    }
+
+    /// ⚑ **Die Epoche dieses Pods ist vorbei: nichts mehr rechnen** (Fund
+    /// 726, 2026-11-24; Whitepaper 4.2: beim Epochenwechsel zieht die
+    /// Sitzung in den Pod der neuen Epoche). Jede weitere Frage an einen
+    /// Shard scheitert sofort, ohne Wiederholung, und ein Lauf, der damit
+    /// scheitert, wird nicht neu gerechnet. 📌 Bis hierher rechnete ein Lauf
+    /// der alten Epoche weiter, bis er von selbst scheiterte, im Auftragslauf
+    /// vom 24. 13 bis 21 Minuten, neben dem Pod der neuen Epoche, der unter
+    /// dieser Last selbst keine Runde zu Ende brachte. Endgültig: Der
+    /// Koordinator gehört zu seiner Epoche.
+    pub fn anhalten(&self) {
+        self.angehalten.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Ob [`Self::anhalten`] gerufen wurde.
+    pub fn ist_angehalten(&self) -> bool {
+        self.angehalten.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// ⛔️ **Fund 730 (2026-11-25): Auf diese Sitzung wartet niemand mehr.**
+    /// Wie [`Self::anhalten`], nur für sie: Jede weitere Frage für sie
+    /// scheitert sofort, ohne Wiederholung, und ihr Lauf wird nicht neu
+    /// gerechnet. Die übrigen Sitzungen dieses Pods rechnen weiter. Gilt bis
+    /// zum Ende ihres Laufs; ein Abbruch danach bleibt ohne Wirkung.
+    pub fn sitzung_abbrechen(&self, sitzung: u64) {
+        self.abgebrochen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(sitzung);
+    }
+
+    /// Ob [`Self::sitzung_abbrechen`] für `sitzung` gerufen wurde.
+    pub fn ist_abgebrochen(&self, sitzung: u64) -> bool {
+        self.abgebrochen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains(&sitzung)
     }
 
     /// **Bei diesen Token endet eine Antwort** (Fund 702, 2026-11-15).
@@ -452,25 +507,53 @@ impl Coordinator {
     /// gehören nicht hierher: Sie teilten sich auf jedem Shard einen
     /// KV-Cache; die Tür vergibt je Anfrage eine neue Sitzung.
     pub fn rechne(&self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64) -> Lauf {
+        let lauf = self.rechne_innen(session_id, prompt_tokens, max_new_tokens);
+        self.abgebrochen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&session_id);
+        lauf
+    }
+
+    fn rechne_innen(&self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64) -> Lauf {
         let _platz = self.tor.eintreten();
         let mut ablage = Vec::new();
+        let mut wiederholt = false;
         let token = match self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, true, &mut ablage) {
             Some(t) => t,
+            // Fund 726: Die Epoche ist vorbei; der Pod der neuen rechnet.
+            None if self.ist_angehalten() => {
+                self.sitzung_abschliessen(session_id);
+                eprintln!("[coordinator] Sitzung {session_id}: angehalten, die Epoche ist vorbei");
+                return Lauf { token: Vec::new(), letztes_segment: None, wiederholt };
+            }
+            // Fund 730: Niemand wartet mehr auf sie.
+            None if self.ist_abgebrochen(session_id) => {
+                self.sitzung_abschliessen(session_id);
+                eprintln!("[coordinator] Sitzung {session_id}: abgebrochen, niemand wartet mehr");
+                return Lauf { token: Vec::new(), letztes_segment: None, wiederholt };
+            }
             None => {
+                wiederholt = true;
                 ablage.clear();
                 self.sitzung_abschliessen(session_id);
                 eprintln!("[coordinator] Sitzung {session_id}: eine Runde ging verloren, der Auftrag wird neu gerechnet");
-                // Die Wiederholung Token für Token: Sie trägt auch über einen
-                // Shard, der den Stapel nicht kennt (Fund 650).
-                match self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, false, &mut ablage) {
+                // ⚑ **Fund 725 (2026-11-24): Die Wiederholung als Stapel.**
+                //   Bis hierher ging sie Token für Token, damit sie auch über
+                //   einen Shard trägt, der den Stapel nicht kennt (Fund 650);
+                //   das tut heute `stapel_rechnen` selbst, das nach einer
+                //   Ablehnung einzeln rechnet. 📌 Token für Token kostete eine
+                //   Runde je Token und Shard (Fund 650: rund 4 s je Token über
+                //   Knoten): Im Auftragslauf vom 24. rechnete eine am Wechsel
+                //   verlorene Runde mit 4 693 Token 20 bis 37 Minuten über den
+                //   alten Pod weiter, neben dem Pod der neuen Epoche, bevor das
+                //   Podwerk den Auftrag weitergeben konnte.
+                match self.ein_durchlauf(session_id, prompt_tokens, max_new_tokens, true, &mut ablage) {
                     Some(t) => t,
-                    None => return Lauf { token: Vec::new(), letztes_segment: None },
+                    None => return Lauf { token: Vec::new(), letztes_segment: None, wiederholt },
                 }
             }
         };
         let letztes_segment = ablage.last().map(|c| c.id);
         self.anhaengen(ablage);
-        Lauf { token, letztes_segment }
+        Lauf { token, letztes_segment, wiederholt }
     }
 
     /// Die Segmente eines Laufs zu den übrigen, bis zum Deckel.
@@ -776,13 +859,71 @@ impl Coordinator {
     /// Nachricht für sich**: Er prüft alles vor dem ersten Rechnen
     /// ([`ShardNode::process_stapel`]), also hat er nichts verändert, und
     /// eine kaputte Nachricht nimmt keine fremde Sitzung mit.
+    ///
+    /// ⛔️ **Fund 719 (2026-11-23): Nur nach einer Ablehnung, nie nach einem
+    /// Transportfehler.** Hier stand `_ =>`: Auch ein abgebrochener Strom
+    /// („unexpected end of file“) führte zum stillen Einzelrechnen. Hatte der
+    /// Shard den Stapel schon gerechnet und nur die Antwort ging verloren,
+    /// rechnete er dieselben Positionen ein zweites Mal; beim Netzmodell
+    /// (lineare Attention) verschob das den Zustand, und die Zwillinge
+    /// lieferten verschiedene Token, ohne dass eine Zeile davon sprach
+    /// (Kurzlauf vom 2026-11-23, Simulation vom 2026-11-20). Jetzt scheitert
+    /// der Stapel sichtbar, die Runde gilt als verloren, und der Auftrag
+    /// wird nach dem Vergessen der Sitzung einmal neu gerechnet (Fund 654).
+    ///
+    /// ⚑ **Fund 723 (2026-11-24): Vor dem Aufgeben dieselbe Anfrage noch
+    /// einmal** ([`WIEDERHOLUNGEN_NACH_TRANSPORTFEHLER`]). Der Shard rechnet
+    /// eine Anfrage nur einmal und beantwortet dieselbe danach aus dem
+    /// Speicher ([`ShardNode::einmal_rechnen`]); ging nur die Antwort
+    /// verloren oder lief die Frist ab, während er noch rechnete, kommt so
+    /// dieselbe Antwort, ohne dass der Zustand sich verschiebt und ohne die
+    /// Runde von vorn.
     fn stapel_rechnen(&self, j: usize, msgs: &[PodMessage]) -> Vec<Result<ShardOut, String>> {
         if msgs.len() == 1 {
-            return vec![self.weg.rechne(j, &msgs[0])];
+            return vec![self.rechne_wiederholt(j, &msgs[0])];
         }
-        match self.weg.frage(j, &crate::shardweg::Shardanfrage::RechneStapel(msgs.to_vec())) {
+        match self.frage_wiederholt(j, &crate::shardweg::Shardanfrage::RechneStapel(msgs.to_vec())) {
             Ok(crate::shardweg::Shardantwort::StapelGerechnet(o)) if o.len() == msgs.len() => o.into_iter().map(Ok).collect(),
-            _ => msgs.iter().map(|m| self.weg.rechne(j, m)).collect(),
+            // Der Shard hat geantwortet und den Stapel abgelehnt: nichts
+            // gerechnet, einzeln geht es.
+            Ok(crate::shardweg::Shardantwort::Fehler(_)) => msgs.iter().map(|m| self.rechne_wiederholt(j, m)).collect(),
+            Ok(_) => {
+                let f = format!("Shard {j} antwortete auf den Stapel unpassend");
+                msgs.iter().map(|_| Err(f.clone())).collect()
+            }
+            Err(f) => msgs.iter().map(|_| Err(format!("Stapel an Shard {j} nicht beantwortet: {f}"))).collect(),
+        }
+    }
+
+    /// Eine Frage an Shard `j`; nach einem Transportfehler dieselbe noch
+    /// einmal, höchstens [`WIEDERHOLUNGEN_NACH_TRANSPORTFEHLER`]-mal. Eine
+    /// Antwort, auch eine Ablehnung, wird nie wiederholt.
+    fn frage_wiederholt(&self, j: usize, anfrage: &crate::shardweg::Shardanfrage) -> Result<crate::shardweg::Shardantwort, String> {
+        let mut versuch = 0;
+        loop {
+            if self.ist_angehalten() {
+                return Err("angehalten: die Epoche dieses Pods ist vorbei".to_string());
+            }
+            if anfrage.sitzung().is_some_and(|s| self.ist_abgebrochen(s)) {
+                return Err("abgebrochen: niemand wartet mehr auf diese Sitzung".to_string());
+            }
+            match self.weg.frage(j, anfrage) {
+                Ok(a) => return Ok(a),
+                Err(f) if versuch < WIEDERHOLUNGEN_NACH_TRANSPORTFEHLER => {
+                    versuch += 1;
+                    eprintln!("[coordinator] Shard {j} nicht beantwortet ({f}); dieselbe Anfrage noch einmal ({versuch}/{WIEDERHOLUNGEN_NACH_TRANSPORTFEHLER})");
+                }
+                Err(f) => return Err(f),
+            }
+        }
+    }
+
+    /// Wie [`crate::shardweg::Shardweg::rechne`], mit [`Self::frage_wiederholt`].
+    fn rechne_wiederholt(&self, j: usize, m: &PodMessage) -> Result<ShardOut, String> {
+        match self.frage_wiederholt(j, &crate::shardweg::Shardanfrage::Rechne(m.clone()))? {
+            crate::shardweg::Shardantwort::Gerechnet(aus) => Ok(*aus),
+            crate::shardweg::Shardantwort::Fehler(e) => Err(e),
+            andere => Err(format!("Shard {j} antwortete mit {andere:?} statt einer Rechnung")),
         }
     }
 

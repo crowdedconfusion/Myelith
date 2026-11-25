@@ -1,7 +1,7 @@
 # NODE: der Myelith-Knoten (`myl-node`)
 
-> **Version:** 0.136.1
-> **Datum:** 2026-11-19
+> **Version:** 0.140.0
+> **Datum:** 2026-11-24
 > **Status:** Läuft als Probekette und in Proben über mehrere Rechner.
 > Das geschlossene Testnetz `test-int4` ist im Knoten angelegt; es beginnt,
 > sobald der Startsatz seiner Validatoren im Release steht.
@@ -360,6 +360,136 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.140.0 (2026-11-25): Ein Prüfer rechnet eine Sitzung einmal und der Reihe nach, und eine Rechnung ohne Wartenden fällt (Funde 729 und 730, `myl-node` 0.140.0)
+
+- **Fund 729, im langen Auftragslauf vom 24. November:** Knoten k8 wurde
+  nach drei Stunden von aussen beendet (`-9`, Speicher). Als Prüfer bekam er
+  2 615 Ziehungen aus fünf Sitzungen der Epoche 1, fragte für jede bei allen
+  vier Mitgliedern nach dem Verlauf (10 460 Anfragen, die Antworten je bis
+  9 MB) und startete für jeden Verlauf eine eigene Rechenaufgabe: 143
+  Rechnungen des 35B zugleich, eine dauerte bis 2,8 Stunden, und die Pods
+  rechneten daneben achtmal langsamer. Alle drei Aufträge endeten ohne
+  Merkmal an der Tür.
+- **Je Pod ein Verlauf zur Zeit, der späteste zuerst**
+  (`verlaeufe_waehlen`, `VERLAUF_WARTEN` 600 s): Im Bündel stehen die
+  Positionen einer Sitzung in Folge, der Verlauf zur spätesten Ziehung trägt
+  also alle früheren derselben Sitzung.
+- **Ein Verlauf trägt die früheren Ziehungen seiner Sitzung**
+  (`mitgetragen`): dasselbe Bündel, das Segment im Verlauf, die Bindung über
+  den Anfang. Sie werden mit ihm nachgerechnet, in einem Durchgang
+  (`myl_verifier::verlauf_nachrechnen_bis`), und für sie geht keine Anfrage
+  mehr hinaus.
+- **Eine Rechenaufgabe, ein Verlauf nach dem anderen**
+  (`nachrechnen_der_reihe_nach`); die Laufzeit rechnet ohnehin auf allen
+  Kernen. Ein Schiedsbeleg je Abweichung wird einmal gerechnet, höchstens
+  `BELEGE_JE_DURCHGANG` (64) je Durchgang, so viele, wie der Knoten hält.
+- **Die Grenze von 256 beim Nachgerechneten ist fort** (wie Fund 728 beim
+  Gefragten): Sie warf bei über 2 000 offenen Fällen Nachgerechnetes
+  hinaus, und die Antwort des nächsten Mitglieds liess denselben Fall noch
+  einmal rechnen (im Lauf mehrfach zu sehen).
+- **Fund 730: Eine Rechnung ohne Wartenden fällt** (`einmal`): Geht der
+  Wartende und übernimmt niemand binnen `AUFHEBEN` (180 s), wird sie
+  abgebrochen, samt der Leitung zum Ortsdienst, der die Sitzung dann
+  anhält (`myl-pod` 0.67.0). Eine Rechnung, die nicht zur Übernahme steht,
+  fällt sofort mit ihrem Wartenden. Bis hierher rechnete sie zu Ende.
+- **Proben:** `knoten::pruefer_tests` (Wahl je Pod, Mitgetragenes) und
+  `einmal::tests::eine_rechnung_ohne_wartenden_faellt_nach_der_aufbewahrung`;
+  die Gegenprobe ohne Abbruch ist rot.
+
+### v0.139.0 (2026-11-24): Das Relais des eigenen Pods hat Vorrang und scheitert nur für sich, die Tür rechnet eine Anfrage einmal, und ein Prüfer fragt jeden Fall einmal (`myl-node` 0.139.0)
+
+- **Fund 720, im Auftragslauf vom 24. November:** Im Torknoten standen die
+  Stapel des Koordinators hinter mehr als 600 Spuranfragen der eigenen
+  Stichprobe an dasselbe Mitglied und wurden als „voll“ abgewiesen
+  (Stau-Bild `Spur:16:5:256`); die Runde ging verloren, der Auftrag wurde
+  neu gerechnet, und die Epoche endete darüber im Auftrag.
+- **`relais_bedienen` schickt mit `NodeCommand::AnfrageVorrang`**, was die
+  Relaisleitung des eigenen Pods weiterreichen lässt: Rechnen der Shards,
+  Spurablagen ganz und in Stücken, Bündel, Übernahme durch die Reserve,
+  Differenzbeweis. Alles andere bleibt ohne Vorrang; die Schlange in
+  `myl-net` 0.30.0 fasst jetzt die ganze Stichprobe.
+- **Fund 721: Ein Fehlschlag traf alle Relais zu einem Mitglied.** Scheiterte
+  irgendeine Anfrage an ein Mitglied, mit dem ein Relais offen war, brach
+  der Knoten alle Relais zu ihm ab (der Fehlschlag trug nicht, welche
+  Anfrage es war), auch einen Stapel, den dessen Shard gerade rechnete. Im
+  zweiten Kurzlauf vom 24. (wohl auch am 23., der Auslöser von Fund 719) traf es
+  den Lügner, an dem viele Anfragen scheitern: „unexpected end of file“, die
+  Runde verloren. Dazu verschluckte dieser Zweig eine gescheiterte
+  Zeitprobe an ein solches Mitglied, die dann nicht als Abweisung zählte.
+  Jetzt trägt jede Relaisanfrage den Zweck `ZWECK_RELAIS | kennung`, und nur
+  das Relais mit dieser Kennung scheitert; der Differenzbeweis hat
+  `ZWECK_DIFFERENZ`. Probe `der_zweck_eines_relais_nennt_genau_dieses`.
+- **Fund 727: Dieselbe Anfrage an der Tür heißt eine Rechnung** (neu
+  `einmal.rs`, `Ortsweg::rechne`). Die Tür wartet höchstens `TUERFRIST`
+  (540 s) auf den Ortsdienst und meldet dann 502; der Klient setzt nach 15 s
+  neu an. Der Ortsdienst rechnete die erste Anfrage weiter, und jeder neue
+  Anlauf begann dieselbe Runde noch einmal: Im achten Kurzlauf vom 24.
+  rechneten Sitzung 4, 5 und 6 mit derselben Eingabe gleichzeitig. Jetzt
+  läuft die Frage an den Ortsdienst je Schlüssel (Kontrakt, Deckel, Prompt;
+  `anfrageschluessel`) als eigene Aufgabe, höchstens `LAUF_HOECHSTENS`
+  (drei Türfristen). Ihr Ergebnis geht an genau einen: Wer mit demselben
+  Schlüssel kommt, nachdem der Wartende in die Frist lief und ging,
+  übernimmt sie, solange sie läuft oder ihr Ergebnis noch `AUFHEBEN`
+  (180 s) liegt; ausgeliefert ist vergessen, und dieselbe Frage danach (oder
+  während ein anderer noch wartet) ist eine eigene Anfrage. Abgebucht wird
+  beim Anlauf, der ausliefert, also einmal (Fund 717). 📌 Die erste Fassung
+  gab ein Ergebnis 180 s lang an jeden mit demselben Schlüssel; die Probe
+  `gesamtlauf` im Testclient fand es („zwei Anfragen teilten sich ein
+  Segment“, also eine Rechnung, zweimal abgebucht). Proben `einmal` (2: zwei
+  Anfragen rechnen zweimal, auch nacheinander; ein neuer Anlauf nach der
+  Frist übernimmt die laufende, ein nicht abgeholtes Ergebnis liegt nur die
+  Aufbewahrung lang), Gegenprobe der ersten Fassung rot („zweimal
+  gerechnet“).
+- ⛔️ **Fund 728: Ein Prüfer fragte denselben Fall immer wieder.** Was er
+  schon gefragt hatte (`verlauf_gefragt`), hielt eine Grenze von 256 Fällen;
+  im langen Auftragslauf vom 24. hatte ein Prüfer über 2 000 offene. Jeder
+  Durchlauf warf die ältesten hinaus, fragte sie bei allen Mitgliedern neu
+  an und verdrängte dabei andere, und Antworten zu einem hinausgeworfenen
+  Fall wurden verworfen. Gemessen bei k5: 47 639 Verlaufsanfragen zu 2 211
+  Fällen in rund 2,5 h, je Fall im Mittel 21, bis 92, je Antwort rund 6 MB
+  (zusammen 276 GB gebaut); die Knoten belegten 1 082 % CPU, die Shards
+  140 %, und eine Runde mit 3 934 Token passte nicht mehr in eine Epoche
+  von 24 min. Seit Fund 720 kamen diese Anfragen an; vorher fiel der größte
+  Teil am Stau weg. Jetzt werden `verlauf_gefragt` und `nachgerechnet` (das
+  bis hierher ohne Grenze wuchs) auf die offenen Prüfaufträge beschnitten
+  (`gefragt_beschneiden`). Dazu hält der Knoten mehrere fertige Verläufe
+  für Prüfer bereit statt einen (`VERLAUFAUSGABE_HOECHSTENS_BYTES`,
+  64 MiB): Mit einem baute jedes Stück eines anderen Falls den ganzen
+  Verlauf neu. Probe `bei_mehr_als_256_offenen_faellen_wird_keiner_zweimal_gefragt`,
+  Gegenprobe mit der alten Grenze rot (`[300, 44, 44]` statt `[300, 0, 0]`).
+
+### v0.138.0 (2026-11-23): Die Spurablagen liegen auf der Platte (`myl-node` 0.138.0)
+
+- **Neu `spurlager.rs`:** je Bündel eine Datei unter `<kette>.spuren/`
+  (ohne Kettendatei im Protokollverzeichnis), im Speicher nur der Index und
+  die zwei zuletzt gelesenen; aufgehoben werden die Ablagen der letzten drei
+  Epochen, höchstens 16. Nach einem Neustart liest der Knoten den Index aus
+  den Dateinamen. Bis hierher lagen bis zu 32 Ablagen im Arbeitsspeicher.
+- **Eingehende Stücke direkt in eine Datei** (`Plattenstuecke`, dieselben
+  Regeln wie `Belegstuecke`, Abdruck fortlaufend gerechnet); die Grenze ist
+  `myl_types::spurablage_hoechstens_bytes` der Ebenenzahl des Netzmodells
+  (beim Netzmodell rund 133 MiB statt 64 MiB), höchstens vier zugleich
+  (`ABLAGEN_ZUGLEICH`, bis hierher acht im Speicher). Eine fertige, geprüfte
+  Ablage wird umbenannt, nicht neu geschrieben.
+- Das Lesen geschieht im Takt des Knotens; gemessen am Deckel (100 000
+  Segmente, 138 MB) 34 ms, nur nach einem Neustart oder bei mehr als zwei
+  gefragten Ablagen, denn eine eben abgelegte liegt schon im Speicher.
+- Proben: `spurlager` (3: wiederfinden auch nach dem Neustart, Räumen nach
+  Epochen und Anzahl, Stücke mit denselben Regeln und gelöschtem
+  Zwischenstand).
+
+### v0.137.0 (2026-11-23): Der Stau im Protokoll (`myl-node` 0.137.0, NETWORKING 0.29.0)
+
+- **Zeile `stau`:** an welche Gegenstelle, wie viele eigene Anfragen
+  unterwegs sind, und je Art (Name der Variante von `Nachforderung`, aus
+  `nachschub::ARTEN`) Anzahl, Alter der ältesten in ms und Wartende, als
+  `Art:Anzahl:ms:wartend`. Probe `die_arten_stehen_in_der_reihenfolge_der_varianten`
+  hält die Namen an der Reihenfolge der Varianten.
+- **Fund 715, Nachtrag:** Auch eine volle Warteschlange von `myl-net` ist
+  ein Stau (`ist_staufehler` nimmt `myl_net::stau::ist_stau`); sonst fragte
+  der Nachschub wieder ohne Pause nach. Im zweiten Kurzlauf vom 23. lagen
+  noch 17 880 solche Zeilen bei einem Knoten.
 
 ### v0.136.1 (2026-11-20): Ein Stau auf der eigenen Verbindung ist keine Weigerung (Fund 715)
 

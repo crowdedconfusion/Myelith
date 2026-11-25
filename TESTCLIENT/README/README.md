@@ -1,7 +1,7 @@
 # TESTCLIENT: das Messgerät (`myl-testclient`, Programm `myl-test`)
 
-> **Version:** 0.78.1
-> **Datum:** 2026-11-19
+> **Version:** 0.78.4
+> **Datum:** 2026-11-24
 > **Status:** `myl-test` fährt Hardware-, Determinismus- und
 > Konformitätsläufe mit einem Protokoll, das zwischen Maschinen und
 > Modellständen vergleichbar bleibt; `vergleich` urteilt über zwei
@@ -537,6 +537,35 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.78.4 (2026-11-24): Der Auftragslauf wartet auf einen eben gelosten Lügner (`myl-testclient` 0.78.4)
+
+- 📌 Im kurzen Lauf vom 24. wurde der Lügner erst in der letzten der drei
+  gewarteten Epochen auf eine Position gelost; sein Shard startete 24 s vor
+  dem Ende, und der Lauf meldete „nie gesperrt“. Steht er beim Ende der
+  Wartezeit gerade auf Position, wartet `auftragslauf.py` noch diesen einen
+  Wechsel ab (die Messung braucht die Epoche).
+
+### v0.78.3 (2026-11-23): Der Podlauf kauft je Epoche nach (`myl-testclient` 0.78.3)
+
+- **`podlauf.py`:** Credits verfallen am Epochenwechsel (Fund 707); der
+  Podlauf kaufte einmal am Anfang, und die zweite Frage an die Tür scheiterte
+  in Epoche 3 mit 402. Jetzt kauft er vor jeder Frage nach, sobald seit dem
+  letzten Kauf die Epoche gewechselt hat, und wartet auf den Kauf in der
+  Kette; Fragen aus mehreren Fäden kaufen einmal.
+- Gefahren: `--kurz --nur tor --zwillinge --faelscher --ablage-stuecke`,
+  bestanden. 24 Ablagen in Stücken über das Netz (auf der Platte, NODE
+  0.138.0), 192 Spuren tragen, 10 nachgerechnet, die 4 Abweichungen alle
+  gegen den Fälscher, die Schiedsrunde verurteilt ihn, keine Zeugnisse gegen
+  Ehrliche.
+
+### v0.78.2 (2026-11-23): Der Auftragslauf vergleicht die Zwillinge (`myl-testclient` 0.78.2)
+
+- **`auftragslauf.py`:** `zwillinge_vergleichen` paart die Zeilen des
+  Ortsdienstes je Epoche und Sitzung (COMPUTE_PIPELINE 0.73.0) und meldet
+  „Zwillinge im Ortsdienst: gleich, mit leerem Zwilling, verschieden“; jede
+  echte Abweichung (gleiche Eingabe, gleicher Deckel, andere Ausgabe) ist
+  ein Befund, samt Dauer beider und ob einer wiederholt wurde.
 
 ### v0.78.1 (2026-11-20): Der Auftragslauf bemisst das Probegeld nach dem Verfall der Credits (`myl-testclient` 0.78.1)
 

@@ -196,6 +196,17 @@ pub enum Shardanfrage {
     RechneStapel(Vec<PodMessage>),
 }
 
+impl Shardanfrage {
+    /// Die Sitzung einer Rechenfrage (Fund 730); `None` für alle übrigen.
+    pub fn sitzung(&self) -> Option<u64> {
+        match self {
+            Self::Rechne(m) => Some(m.session_id),
+            Self::RechneStapel(v) => v.first().map(|m| m.session_id),
+            _ => None,
+        }
+    }
+}
+
 /// Höchstens so viele Nachrichten in einem Stapel: bei einer Breite von
 /// 1 024 und 28 Ebenen rund 200 kB, weit unter der Grenze einer Anfrage über
 /// das Netz (4 MiB); ein längerer Prompt geht in mehreren Stapeln.
@@ -457,8 +468,10 @@ pub fn bedienen(shard: &ShardNode, anfrage: &Shardanfrage) -> Shardantwort {
                     "die Nachricht traegt nicht die Magic-Bytes".to_string(),
                 );
             }
-            match shard.process(m) {
-                Ok(a) => Shardantwort::Gerechnet(Box::new(a)),
+            // Fund 723: dieselbe Anfrage noch einmal heißt dieselbe Antwort.
+            match shard.einmal_rechnen(std::slice::from_ref(m), || shard.process(m).map(|a| vec![a])) {
+                Ok(mut a) if a.len() == 1 => Shardantwort::Gerechnet(Box::new(a.remove(0))),
+                Ok(_) => Shardantwort::Fehler("eine Nachricht, aber nicht eine Antwort".to_string()),
                 Err(e) => Shardantwort::Fehler(e),
             }
         }
@@ -494,7 +507,7 @@ pub fn bedienen(shard: &ShardNode, anfrage: &Shardanfrage) -> Shardantwort {
             if ms.len() > MAX_STAPEL {
                 return Shardantwort::Fehler(format!("ein Stapel von {} Nachrichten, höchstens {MAX_STAPEL}", ms.len()));
             }
-            match shard.process_stapel(ms) {
+            match shard.einmal_rechnen(ms, || shard.process_stapel(ms)) {
                 Ok(aus) => Shardantwort::StapelGerechnet(aus),
                 Err(e) => Shardantwort::Fehler(e),
             }

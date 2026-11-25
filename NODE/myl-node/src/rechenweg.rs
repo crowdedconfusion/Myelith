@@ -121,6 +121,19 @@ pub struct Ortsweg {
     /// Das ist Absicht: Der Inhaber entscheidet, wem seine Sitzung
     /// überhaupt begegnen darf.
     empfaenger: myl_types::ids::Address,
+    /// ⚑ **Dieselbe Anfrage, eine Rechnung** (Fund 727, [`crate::einmal`]):
+    /// je Kontrakt, Deckel und Prompt.
+    einmal: crate::einmal::Einmal<[u8; 32], Option<Ortsantwort>>,
+}
+
+/// Der Schlüssel einer Anfrage für [`crate::einmal`]: Kontrakt, Deckel und
+/// Prompt. Die laufende Nummer der Annahme gehört nicht dazu, denn sie ist
+/// bei jedem Anlauf neu.
+pub fn anfrageschluessel(sitzung_id: &myl_types::ids::SitzungId, max_token: u32, prompt: &str) -> [u8; 32] {
+    let mut bytes = borsh::to_vec(sitzung_id).unwrap_or_default();
+    bytes.extend_from_slice(&max_token.to_le_bytes());
+    bytes.extend_from_slice(prompt.as_bytes());
+    *myl_types::hash::Hash::sha256(&bytes).as_bytes()
 }
 
 impl Ortsweg {
@@ -155,6 +168,7 @@ impl Ortsweg {
             abrechnung: None,
             abrechnungsnummer: std::sync::atomic::AtomicU64::new(1),
             empfaenger,
+            einmal: crate::einmal::Einmal::default(),
         }
     }
 
@@ -386,8 +400,29 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
         if inferenz.pruefe_form().is_err() {
             return gescheitert("der Auftrag ist formwidrig", self.epoche());
         }
-        let Some(antwort) = self.anschluss.frage_fuer_die_tuer(&Ortsfrage::Inferenz(inferenz)).await else {
-            return gescheitert("die Ortsleitung antwortete nicht", self.epoche());
+        // ⚑ Fund 727: Läuft dieselbe Anfrage schon (ein neuer Anlauf des
+        //   Klienten nach der Frist der Tür), wird auf sie gewartet.
+        let schluessel = anfrageschluessel(&auftrag.sitzung_id, inferenz.max_token, auftrag.prompt);
+        let anschluss = self.anschluss.clone();
+        let geholt = self
+            .einmal
+            .holen(schluessel, crate::ortsklient::TUERFRIST, move || async move {
+                anschluss.frage_fuer_einen_lauf(&Ortsfrage::Inferenz(inferenz)).await
+            })
+            .await;
+        let antwort = match geholt {
+            crate::einmal::Geholt::Fertig { wert: Some(a), begonnen } => {
+                if !begonnen {
+                    eprintln!("myl-node: dieselbe Anfrage lief schon; ihr Ergebnis geht an den neuen Anlauf (Sitzung {})", auftrag.sitzung);
+                }
+                a
+            }
+            crate::einmal::Geholt::Fertig { wert: None, .. } => {
+                return gescheitert("die Ortsleitung antwortete nicht", self.epoche());
+            }
+            crate::einmal::Geholt::Frist => {
+                return gescheitert("die Ortsleitung antwortete nicht in der Frist; die Rechnung läuft weiter", self.epoche());
+            }
         };
         let ergebnis = match antwort {
             Ortsantwort::Inferenz(Inferenzantwort::Ergebnis {

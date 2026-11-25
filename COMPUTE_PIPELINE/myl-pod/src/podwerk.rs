@@ -124,6 +124,10 @@ impl Blocktakt {
 /// Zuschnitt meldet, den die Kette ihm gibt. Weit unter der Frist der Tür.
 pub const BEREIT_FRIST: Duration = Duration::from_secs(60);
 
+/// So oft sieht der Wächter eines Laufs nach der Epoche (Fund 726). Zwei
+/// Sekunden: ein Slot im Testnetz; die Frage geht an den eigenen Knoten.
+pub const EPOCHE_PRUEFEN: Duration = Duration::from_secs(2);
+
 /// Melden alle Mitglieder des Pods den Ebenenbereich aus der Kette?
 fn pod_bereit(relais: SocketAddr, ausweis: &Ausweis, pod: &myl_types::relais::Podeintrag) -> bool {
     let weg = UeberDenKnoten::neu(relais, *ausweis, pod.mitglieder.iter().map(|m| m.netzadresse).collect());
@@ -182,6 +186,16 @@ pub struct Podwerk {
     /// rechnet seine Sitzungen, und jeder Pod reicht sein Bündel ein. Nach
     /// Pod-Index; ein Platz wird mit der Epoche neu belegt.
     staende: Arc<Mutex<std::collections::BTreeMap<u32, Platz>>>,
+    /// ⛔️ Fund 730: die Sitzungen, auf die niemand mehr wartet.
+    abbrueche: Abbrueche,
+}
+
+/// Die Sitzungen, auf die niemand mehr wartet (Fund 730).
+type Abbrueche = Arc<Mutex<std::collections::BTreeSet<u64>>>;
+
+/// Ob auf `sitzung` niemand mehr wartet.
+fn abgebrochen(abbrueche: &Abbrueche, sitzung: u64) -> bool {
+    abbrueche.lock().is_ok_and(|g| g.contains(&sitzung))
 }
 
 /// ⚑ **Lesend rechnen, schreibend wechseln** (2026-11-15): Sitzungen
@@ -276,7 +290,7 @@ impl Podwerk {
             })
             .map_err(|e| e.to_string())?;
         let haltemarken = haltemarken(&wortschatz);
-        Ok(Self { relais, ausweis, wortschatz, haltemarken, pipeline, deckel, staende })
+        Ok(Self { relais, ausweis, wortschatz, haltemarken, pipeline, deckel, staende, abbrueche: Arc::default() })
     }
 }
 
@@ -601,6 +615,8 @@ struct Arbeit<'a> {
     deckel: u64,
     /// Die Endmarken des Modells (Fund 702).
     halt: &'a [u32],
+    /// Fund 730: die Sitzungen, auf die niemand mehr wartet.
+    abbruch: &'a Abbrueche,
 }
 
 /// Besetzt `pod` für `epoche` und baut seinen Koordinator.
@@ -667,6 +683,16 @@ fn erben(neu: &mut Podstand, alt: &Podstand, pod_index: u32) {
     neu.eingereicht.store(eingereicht, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// Die ersten acht Byte von SHA-256 über die Token (je vier Byte, little
+/// endian), hexadezimal: genug, um zwei Läufe zu vergleichen.
+pub fn abdruck_der_token(token: &[u32]) -> String {
+    let mut h = <sha2::Sha256 as sha2::Digest>::new();
+    for t in token {
+        sha2::Digest::update(&mut h, t.to_le_bytes());
+    }
+    sha2::Digest::finalize(h)[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Rechnet einen Auftrag einmal über `pod`: Token, letztes Segment, Epoche.
 /// Der Koordinator in `stand` entsteht je Epoche und Pod neu.
 fn ueber_pod(
@@ -677,7 +703,7 @@ fn ueber_pod(
     pod: &myl_types::relais::Podeintrag,
     arbeit: Arbeit<'_>,
 ) -> Result<(Vec<u32>, SegmentId, u64), String> {
-    let Arbeit { sitzung, eingabe, deckel, halt } = arbeit;
+    let Arbeit { sitzung, eingabe, deckel, halt, abbruch } = arbeit;
     let passt = |g: &Option<Podstand>| g.as_ref().map(|s| (s.epoche, s.kennung)) == Some((epoche, pod.kennung));
     // Lesend, wenn der Pod schon steht; sonst schreibend besetzen und dann
     // lesend rechnen (eine Schreibsperre lässt sich nicht herabstufen).
@@ -694,16 +720,49 @@ fn ueber_pod(
         *g = Some(podstand_bauen(relais, ausweis, epoche, pod, halt)?);
     };
     let s = g.as_ref().ok_or("kein Koordinator")?;
+    // Fund 730: Kam der Abbruch, während der Koordinator neu entstand, hat
+    //   er ihn nicht gesehen.
+    if abgebrochen(abbruch, sitzung) {
+        s.koordinator.sitzung_abbrechen(sitzung);
+    }
     let beginn = std::time::Instant::now();
-    let lauf = s.koordinator.rechne(sitzung, eingabe, deckel);
+    // ⚑ **Fund 726: Beim Epochenwechsel anhalten.** Ein Wächter sieht, solange
+    //   der Lauf rechnet, alle [`EPOCHE_PRUEFEN`] nach der Epoche; ist sie
+    //   vorbei, hält er den Koordinator an, der Lauf scheitert sofort, und
+    //   der Pod der neuen Epoche rechnet den Auftrag (Fund 649).
+    //   Das Ende des Laufs weckt den Wächter sofort (der Kanal geht zu).
+    let (fertig, warten) = std::sync::mpsc::channel::<()>();
+    let lauf = std::thread::scope(|faeden| {
+        faeden.spawn(move || {
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = warten.recv_timeout(EPOCHE_PRUEFEN) {
+                if podbild(relais, ausweis).is_ok_and(|b| b.epoche != s.epoche) {
+                    eprintln!("[myl-pod] Epoche {} ist vorbei: Pod {} hält Sitzung {sitzung} an", s.epoche, pod.pod_index);
+                    s.koordinator.anhalten();
+                    return;
+                }
+            }
+        });
+        let lauf = s.koordinator.rechne(sitzung, eingabe, deckel);
+        drop(fertig);
+        lauf
+    });
     let token = lauf.token;
+    // ⚑ **Die Mitschrift der Zwillinge** (Simulation vom 2026-11-20): Eine
+    //   echte Abweichung (436 gegen 419 Token bei gleichem Deckel) liess
+    //   sich aus der Zeile allein nicht zuordnen. Jetzt steht dabei, welche
+    //   Sitzung, welcher Deckel, ein Abdruck von Eingabe und Ausgabe und ob
+    //   der Lauf wiederholt wurde; zwei Zeilen desselben Auftrags lassen sich
+    //   so vergleichen.
     eprintln!(
-        "[myl-pod] Epoche {}, Pod {}: {} Prompt-Token, {} neue in {} ms",
+        "[myl-pod] Epoche {}, Pod {}: {} Prompt-Token, {} neue in {} ms (Sitzung {sitzung}, Deckel {deckel}, Eingabe {}, Ausgabe {}{})",
         s.epoche,
         pod.pod_index,
         eingabe.len(),
         token.len(),
-        beginn.elapsed().as_millis()
+        beginn.elapsed().as_millis(),
+        abdruck_der_token(eingabe),
+        abdruck_der_token(&token),
+        if lauf.wiederholt { ", wiederholt" } else { "" }
     );
     let segment = lauf.letztes_segment.unwrap_or(SegmentId::new([0u8; 32]));
     s.koordinator.sitzung_abschliessen(sitzung);
@@ -711,6 +770,13 @@ fn ueber_pod(
 }
 
 impl Podwerk {
+    /// Fund 730: Der Auftrag ist zu Ende; ein Abbruch für ihn ist erledigt.
+    fn abbruch_vergessen(&self, sitzung: u64) {
+        if let Ok(mut g) = self.abbrueche.lock() {
+            g.remove(&sitzung);
+        }
+    }
+
     /// Der Platz des Koordinators für `pod`.
     fn platz(&self, pod: u32) -> Result<Platz, String> {
         let mut g = self.staende.lock().map_err(|_| "Stände vergiftet")?;
@@ -736,15 +802,15 @@ impl Podwerk {
     ) -> Result<(Vec<u32>, SegmentId, u64), String> {
         let (pod, zwilling) = paar_waehlen(bild, sitzung).ok_or("kein Pod in dieser Epoche")?;
         let Some(zwilling) = zwilling else {
-            let arbeit = Arbeit { sitzung, eingabe, deckel, halt: &self.haltemarken };
+            let arbeit = Arbeit { sitzung, eingabe, deckel, halt: &self.haltemarken, abbruch: &self.abbrueche };
             return mit_neubesetzung(self.relais, ausweis, &self.platz(pod.pod_index)?, bild.epoche, pod, arbeit);
         };
         let (senden, empfangen) = std::sync::mpsc::channel();
         for p in [pod, zwilling] {
             let (relais, ausweis, platz, epoche, p) = (self.relais, *ausweis, self.platz(p.pod_index)?, bild.epoche, p.clone());
-            let (eingabe, halt, senden) = (eingabe.to_vec(), self.haltemarken.clone(), senden.clone());
+            let (eingabe, halt, senden, abbruch) = (eingabe.to_vec(), self.haltemarken.clone(), senden.clone(), Arc::clone(&self.abbrueche));
             let faden = std::thread::Builder::new().name(format!("pod-{}", p.pod_index)).spawn(move || {
-                let arbeit = Arbeit { sitzung, eingabe: &eingabe, deckel, halt: &halt };
+                let arbeit = Arbeit { sitzung, eingabe: &eingabe, deckel, halt: &halt, abbruch: &abbruch };
                 let ergebnis = mit_neubesetzung(relais, &ausweis, &platz, epoche, &p, arbeit);
                 if let Err(f) = &ergebnis {
                     eprintln!("[myl-pod] Pod {}: {f}", p.pod_index);
@@ -793,7 +859,7 @@ fn mit_neubesetzung(
     arbeit: Arbeit<'_>,
 ) -> Result<(Vec<u32>, SegmentId, u64), String> {
     let ergebnis = ueber_pod(relais, ausweis, platz, epoche, pod, arbeit)?;
-    if !ergebnis.0.is_empty() || !podbild(relais, ausweis).is_ok_and(|neu| neu.epoche == epoche) {
+    if !ergebnis.0.is_empty() || abgebrochen(arbeit.abbruch, arbeit.sitzung) || !podbild(relais, ausweis).is_ok_and(|neu| neu.epoche == epoche) {
         return Ok(ergebnis);
     }
     if let Err(f) = neu_besetzen(relais, ausweis, platz, epoche, pod, arbeit.halt) {
@@ -846,6 +912,10 @@ impl Klartextwerk for Podwerk {
         //    die alten Plätze. Kam kein Token und steht die Kette inzwischen
         //    in einer neuen Epoche, rechnet der Pod dieser Epoche den Auftrag
         //    einmal neu.
+        if token.is_empty() && abgebrochen(&self.abbrueche, sitzung) {
+            self.abbruch_vergessen(sitzung);
+            return abgelehnt("niemand wartet mehr");
+        }
         if token.is_empty() {
             if let Ok(neu) = podbild(self.relais, &ausweis) {
                 if neu.epoche != epoche {
@@ -860,6 +930,7 @@ impl Klartextwerk for Podwerk {
                 }
             }
         }
+        self.abbruch_vergessen(sitzung);
         if token.is_empty() {
             return abgelehnt("der Pod lieferte kein Token");
         }
@@ -872,6 +943,23 @@ impl Klartextwerk for Podwerk {
         };
         let ausgabe: Vec<usize> = token[..ende].iter().map(|t| *t as usize).collect();
         Inferenzantwort::Ergebnis { sitzung, text: self.wortschatz.decode(&ausgabe), token, segment, prompt_token }
+    }
+
+    /// ⛔️ **Fund 730 (2026-11-25): Niemand wartet mehr, also anhalten.**
+    /// Beide Zwillinge, in jedem Koordinator, der gerade steht, und kein
+    /// Neubeginn im Pod der nächsten Epoche. 📌 Im langen Auftragslauf
+    /// rechnete eine aufgegebene Runde 27 Minuten in den nächsten Auftrag
+    /// hinein und wurde am Wechsel noch an den neuen Pod gegeben.
+    fn abbrechen(&self, sitzung: u64) {
+        if let Ok(mut g) = self.abbrueche.lock() {
+            g.insert(sitzung);
+        }
+        let plaetze: Vec<Platz> = self.staende.lock().map(|g| g.values().cloned().collect()).unwrap_or_default();
+        for p in &plaetze {
+            if let Some(stand) = p.read().ok().as_ref().and_then(|g| g.as_ref()) {
+                stand.koordinator.sitzung_abbrechen(sitzung);
+            }
+        }
     }
 
     fn pipeline(&self) -> Hash {
@@ -890,6 +978,18 @@ impl Klartextwerk for Podwerk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Die Mitschrift der Zwillinge: gleiche Token, gleicher Abdruck; ein Token
+    /// anders oder eines mehr, ein anderer; immer 16 Zeichen.
+    #[test]
+    fn der_abdruck_unterscheidet_laeufe() {
+        let a = abdruck_der_token(&[1, 2, 3]);
+        assert_eq!(a, abdruck_der_token(&[1, 2, 3]));
+        assert_ne!(a, abdruck_der_token(&[1, 2, 4]));
+        assert_ne!(a, abdruck_der_token(&[1, 2, 3, 0]));
+        assert_eq!(a.len(), 16);
+        assert_eq!(abdruck_der_token(&[]).len(), 16);
+    }
 
     /// ⚑ **Der Rand vor dem Wechsel** (2026-11-18): ohne Messung das
     /// Sechstel; mit Messung ein Dreißigstel, aber nie unter 30 s und nie über

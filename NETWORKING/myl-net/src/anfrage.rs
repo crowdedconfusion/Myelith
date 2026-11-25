@@ -167,6 +167,21 @@ const _: () = assert!(
     "eine Verbindung bindet mehr als 64 MiB"
 );
 
+/// ⚑ **Die Frist einer Anfrage, in beide Richtungen** (Fund 722, Auftragslauf
+/// vom 2026-11-24): Hier galt die Vorgabe von libp2p, 10 s. Am Anfang einer
+/// Epoche brauchten Stapel des Prefills an kalten Shards bis 9,7 s, die
+/// nächsten liefen in die 10 s, und die Runde ging verloren, obwohl der
+/// Koordinator einem Shard 30 s lässt (`ANTWORTFRIST` in `myl-pod`) und die
+/// Relaisleitung des Knotens 150 s. **Herleitung der 30 s:** dieselbe Frist
+/// wie zum Shard direkt; über das Netz kommt nur die Übertragung dazu. Der
+/// Preis: Eine schweigende Gegenstelle hält die Plätze zu ihr 30 s statt
+/// 10 s; das trifft nur Anfragen an sie selbst, die übrigen warten in der
+/// Schlange ([`crate::stau`]). Die Zeitprobe misst mit ihrer eigenen Frist
+/// im Knoten, nicht mit dieser.
+pub const ANFRAGEFRIST: std::time::Duration = std::time::Duration::from_secs(30);
+
+const _: () = assert!(ANFRAGEFRIST.as_secs() >= 30, "kuerzer als die Antwortfrist eines Shards");
+
 /// Baut den Anfragekanal.
 pub fn baue_anfragekanal() -> AnfrageBehaviour {
     request_response::Behaviour::with_codec(
@@ -179,7 +194,9 @@ pub fn baue_anfragekanal() -> AnfrageBehaviour {
             // es fragen kann.
             ProtocolSupport::Full,
         )],
-        request_response::Config::default().with_max_concurrent_streams(MAX_ANFRAGEN_ZUGLEICH),
+        request_response::Config::default()
+            .with_max_concurrent_streams(MAX_ANFRAGEN_ZUGLEICH)
+            .with_request_timeout(ANFRAGEFRIST),
     )
 }
 

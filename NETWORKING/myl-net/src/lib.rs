@@ -45,6 +45,7 @@ pub mod node;
 pub mod portwahl;
 pub mod runtime;
 pub mod scoring;
+pub mod stau;
 // ⚑ **Der Sitzungskanal ist seit dem 2026-09-03 eine eigene Kiste**
 // (`myl-siegel`, Fund 155). Er importierte von hier nichts, öffnet
 // keinen Socket und kennt kein `async`; wer entsiegeln will, sollte
@@ -58,7 +59,7 @@ pub use myl_siegel as sitzung;
 pub mod validation;
 
 pub use anfrage::{
-    baue_anfragekanal, AnfrageBehaviour, ByteCodec, ANFRAGE_PROTOKOLL, MAX_ANFRAGEN_ZUGLEICH,
+    baue_anfragekanal, AnfrageBehaviour, ByteCodec, ANFRAGEFRIST, ANFRAGE_PROTOKOLL, MAX_ANFRAGEN_ZUGLEICH,
     MAX_ANFRAGE_BYTES,
 };
 pub use config::NetConfig;

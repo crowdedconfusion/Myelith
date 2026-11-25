@@ -144,6 +144,20 @@ const KONTOBEWEISE_ALLE: std::time::Duration = std::time::Duration::from_secs(2)
 /// 2026-10-30): Nur ein `Nichts` oder ein Fehlschlag mit diesem Zweck zählt
 /// als Abweisung der Probe.
 const ZWECK_ZEITPROBE: u64 = 1;
+/// Der Zweck eines Differenzbeweises an die Koordinatoren (mit Vorrang,
+/// ohne Relais dahinter).
+const ZWECK_DIFFERENZ: u64 = 2;
+/// ⚑ **Der Zweck einer Relaisanfrage** (Fund 721): das oberste Bit und die
+/// Kennung des Relais. 📌 Im Auftragslauf vom 2026-11-24 scheiterte eine
+/// Anfrage an den Lügner, und der Knoten brach **alle** offenen Relais zu
+/// ihm ab, auch einen Stapel, den dessen Shard gerade rechnete: Der
+/// Fehlschlag trug nicht, welche Anfrage es war. Die Runde ging verloren.
+const ZWECK_RELAIS: u64 = 1 << 63;
+
+/// Der Zweck, den eine Relaisanfrage mit dieser Kennung trägt.
+fn zweck_des_relais(kennung: u64) -> u64 {
+    ZWECK_RELAIS | (kennung & !ZWECK_RELAIS)
+}
 /// So viele Anfechter offener Streitfälle bekommen bei einem Validator
 /// Vorrang in den Verbindungsgrenzen.
 const VORRANG_SCHIED_HOECHSTENS: usize = 16;
@@ -579,6 +593,12 @@ pub struct Knoten {
     /// (Epoche, Pod, Index), und die, deren Verlauf schon nachgerechnet wird.
     verlauf_gefragt: std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)>,
     nachgerechnet: std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)>,
+    /// ⛔️ Fund 729: je Epoche und Pod seit wann ein Verlauf erfragt ist und
+    /// noch nicht kam; solange wird dort kein weiterer erfragt.
+    verlauf_unterwegs: std::collections::BTreeMap<(u64, myl_types::ids::PodId), std::time::Instant>,
+    /// ⛔️ Fund 729: die eine Rechenaufgabe, die Verläufe der Reihe nach
+    /// nachrechnet; angelegt beim ersten Auftrag.
+    nachrechenwerk: Option<std::sync::mpsc::Sender<Nachrechenauftrag>>,
     /// Festgelegt und noch nicht aufgedeckt: je Ziehung Befund und Salz.
     festgelegt: std::collections::BTreeMap<(u64, myl_types::ids::PodId, u32), (myl_ledger::pruefung::Pruefbefund, [u8; 32])>,
     /// Festlegungen, die noch in eine Transaktion müssen.
@@ -598,12 +618,15 @@ pub struct Knoten {
     /// denn jedes Mitglied der Besetzung antwortet; höchstens
     /// [`VERLAUFTEILE_ZUGLEICH`] zugleich.
     verlauf_teile: std::collections::HashMap<(Fall, libp2p::PeerId), (std::time::Instant, crate::nachschub::Belegstuecke)>,
-    /// Der zuletzt in Stücken ausgelieferte Verlauf, als Bytes.
-    verlauf_ausgabe: Option<(Fall, Arc<Vec<u8>>)>,
+    /// Die zuletzt in Stücken ausgelieferten Verläufe, als Bytes (Fund 728:
+    /// mehrere, nach Bytes begrenzt, [`VERLAUFAUSGABE_HOECHSTENS_BYTES`]).
+    verlauf_ausgabe: std::collections::VecDeque<(Fall, Arc<Vec<u8>>)>,
     /// ⚑ **Spurablagen in Stücken** (T6, 2026-11-05), je Absender (`None`:
-    /// das eigene Podwerk) und Abdruck; höchstens [`VERLAUFTEILE_ZUGLEICH`],
-    /// die älteste fällt.
-    ablage_teile: std::collections::HashMap<(Option<libp2p::PeerId>, myl_types::Hash), (std::time::Instant, crate::nachschub::Belegstuecke)>,
+    /// das eigene Podwerk) und Abdruck; seit 2026-11-23 direkt in eine Datei
+    /// des Spurlagers, höchstens [`ABLAGEN_ZUGLEICH`] zugleich.
+    ablage_teile: std::collections::HashMap<(Option<libp2p::PeerId>, myl_types::Hash), (std::time::Instant, crate::spurlager::Plattenstuecke)>,
+    /// Laufende Nummer der Zwischenstände im Spurlager (Dateinamen).
+    ablage_eingang_nr: u64,
     /// ⚑ **Zustandslos** (zustandslose Validierung, 2026-10-29): die Schlüssel
     /// der Blockerzeuger, gegen die der Netzfaden Zeugenstücke prüft.
     erzeugerliste: crate::validator::Erzeugerliste,
@@ -721,10 +744,10 @@ pub struct Knoten {
     uebernahme: Option<crate::shardfuehrung::Shardauftrag>,
     uebernahme_zuletzt: Option<std::time::Instant>,
     uebernahme_von_miner: bool,
-    /// ⚑ **Abgelegte Spuren** für die Stichprobe (Stufe 2), je mit ihrem
-    /// Absender (`None`: das eigene Podwerk über die Ortsleitung); höchstens
-    /// [`SPURABLAGEN_HOECHSTENS`], zuerst fällt die älteste Epoche.
-    spurablagen: Vec<(Option<libp2p::PeerId>, myl_types::Spurablage)>,
+    /// ⚑ **Abgelegte Spuren** für die Stichprobe (Stufe 2), seit dem
+    /// 2026-11-23 auf der Platte ([`crate::spurlager`]): je Bündel eine
+    /// Datei, aufgehoben nach Epochen.
+    spurlager: crate::spurlager::Spurlager,
     /// Die Zeugnisse über Fristen (6.8).
     fristsammlung: crate::frist::Fristsammlung,
     /// Laufende Messungen je Gegenüber.
@@ -1482,6 +1505,18 @@ impl Knoten {
                 kette.miner_erzeugerschluessel_setzen(k);
             }
         }
+        // ⚑ Das Spurlager neben der Kettendatei (`<kette>.spuren/`), ohne
+        //   Kettendatei im Protokollverzeichnis.
+        let spurlager_ordner = match &konfig.kettendatei {
+            Some(k) => {
+                let mut n = k.as_os_str().to_owned();
+                n.push(".spuren");
+                std::path::PathBuf::from(n)
+            }
+            None => konfig.protokollverzeichnis.join("spuren"),
+        };
+        let spurlager = crate::spurlager::Spurlager::oeffnen(&spurlager_ordner)
+            .map_err(|e| KnotenFehler::Kette(format!("Spurlager {}: {e}", spurlager_ordner.display())))?;
         let abruf = archiv_abruf(&kette);
         let shardfuehrung = match (&konfig.shard, &konfig.konsensschluesseldatei) {
             (Some(sk), Some(pfad)) if !sk.programm.as_os_str().is_empty() => {
@@ -1582,7 +1617,7 @@ impl Knoten {
             uebernahme: None,
             uebernahme_zuletzt: None,
             uebernahme_von_miner: false,
-            spurablagen: Vec::new(),
+            spurlager,
             fristsammlung: crate::frist::Fristsammlung::default(),
             messungen: std::collections::BTreeMap::new(),
             gemessen: std::collections::BTreeSet::new(),
@@ -1658,6 +1693,8 @@ impl Knoten {
             abrechnungskanal: abrechnungen_tx,
             verlauf_gefragt: std::collections::BTreeSet::new(),
             nachgerechnet: std::collections::BTreeSet::new(),
+            verlauf_unterwegs: std::collections::BTreeMap::new(),
+            nachrechenwerk: None,
             festgelegt: std::collections::BTreeMap::new(),
             festzulegen: Vec::new(),
             schiedsbelege: std::collections::BTreeMap::new(),
@@ -1665,8 +1702,9 @@ impl Knoten {
             schied_teile: std::collections::BTreeMap::new(),
             schied_ausgabe: None,
             verlauf_teile: std::collections::HashMap::new(),
-            verlauf_ausgabe: None,
+            verlauf_ausgabe: std::collections::VecDeque::new(),
             ablage_teile: std::collections::HashMap::new(),
+            ablage_eingang_nr: 0,
             erzeugerliste,
             zeugenpruefer,
             zeugensammler: myl_consensus::zeuge::Zeugensammler::neu(ZEUGEN_SAMMLER_BYTES),
@@ -4600,13 +4638,7 @@ impl Knoten {
                             .iter()
                             .find(|(p, _, _)| *p == a.pod)
                             .map(|(_, w, _)| *w);
-                        let antwort = self
-                            .spurablagen
-                            .iter()
-                            .rev()
-                            .map(|(_, ab)| ab)
-                            .filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w))
-                            .find_map(|ab| ab.antwort(&a));
+                        let antwort = self.spurlager.finden(wurzel, |ab| ab.antwort(&a));
                         self.protokoll.schreibe(
                             Eintrag::neu("spuranfrage_eingegangen")
                                 .text("von", von.to_string())
@@ -4716,13 +4748,7 @@ impl Knoten {
                             .iter()
                             .find(|(p, _, _)| *p == a.pod)
                             .map(|(_, w, _)| *w);
-                        let verlauf = self
-                            .spurablagen
-                            .iter()
-                            .rev()
-                            .map(|(_, ab)| ab)
-                            .filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w))
-                            .find_map(|ab| ab.verlauf(&a));
+                        let verlauf = self.spurlager.finden(wurzel, |ab| ab.verlauf(&a));
                         let antwort = verlauf
                             .map(Nachlieferung::Verlauf)
                             .filter(|n| n.als_bytes().is_some_and(|b| b.len() < myl_types::protocol::MAX_ANFRAGE_BYTES));
@@ -5038,8 +5064,8 @@ impl Knoten {
                     .zahl("hoehe_vorher", vorher as i64)
                     .zahl("hoehe_nachher", self.kette.hoehe() as i64)
             }
-            NodeEvent::AnfrageGescheitert { an, grund, .. } if self.shardrelais.values().any(|(p, _, _)| *p == an) => {
-                self.shardrelais_scheitern(&an, &grund);
+            NodeEvent::AnfrageGescheitert { an, grund, zweck: Some(z) } if z & ZWECK_RELAIS != 0 => {
+                self.shardrelais_scheitern(z & !ZWECK_RELAIS, &an, &grund);
                 Eintrag::neu("shardrelais_gescheitert").text("an", an.to_string()).text("grund", grund)
             }
             // 📌 **Fund 674 (2026-10-28): Nicht erreicht ist keine Weigerung.**
@@ -5142,6 +5168,21 @@ impl Knoten {
                 .text("grund", grund),
             // ⚑ A9: Eine eingehende Gegenstelle wurde unter ihrer Adresse
             //   angewaehlt; nur eine erreichbare kommt in die Tabelle.
+            // ⚑ **Was die Verbindung belegt, wenn sie voll ist** (Simulation
+            //   vom 2026-11-20, Ursache hinter Fund 715): je Art der Anfrage
+            //   Anzahl und Alter der ältesten und die Wartenden, als Text
+            //   `Art:Anzahl:ms:wartend`.
+            NodeEvent::Stau { an, offen, gesamt } => Eintrag::neu("stau")
+                .text("an", an.to_string())
+                .zahl("gesamt", gesamt as i64)
+                .text(
+                    "offen",
+                    offen
+                        .iter()
+                        .map(|o| format!("{}:{}:{}:{}", crate::nachschub::art_der_anfrage(o.art), o.anzahl, o.aeltest_ms, o.wartend))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ),
             NodeEvent::Fuehler { peer, gelungen, grund } => Eintrag::neu("fuehler")
                 .text("gegenstelle", peer.to_string())
                 .wahr("gelungen", gelungen)
@@ -6377,8 +6418,8 @@ impl Knoten {
             eintrag = eintrag.zahl(name, wert.min(i64::MAX as u64) as i64);
         }
         let eigene = [
-            ("spurablagen", self.spurablagen.len()),
-            ("spurablagen_eintraege", self.spurablagen.iter().map(|(_, a)| a.eintraege.len()).sum()),
+            ("spurablagen", self.spurlager.anzahl()),
+            ("spurablagen_eintraege", self.spurlager.segmente()),
             ("messungen", self.messungen.len()),
             ("schiedsbelege", self.schiedsbelege.len()),
             ("festgelegt", self.festgelegt.len()),
@@ -6505,6 +6546,12 @@ impl Knoten {
     }
 
     /// **Eine Frage von der Relaisleitung**.
+    ///
+    /// ⚑ **Was der eigene Pod weiterreichen lässt, hat Vorrang**
+    /// (`NodeCommand::AnfrageVorrang`, Fund 720): Im Auftragslauf vom
+    /// 2026-11-24 standen die Stapel des Koordinators hinter mehr als 600
+    /// Spuranfragen der eigenen Stichprobe an dasselbe Mitglied und wurden
+    /// als „voll“ abgewiesen; die Runde ging verloren.
     fn relais_bedienen(
         &mut self,
         frage: myl_types::relais::Relaisfrage,
@@ -6547,7 +6594,7 @@ impl Knoten {
                     return;
                 };
                 self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
-                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
+                let _ = self.kommandos.send(NodeCommand::AnfrageVorrang { an: peer, daten, zweck: zweck_des_relais(kennung) });
             }
             // ⚑ **Das Bündel geht zum Koordinator des Pods** (erste
             //   Position laut Kette), nach einer eigenen Prüfung.
@@ -6581,7 +6628,7 @@ impl Knoten {
                     return;
                 };
                 self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
-                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
+                let _ = self.kommandos.send(NodeCommand::AnfrageVorrang { an: peer, daten, zweck: zweck_des_relais(kennung) });
             }
             // ⚑ **Spuren eines Bündels ablegen** (Stufe 2): beim Mitglied.
             Relaisfrage::SpurenAblegen { an, ablage } => {
@@ -6603,7 +6650,7 @@ impl Knoten {
                     return;
                 };
                 self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
-                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
+                let _ = self.kommandos.send(NodeCommand::AnfrageVorrang { an: peer, daten, zweck: zweck_des_relais(kennung) });
             }
             Relaisfrage::SpurenAblegenTeil { an, gesamt, abdruck, ab, daten } => {
                 let Ok(peer) = myl_net::peer_id_aus_bytes(&an) else {
@@ -6624,7 +6671,7 @@ impl Knoten {
                     return;
                 };
                 self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
-                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten: bytes });
+                let _ = self.kommandos.send(NodeCommand::AnfrageVorrang { an: peer, daten: bytes, zweck: zweck_des_relais(kennung) });
             }
             // ⚑ **Eine Übernahme durch die Reserve** (6.8): an deren Knoten.
             // ⚑ **Ein Differenzbeweis vom Ortsdienst** (2026-10-29): an die
@@ -6661,7 +6708,7 @@ impl Knoten {
                     let an = self.kette.zustand().miner.get(&k).and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok());
                     let daten = Nachforderung::Differenz { epoche, pod_a, pod_b, beweis: beweis.clone() }.als_bytes();
                     if let (Some(an), Some(daten)) = (an, daten) {
-                        let _ = self.kommandos.send(NodeCommand::Anfrage { an, daten });
+                        let _ = self.kommandos.send(NodeCommand::AnfrageVorrang { an, daten, zweck: ZWECK_DIFFERENZ });
                         gesendet += 1;
                     }
                 }
@@ -6679,7 +6726,7 @@ impl Knoten {
                     return;
                 };
                 self.shardrelais.insert(kennung, (peer, rueck, std::time::Instant::now()));
-                let _ = self.kommandos.send(NodeCommand::Anfrage { an: peer, daten });
+                let _ = self.kommandos.send(NodeCommand::AnfrageVorrang { an: peer, daten, zweck: zweck_des_relais(kennung) });
             }
             Relaisfrage::Konto { adresse } => {
                 let z = self.kette.zustand();
@@ -6791,15 +6838,23 @@ impl Knoten {
     /// also aus dem Netz nur mit dem unterschriebenen Bündel). Ein Stück, das
     /// nicht passt, verwirft den Zwischenstand.
     fn ablage_stueck(&mut self, von: Option<libp2p::PeerId>, gesamt: u32, abdruck: myl_types::Hash, ab: u32, daten: &[u8]) -> Result<(), String> {
-        use crate::nachschub::{Belegstuecke, Stueckfolge};
+        use crate::spurlager::Plattenfolge;
         let schluessel = (von, abdruck);
         if !self.ablage_teile.contains_key(&schluessel) {
-            let neu = Belegstuecke::neu(abdruck, gesamt).ok_or("die Grösse der Ablage passt nicht")?;
+            // ⚑ Die Grenze folgt aus dem Deckel je Bündel und der Ebenenzahl
+            //   des Netzmodells (2026-11-23); ohne Netzmodell die eines
+            //   grossen Modells (128 Ebenen).
+            let ebenen = self.kette.zustand().podmodell.map_or(128, |m| m.ebenen);
+            self.ablage_eingang_nr = self.ablage_eingang_nr.wrapping_add(1);
+            let neu = self
+                .spurlager
+                .eingang(&abdruck, gesamt, myl_types::spurablage_hoechstens_bytes(ebenen), self.ablage_eingang_nr)
+                .ok_or("die Grösse der Ablage passt nicht")?;
             // ⚑ **Weichen muss, was am wenigsten angekommen ist** (A48), nicht
             //   das Älteste: Das Älteste ist die ehrliche Ablage, die gerade
             //   Stück für Stück kommt, und ein Angreifer verdrängte sie mit
             //   einem einzigen Byte unter neuem Abdruck.
-            if self.ablage_teile.len() >= VERLAUFTEILE_ZUGLEICH {
+            if self.ablage_teile.len() >= ABLAGEN_ZUGLEICH {
                 if let Some(alt) = self.ablage_teile.iter().min_by_key(|(_, (t, b))| (b.stand(), *t)).map(|(k, _)| *k) {
                     self.ablage_teile.remove(&alt);
                 }
@@ -6811,14 +6866,28 @@ impl Knoten {
             None => return Err("kein Zwischenstand".into()),
         };
         match folge {
-            Stueckfolge::Weiter(_) => Ok(()),
-            Stueckfolge::Fertig(bytes) => {
+            Plattenfolge::Weiter(_) => Ok(()),
+            Plattenfolge::Fertig(pfad) => {
                 self.ablage_teile.remove(&schluessel);
-                let ablage = borsh::from_slice::<myl_types::Spurablage>(&bytes).map_err(|e| format!("die Ablage ist unlesbar: {e}"))?;
-                self.protokoll.schreibe(Eintrag::neu("spurablage_aus_stuecken").wahr("aus_dem_netz", von.is_some()).zahl("bytes", bytes.len() as i64));
-                self.spur_ablegen(von, ablage)
+                let gelesen = std::fs::read(&pfad).map_err(|e| format!("die Ablage ist nicht lesbar: {e}"));
+                let ablage = gelesen.and_then(|bytes| {
+                    borsh::from_slice::<myl_types::Spurablage>(&bytes).map(|a| (a, bytes.len())).map_err(|e| format!("die Ablage ist unlesbar: {e}"))
+                });
+                let (ablage, bytes) = match ablage {
+                    Ok(a) => a,
+                    Err(f) => {
+                        let _ = std::fs::remove_file(&pfad);
+                        return Err(f);
+                    }
+                };
+                self.protokoll.schreibe(Eintrag::neu("spurablage_aus_stuecken").wahr("aus_dem_netz", von.is_some()).zahl("bytes", bytes as i64));
+                let erg = self.spur_ablegen_aus(von, ablage, Some(&pfad));
+                if erg.is_err() {
+                    let _ = std::fs::remove_file(&pfad);
+                }
+                erg
             }
-            Stueckfolge::Verworfen => {
+            Plattenfolge::Verworfen => {
                 self.ablage_teile.remove(&schluessel);
                 Err("das Stück passt nicht".into())
             }
@@ -6840,6 +6909,13 @@ impl Knoten {
     /// Torknoten, dessen Podwerk koordiniert und kein Mitglied ist
     /// (`kurz-pruefung`: keine Spur kam an).
     fn spur_ablegen(&mut self, von: Option<libp2p::PeerId>, ablage: myl_types::Spurablage) -> Result<(), String> {
+        self.spur_ablegen_aus(von, ablage, None)
+    }
+
+    /// Wie [`Self::spur_ablegen`]; liegt die Ablage schon als Datei im
+    /// Spurlager (`quelle`, aus Stücken), wird sie umbenannt statt neu
+    /// geschrieben.
+    fn spur_ablegen_aus(&mut self, von: Option<libp2p::PeerId>, ablage: myl_types::Spurablage, quelle: Option<&std::path::Path>) -> Result<(), String> {
         let ich = self.miner_ich().ok_or("kein Miner")?;
         let pod = self.kette.pod_der_kennung(ablage.epoche.0, &ablage.pod).ok_or("diesen Pod kennt die Zuteilung nicht")?;
         crate::shardfuehrung::ablage_pruefen(&pod, &ich, &ablage)?;
@@ -6851,17 +6927,8 @@ impl Knoten {
         if von.is_some() {
             crate::shardfuehrung::ablage_beglaubigt(&ablage, |v| crate::kette::Kette::unterzeichner_des_buendels(&pod, v))?;
         }
-        self.spurablagen.retain(|(_, a)| !(a.epoche == ablage.epoche && a.pod == ablage.pod && a.segments_root == ablage.segments_root));
-        self.spurablagen.push((von, ablage));
-        while self.spurablagen.len() > SPURABLAGEN_HOECHSTENS {
-            let aelteste = self.spurablagen.iter().enumerate().min_by_key(|(i, (_, a))| (a.epoche.0, *i)).map(|(i, _)| i);
-            match aelteste {
-                Some(i) => {
-                    self.spurablagen.remove(i);
-                }
-                None => break,
-            }
-        }
+        let laufende = self.kette.zustand().epoch.0;
+        self.spurlager.aufnehmen(von, ablage, quelle, laufende).map_err(|e| format!("das Spurlager: {e}"))?;
         Ok(())
     }
 
@@ -6921,11 +6988,27 @@ impl Knoten {
             .filter(|a| a.pruefer.contains(&ich) && !self.verlauf_gefragt.contains(&(a.epoche, a.pod, a.segment)))
             .cloned()
             .collect();
+        let offen: std::collections::BTreeSet<(u64, myl_types::ids::PodId)> =
+            self.kette.zustand().pruefauftraege.iter().map(|a| (a.epoche, a.pod)).collect();
+        self.verlauf_unterwegs.retain(|k, _| offen.contains(k));
         if meine.is_empty() {
             return;
         }
+        // ⛔️ **Fund 729 (2026-11-25): je Pod ein Verlauf zur Zeit, der
+        //   späteste zuerst.** Hier ging für jede Ziehung zugleich eine
+        //   Anfrage an jedes Mitglied: im langen Auftragslauf 2 615 Ziehungen
+        //   und 10 460 Anfragen eines Prüfers, die Antworten je bis 9 MB.
+        //   Der Verlauf zur spätesten Ziehung einer Sitzung trägt alle
+        //   früheren derselben Sitzung ([`Self::verlauf_erhalten`]); wer ihn
+        //   zuerst holt, braucht für die übrigen keinen mehr.
+        let jetzt = std::time::Instant::now();
+        let waehle = verlaeufe_waehlen(&meine, &self.verlauf_unterwegs, jetzt);
+        if waehle.is_empty() {
+            return;
+        }
         let (mut gefragt, mut ohne_adresse) = (0usize, 0usize);
-        for a in &meine {
+        for a in &waehle {
+            self.verlauf_unterwegs.insert((a.epoche, a.pod), jetzt);
             let anfrage = myl_types::Spuranfrage { epoche: myl_types::ids::EpochId(a.epoche), pod: a.pod, segment: a.segment };
             for (m, _, _) in &a.besetzung {
                 let an = self.kette.zustand().miner.get(m).and_then(|r| myl_net::peer_id_aus_bytes(&r.netzadresse).ok());
@@ -6939,13 +7022,20 @@ impl Knoten {
             }
             self.verlauf_gefragt.insert((a.epoche, a.pod, a.segment));
         }
-        while self.verlauf_gefragt.len() > 256 {
-            self.verlauf_gefragt.pop_first();
-        }
+        // ⛔️ **Fund 728 (2026-11-24): nach den offenen Aufträgen beschnitten,
+        //   nicht nach einer Zahl.** Hier hielt eine Grenze von 256 Fällen;
+        //   ein Prüfer hatte im langen Auftragslauf über 2 000 offene. Jeder
+        //   Durchlauf warf die ältesten hinaus, fragte sie als „noch nicht
+        //   gefragt“ erneut bei allen Mitgliedern an und verdrängte dabei
+        //   andere, und Antworten zu einem hinausgeworfenen Fall wurden
+        //   verworfen: derselbe Fall im Mittel 21-mal, bis 92-mal, je Antwort
+        //   rund 6 MB; die Knoten belegten 1 082 % CPU, die Shards 140 %.
+        gefragt_beschneiden(&mut self.verlauf_gefragt, &mut self.nachgerechnet, &self.kette.zustand().pruefauftraege);
         self.protokoll.schreibe(
             Eintrag::neu("pruefer_zugeteilt")
-                .zahl("epoche", meine.first().map_or(0, |a| a.epoche) as i64)
+                .zahl("epoche", waehle.first().map_or(0, |a| a.epoche) as i64)
                 .zahl("ziehungen", meine.len() as i64)
+                .zahl("erfragt", waehle.len() as i64)
                 .zahl("anfragen", gefragt as i64)
                 .zahl("ohne_adresse", ohne_adresse as i64),
         );
@@ -7002,50 +7092,56 @@ impl Knoten {
             self.protokoll.schreibe(Eintrag::neu("nachrechnen_ohne_modell").zahl("segment", i64::from(gezogen.segment)));
             return;
         };
-        self.nachgerechnet.insert(schluessel);
-        while self.nachgerechnet.len() > 256 {
-            self.nachgerechnet.pop_first();
+        // ⛔️ **Fund 729 (2026-11-25): Der Verlauf trägt alle früheren
+        //   Ziehungen seiner Sitzung.** Er ist die Sitzung von Position null
+        //   bis zur gezogenen, jede Antwort gegen dieselbe Wurzel geprüft;
+        //   sein Anfang bis zu einer früheren Ziehung ist genau deren
+        //   Verlauf. Mitgenommen wird jede offene Ziehung dieses Prüfers aus
+        //   demselben Bündel, deren Segment darin liegt und deren Bindung über
+        //   den Anfang trägt. Gerechnet wird einmal, über den ganzen Verlauf
+        //   ([`myl_verifier::verlauf_nachrechnen_bis`]).
+        // ⛔️ Ohne Grenze von 256 (wie Fund 728): Sie warf bei über 2 000
+        //   offenen Fällen Nachgerechnetes hinaus, und die Antwort des
+        //   nächsten Mitglieds liess denselben Fall noch einmal rechnen.
+        //   Beschnitten wird nach den offenen Aufträgen
+        //   ([`gefragt_beschneiden`]).
+        let mut ziehungen = vec![(gezogen, antworten.len())];
+        if let (Some(ich), Some(wurzel)) = (self.miner_ich(), bekannt) {
+            let offene: Vec<&myl_ledger::pruefung::Pruefauftrag> = z
+                .pruefauftraege
+                .iter()
+                .filter(|a| a.pruefer.contains(&ich) && a.segment != gezogen.segment && !self.nachgerechnet.contains(&(a.epoche, a.pod, a.segment)))
+                .collect();
+            ziehungen.extend(mitgetragen(&antworten, wurzel, &offene));
         }
-        let ketten: Vec<Vec<myl_types::Hash>> = antworten.iter().map(|a| a.spur.clone()).collect();
+        for (g, _) in &ziehungen {
+            let fall = (g.epoche.0, g.pod, g.segment);
+            self.nachgerechnet.insert(fall);
+            self.verlauf_gefragt.insert(fall);
+        }
+        self.verlauf_unterwegs.remove(&(gezogen.epoche.0, gezogen.pod));
+        self.protokoll.schreibe(
+            Eintrag::neu("verlauf_eingereiht")
+                .zahl("epoche", gezogen.epoche.0 as i64)
+                .text("pod", gezogen.pod.to_hex())
+                .zahl("segment", i64::from(gezogen.segment))
+                .zahl("positionen", antworten.len() as i64)
+                .zahl("ziehungen", ziehungen.len() as i64),
+        );
         // Die Prompt-Länge aus der Kennung (T6); `verlauf_pruefen` hat sie
         // für alle Segmente gleich verlangt.
         let laenge = antworten.first().map_or(0, |a| myl_types::prompt_laenge(&a.zeugnis.id) as usize);
-        let modell = Arc::clone(&self.pruefmodell);
-        let kanal = self.nachrechnungskanal.clone();
-        let verlauf = antworten;
-        tokio::task::spawn_blocking(move || {
-            let beginn = std::time::Instant::now();
-            let geladen = {
-                let mut g = modell.lock().unwrap_or_else(|v| v.into_inner());
-                if g.is_none() {
-                    *g = integer_llm_runtime::loader::load_model_fuer_netz(&artefakte).ok().map(Arc::new);
-                }
-                g.clone()
-            };
-            let ergebnis = match &geladen {
-                Some(m) => myl_verifier::verlauf_nachrechnen(m, &tokens, &ketten, laenge).map_err(|e| e.to_string()),
-                None => Err(format!("Modell unter {} nicht geladen", artefakte.display())),
-            };
-            // ⚑ **Bei einer Abweichung gleich den Schiedsbeleg** (T6d): die
-            //   Eingänge der strittigen Layer bis zur strittigen Position,
-            //   samt dem Verlauf, den das Komitee gegen die Kette prüft.
-            let beleg = match (&geladen, &ergebnis) {
-                (Some(m), Ok(myl_verifier::Verlaufspruefung { ergebnis: myl_verifier::Verlaufsergebnis::Abweichung { position, eintrag }, .. })) => {
-                    myl_verifier::schiedsbeleg(m, &tokens, *position, eintrag.saturating_sub(1).min(m.num_layers))
-                        .ok()
-                        .map(|e| (verlauf, e))
-                }
-                _ => None,
-            };
-            let _ = kanal.send(Nachrechnung {
-                gezogen,
-                positionen: tokens.len(),
-                prompt_laenge: laenge,
-                ergebnis,
-                dauer_ms: beginn.elapsed().as_millis().min(i64::MAX as u128) as i64,
-                beleg,
-            });
+        let auftrag = Nachrechenauftrag { verlauf: antworten, tokens, laenge, ziehungen, artefakte };
+        let werk = self.nachrechenwerk.get_or_insert_with(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (modell, kanal) = (Arc::clone(&self.pruefmodell), self.nachrechnungskanal.clone());
+            let _ = std::thread::Builder::new().name("nachrechnen".into()).spawn(move || nachrechnen_der_reihe_nach(&rx, &modell, &kanal));
+            tx
         });
+        if let Err(std::sync::mpsc::SendError(a)) = werk.send(auftrag) {
+            self.nachrechenwerk = None;
+            self.protokoll.schreibe(Eintrag::neu("nachrechnen_ohne_werk").zahl("ziehungen", a.ziehungen.len() as i64));
+        }
     }
 
     /// ⚑ **Festlegen** (Stufe 2, Festlegung des Projektinhabers vom
@@ -7267,24 +7363,40 @@ impl Knoten {
 
     /// Der eigene Verlauf zu einer Spuranfrage, aus der Ablage, deren Wurzel
     /// die des Bündels in der Kette ist (wie [`Nachforderung::Verlauf`]).
-    fn eigener_verlauf(&self, a: &myl_types::Spuranfrage) -> Option<Vec<myl_types::Spurantwort>> {
+    fn eigener_verlauf(&mut self, a: &myl_types::Spuranfrage) -> Option<Vec<myl_types::Spurantwort>> {
         let wurzel = self.kette.zustand().stichprobe_wurzeln.iter().find(|(p, _, _)| *p == a.pod).map(|(_, w, _)| *w);
-        self.spurablagen.iter().rev().map(|(_, ab)| ab).filter(|ab| wurzel.is_none_or(|w| ab.segments_root == w)).find_map(|ab| ab.verlauf(a))
+        self.spurlager.finden(wurzel, |ab| ab.verlauf(a))
     }
 
     /// ⚑ **Ein Stück des eigenen Verlaufs** (T6, 2026-11-05), wie beim
     /// Schiedsbeleg ([`Self::schiedsbeleg_stueck`]).
     fn verlauf_stueck(&mut self, anfrage: myl_types::Spuranfrage, ab: u32) -> Nachlieferung {
         let schluessel = (anfrage.epoche.0, anfrage.pod, anfrage.segment);
-        if self.verlauf_ausgabe.as_ref().is_none_or(|(k, _)| *k != schluessel) {
-            self.verlauf_ausgabe = self
-                .eigener_verlauf(&anfrage)
-                .and_then(|v| borsh::to_vec(&v).ok())
-                .filter(|b| b.len() <= crate::nachschub::SCHIEDSBELEG_HOECHSTENS_BYTES)
-                .map(|b| (schluessel, Arc::new(b)));
-        }
-        let (gesamt, abdruck, daten) = match self.verlauf_ausgabe.as_ref().filter(|(k, _)| *k == schluessel) {
-            Some((_, bytes)) => crate::nachschub::belegstueck(bytes, ab),
+        // ⚑ Fund 728: Mehrere Prüfer holen verschiedene Fälle zugleich, Stück
+        //   für Stück. Mit nur einem gemerkten Verlauf baute jedes Stück eines
+        //   anderen Falls den ganzen Verlauf neu (Wurzel, Baum, Pfade, rund
+        //   6 MB Bytes).
+        let bytes = match self.verlauf_ausgabe.iter().position(|(k, _)| *k == schluessel) {
+            Some(i) => self.verlauf_ausgabe.get(i).map(|(_, b)| Arc::clone(b)),
+            None => {
+                let neu = self
+                    .eigener_verlauf(&anfrage)
+                    .and_then(|v| borsh::to_vec(&v).ok())
+                    .filter(|b| b.len() <= crate::nachschub::SCHIEDSBELEG_HOECHSTENS_BYTES)
+                    .map(Arc::new);
+                if let Some(b) = &neu {
+                    self.verlauf_ausgabe.push_back((schluessel, Arc::clone(b)));
+                    while self.verlauf_ausgabe.iter().map(|(_, b)| b.len()).sum::<usize>() > VERLAUFAUSGABE_HOECHSTENS_BYTES
+                        && self.verlauf_ausgabe.len() > 1
+                    {
+                        self.verlauf_ausgabe.pop_front();
+                    }
+                }
+                neu
+            }
+        };
+        let (gesamt, abdruck, daten) = match bytes {
+            Some(bytes) => crate::nachschub::belegstueck(&bytes, ab),
             None => (0, myl_types::Hash::sha256(&[]), Vec::new()),
         };
         if ab == 0 {
@@ -7625,10 +7737,11 @@ impl Knoten {
     }
 
     /// Alle weitergereichten Anfragen an `an` scheitern.
-    fn shardrelais_scheitern(&mut self, an: &libp2p::PeerId, grund: &str) {
-        let weg: Vec<u64> = self.shardrelais.iter().filter(|(_, (p, _, _))| p == an).map(|(k, _)| *k).collect();
-        for k in weg {
-            if let Some((_, rueck, _)) = self.shardrelais.remove(&k) {
+    /// Das eine Relais mit dieser Kennung scheitert (Fund 721), nur wenn es
+    /// an diese Gegenstelle ging; die übrigen zu ihr laufen weiter.
+    fn shardrelais_scheitern(&mut self, kennung: u64, an: &libp2p::PeerId, grund: &str) {
+        if self.shardrelais.get(&kennung).is_some_and(|(p, _, _)| p == an) {
+            if let Some((_, rueck, _)) = self.shardrelais.remove(&kennung) {
                 let _ = rueck.send(myl_types::relais::Relaisantwort::Fehler(format!("Mitglied {an} nicht erreicht: {grund}")));
             }
         }
@@ -8327,14 +8440,22 @@ fn ist_waehlfehler(grund: &str) -> bool {
 /// reached“); [`stau_tests`] hält ihn fest. Über die Gegenstelle sagt er
 /// nichts.
 fn ist_staufehler(grund: &str) -> bool {
-    grund.ends_with("max sub-streams reached")
+    myl_net::stau::ist_stau(grund)
 }
 
 /// ⚑ **So viele Spurablagen hält ein Knoten** (Stufe 2, 2026-10-28): je
 /// Bündel eine, über wenige Epochen; die Ziehung kommt eine Epoche nach dem
 /// Bündel. Seit 2026-11-05 nur mit dem unterschriebenen Bündel, je Bündel
-/// eine, und die älteste Epoche fällt zuerst.
-pub const SPURABLAGEN_HOECHSTENS: usize = 32;
+/// eine, und die älteste Epoche fällt zuerst. Seit 2026-11-23 auf der
+/// Platte und nach Epochen aufgehoben ([`crate::spurlager`]); bis dahin 32
+/// im Arbeitsspeicher.
+pub const SPURABLAGEN_HOECHSTENS: usize = crate::spurlager::ABLAGEN_HOECHSTENS;
+
+/// ⚑ **So viele Spurablagen kommen zugleich in Stücken an** (2026-11-23):
+/// vier, je bis zur Grenze aus dem Deckel ([`myl_types::spurablage_hoechstens_bytes`],
+/// beim Netzmodell rund 133 MiB), also höchstens rund 530 MiB Zwischenstände
+/// auf der Platte; bis dahin acht zu je 64 MiB im Arbeitsspeicher.
+const ABLAGEN_ZUGLEICH: usize = 4;
 
 /// Was in den Orten fuer das Netz liegt, ueber alle zusammen.
 #[derive(Debug, Clone, Copy, Default)]
@@ -9347,6 +9468,149 @@ mod plaetze_tests;
 
 #[cfg(test)]
 mod stau_tests;
+#[cfg(test)]
+mod pruefer_tests;
+
+/// ⛔️ **Fund 728: Was ein Prüfer schon gefragt und nachgerechnet hat, gilt,
+/// solange der Auftrag offen ist.** Beides wird auf die offenen
+/// Prüfaufträge beschnitten; so bleibt es begrenzt, ohne dass ein offener
+/// Fall vergessen und neu gefragt wird.
+fn gefragt_beschneiden(
+    gefragt: &mut std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)>,
+    nachgerechnet: &mut std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)>,
+    auftraege: &[myl_ledger::pruefung::Pruefauftrag],
+) {
+    let offen: std::collections::BTreeSet<(u64, myl_types::ids::PodId, u32)> = auftraege.iter().map(|a| (a.epoche, a.pod, a.segment)).collect();
+    gefragt.retain(|f| offen.contains(f));
+    nachgerechnet.retain(|f| offen.contains(f));
+}
+
+/// ⛔️ Fund 729: So lange wartet ein Prüfer auf einen erfragten Verlauf,
+/// bevor er im selben Pod den nächsten erfragt. Ein Verlauf am Ende einer
+/// langen Sitzung ist rund 9 MB in Stücken; das erste Mitglied, das ihn
+/// liefert, genügt.
+const VERLAUF_WARTEN: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// ⛔️ Fund 729: So viele Schiedsbelege legt ein Durchgang an, so viele hält
+/// der Knoten ([`Knoten::nachrechnung_vermerken`]). Ein Beleg trägt die
+/// Eingänge aller Positionen bis zur Abweichung, bei 5 000 Positionen rund
+/// 20 MB; ohne Grenze legte ein Lügner hunderte zugleich an.
+const BELEGE_JE_DURCHGANG: usize = 64;
+
+/// ⛔️ **Fund 729: welche Verläufe als nächste erfragt werden.** Je Epoche
+/// und Pod höchstens einer unterwegs, und zwar der zur Ziehung mit dem
+/// höchsten Segment: Im Bündel stehen die Positionen einer Sitzung in ihrer
+/// Reihenfolge, die späteste Ziehung einer Sitzung trägt also alle früheren.
+/// Ein Verlauf, der nach [`VERLAUF_WARTEN`] nicht kam, hält nicht länger auf.
+fn verlaeufe_waehlen<'a>(
+    offen: &'a [myl_ledger::pruefung::Pruefauftrag],
+    unterwegs: &std::collections::BTreeMap<(u64, myl_types::ids::PodId), std::time::Instant>,
+    jetzt: std::time::Instant,
+) -> Vec<&'a myl_ledger::pruefung::Pruefauftrag> {
+    let mut je_pod: std::collections::BTreeMap<(u64, myl_types::ids::PodId), &myl_ledger::pruefung::Pruefauftrag> =
+        std::collections::BTreeMap::new();
+    for a in offen {
+        let k = (a.epoche, a.pod);
+        if unterwegs.get(&k).is_some_and(|t| jetzt.saturating_duration_since(*t) < VERLAUF_WARTEN) {
+            continue;
+        }
+        let e = je_pod.entry(k).or_insert(a);
+        if a.segment > e.segment {
+            *e = a;
+        }
+    }
+    je_pod.into_values().collect()
+}
+
+/// ⛔️ **Fund 729: die offenen Ziehungen, die ein getragener Verlauf
+/// mitträgt**, je mit ihrem Ende im Verlauf: dasselbe Bündel (Epoche, Pod,
+/// Wurzel und Segmentzahl), ihr Segment im Verlauf, und die Bindung eines
+/// Pflichtauftrags trägt über den Anfang bis dorthin. Der Verlauf muss
+/// vorher gegen `wurzel` geprüft sein (`myl_types::verlauf_pruefen`).
+fn mitgetragen(
+    verlauf: &[myl_types::Spurantwort],
+    wurzel: (myl_types::ids::MerkleRoot, u32),
+    offene: &[&myl_ledger::pruefung::Pruefauftrag],
+) -> Vec<(myl_types::Spuranfrage, usize)> {
+    let Some(letzte) = verlauf.last() else {
+        return Vec::new();
+    };
+    let (epoche, pod) = (letzte.anfrage.epoche, letzte.anfrage.pod);
+    let stelle: std::collections::BTreeMap<u32, usize> = verlauf.iter().enumerate().map(|(i, a)| (a.anfrage.segment, i)).collect();
+    let kennungen: Vec<myl_types::ids::SegmentId> = verlauf.iter().map(|a| a.zeugnis.id).collect();
+    offene
+        .iter()
+        .filter(|a| a.epoche == epoche.0 && a.pod == pod && (a.wurzel, a.segmente) == wurzel)
+        .filter_map(|a| {
+            let i = *stelle.get(&a.segment)?;
+            a.bindung_traegt(&kennungen[..=i])
+                .then_some((myl_types::Spuranfrage { epoche, pod, segment: a.segment }, i + 1))
+        })
+        .collect()
+}
+
+/// ⛔️ Fund 729: ein Verlauf und die Ziehungen, die er trägt, je mit ihrem
+/// Ende darin.
+pub struct Nachrechenauftrag {
+    verlauf: Vec<myl_types::Spurantwort>,
+    tokens: Vec<u32>,
+    laenge: usize,
+    ziehungen: Vec<(myl_types::Spuranfrage, usize)>,
+    artefakte: std::path::PathBuf,
+}
+
+/// ⛔️ **Fund 729: Die Rechenaufgabe der Nachrechnung, ein Verlauf nach dem
+/// anderen.** Hier startete jeder Verlauf eine eigene Aufgabe; im langen
+/// Auftragslauf rechnete ein Prüfer 143 Verläufe des 35B zugleich, eine
+/// Rechnung dauerte so bis 2,8 Stunden, und der Knoten wurde wegen Speicher
+/// abgeschossen. Die Laufzeit rechnet ohnehin auf allen Kernen.
+fn nachrechnen_der_reihe_nach(
+    auftraege: &std::sync::mpsc::Receiver<Nachrechenauftrag>,
+    modell: &std::sync::Mutex<Option<Arc<integer_llm_runtime::model::IntegerModel>>>,
+    kanal: &tokio::sync::mpsc::UnboundedSender<Nachrechnung>,
+) {
+    for a in auftraege {
+        let beginn = std::time::Instant::now();
+        let geladen = {
+            let mut g = modell.lock().unwrap_or_else(|v| v.into_inner());
+            if g.is_none() {
+                *g = integer_llm_runtime::loader::load_model_fuer_netz(&a.artefakte).ok().map(Arc::new);
+            }
+            g.clone()
+        };
+        let ketten: Vec<Vec<myl_types::Hash>> = a.verlauf.iter().map(|x| x.spur.clone()).collect();
+        let enden: Vec<usize> = a.ziehungen.iter().map(|(_, n)| *n).collect();
+        let ergebnisse = match &geladen {
+            Some(m) => myl_verifier::verlauf_nachrechnen_bis(m, &a.tokens, &ketten, a.laenge, &enden).map_err(|e| e.to_string()),
+            None => Err(format!("Modell unter {} nicht geladen", a.artefakte.display())),
+        };
+        let dauer_ms = beginn.elapsed().as_millis().min(i64::MAX as u128) as i64;
+        // ⚑ **Bei einer Abweichung gleich den Schiedsbeleg** (T6d): die
+        //   Eingänge der strittigen Layer bis zur strittigen Position, samt
+        //   dem Verlauf, den das Komitee gegen die Kette prüft. Je Abweichung
+        //   einmal gerechnet; alle späteren Ziehungen einer Sitzung teilen
+        //   die erste.
+        let mut eingaenge: std::collections::BTreeMap<(usize, usize), Option<Vec<Vec<i16>>>> = std::collections::BTreeMap::new();
+        let mut belege = 0usize;
+        for (i, (gezogen, n)) in a.ziehungen.iter().enumerate() {
+            let ergebnis = ergebnisse.as_ref().map(|v| v[i].clone()).map_err(Clone::clone);
+            let beleg = match (&geladen, &ergebnis) {
+                (Some(m), Ok(myl_verifier::Verlaufspruefung { ergebnis: myl_verifier::Verlaufsergebnis::Abweichung { position, eintrag }, .. }))
+                    if belege < BELEGE_JE_DURCHGANG =>
+                {
+                    let layer = eintrag.saturating_sub(1).min(m.num_layers);
+                    let e = eingaenge
+                        .entry((*position, layer))
+                        .or_insert_with(|| myl_verifier::schiedsbeleg(m, &a.tokens[..*n], *position, layer).ok());
+                    belege += 1;
+                    e.clone().map(|e| (a.verlauf[..*n].to_vec(), e))
+                }
+                _ => None,
+            };
+            let _ = kanal.send(Nachrechnung { gezogen: *gezogen, positionen: *n, prompt_laenge: a.laenge, ergebnis, dauer_ms, beleg });
+        }
+    }
+}
 
 /// Ein nachgerechneter Verlauf, aus der Rechenaufgabe zurück (Stufe 2).
 #[derive(Debug)]
@@ -9395,6 +9659,10 @@ type Schiedsbeleg = (Vec<myl_types::Spurantwort>, Vec<Vec<i16>>);
 
 /// Ein Prüffall: Epoche, Pod und Segment im Bündel.
 type Fall = (u64, myl_types::ids::PodId, u32);
+
+/// So viele Bytes fertiger Verläufe hält ein Knoten für Prüfer bereit (Fund
+/// 728): rund zehn Verläufe zu 6 MB, ein Verlauf am Deckel (64 MiB) für sich.
+const VERLAUFAUSGABE_HOECHSTENS_BYTES: usize = 64 << 20;
 
 /// So viele Schiedsbelege setzt ein Knoten zugleich aus Stücken zusammen.
 const SCHIEDSTEILE_ZUGLEICH: usize = 4;

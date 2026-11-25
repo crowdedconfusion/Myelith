@@ -410,3 +410,45 @@ fn der_prefill_ist_bitgleich_zum_schrittweisen_rechnen() {
     assert_eq!(a.ergebnis, Verlaufsergebnis::Abweichung { position: n - 3, eintrag: 9 });
     assert_eq!(a, b);
 }
+
+/// ⛔️ **Fund 729 (2026-11-25): eine Sitzung einmal nachrechnen.** Ein
+/// Durchgang über den längsten Verlauf muss für jedes Ende genau das
+/// liefern, was der Verlauf bis dorthin allein ergäbe: dieselbe erste
+/// Abweichung, dieselben Logits. Geprüft an Enden vor, an und hinter der
+/// Prompt-Länge und der Fenstergrenze, ehrlich und mit einer gefälschten
+/// Layer, einer falschen Wahl und einer zu langen Kette. Die Tokens sind
+/// nicht die Wahl des Modells; ab der Prompt-Länge weicht also jede Wahl ab,
+/// und nur ein Ende, das das nächste Token nicht mehr enthält, besteht.
+#[test]
+fn ein_durchgang_ueber_den_laengsten_verlauf_traegt_jedes_ende() {
+    use myl_verifier::{verlauf_nachrechnen, verlauf_nachrechnen_bis};
+    let dir = artifacts_dir();
+    if !artefakte::vorhanden(&dir) {
+        return;
+    }
+    let modell = load_model(&dir).expect("Modell-Ladung");
+    let fenster = integer_llm_runtime::model::VORBEREITUNGSFENSTER;
+    let n = fenster + 8;
+    let tokens: Vec<u32> = (0..n).map(|i| ((i * 7_919 + 13) % modell.vocab_size) as u32).collect();
+    let ketten = ehrliche_ketten(&modell, &tokens);
+    let enden = [1, 2, 3, 7, fenster - 1, fenster, fenster + 1, n - 4, n - 3, n - 2, n];
+    let einzeln = |t: &[u32], k: &[Vec<Hash>], laenge: usize| -> Vec<myl_verifier::Verlaufspruefung> {
+        enden.iter().map(|&e| verlauf_nachrechnen(&modell, &t[..e], &k[..e], laenge).expect("einzeln")).collect()
+    };
+    for laenge in [0, n - 3] {
+        let bis = verlauf_nachrechnen_bis(&modell, &tokens, &ketten, laenge, &enden).expect("ein Durchgang");
+        assert_eq!(bis, einzeln(&tokens, &ketten, laenge), "ehrlich, Prompt-Länge {laenge}");
+    }
+    // Gefälscht: eine Layer hinter der Fenstergrenze, eine zu lange Kette
+    // davor; mit Prompt-Länge auch die Wahl.
+    let mut gefaelscht = ketten.clone();
+    gefaelscht[fenster + 1][3] = Hash::sha256(b"gefaelscht");
+    gefaelscht[5].push(Hash::sha256(b"zu lang"));
+    for laenge in [0, 4, n - 3] {
+        let bis = verlauf_nachrechnen_bis(&modell, &tokens, &gefaelscht, laenge, &enden).expect("ein Durchgang");
+        assert_eq!(bis, einzeln(&tokens, &gefaelscht, laenge), "gefälscht, Prompt-Länge {laenge}");
+    }
+    // Unbrauchbare Enden sind ein Fehler, kein Befund.
+    assert!(verlauf_nachrechnen_bis(&modell, &tokens, &ketten, 0, &[0]).is_err());
+    assert!(verlauf_nachrechnen_bis(&modell, &tokens, &ketten, 0, &[n + 1]).is_err());
+}
