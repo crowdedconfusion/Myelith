@@ -1,6 +1,6 @@
 # COMPLIANCE: was Myelith dem Recht zusagt
 
-> **Version:** 0.10.3
+> **Version:** 0.10.4
 > **Datum:** 2026-11-25
 > **Status:** Die Pflichten aus der KI-Verordnung sind dokumentiert und,
 > soweit technisch, umgesetzt; die Einordnung Artikel für Artikel steht in
@@ -46,6 +46,10 @@ Schutzfilter (`CLIENT/myl-client/src/schutzfilter.rs`), Notaus
 (`AGENT_LAYER/local-agent/src/notaus.rs`).
 
 ## Changelog
+
+### v0.10.4 (2026-11-25): `taiki-e/install-action` 2.90.5
+
+- Übernommen, was Dependabot vorschlug, mit derselben Commit-Summe und lokal: `taiki-e/install-action` 2.89.1 auf 2.90.5, zwei Stellen in `ci.yml` (cargo-deny und Fuzzing). Die Summe ist gegen den Tag aufgelöst und stimmt; die Release Notes nennen keinen Bruch.
 
 ### v0.10.3 (2026-11-25): Die festgenagelten Actions auf Node 24
 
