@@ -731,6 +731,12 @@ pub struct Rechenergebnis {
     pub neue_token: u64,
     /// Das Segment, unter dem die Arbeit bezeugt wurde, hexadezimal.
     pub segment: String,
+    /// ⚑ **Am Betrag der Zusage gekürzt, unter der gerechnet wurde**
+    /// (Fund 731). Die Tür vergleicht sonst mit ihrer eigenen Zusage; ein
+    /// Ergebnis aus einem früheren Anlauf (Fund 727) war aber auf dessen
+    /// kleinere Zusage gekürzt und hieß dann `stop`, obwohl es mitten im
+    /// Text endete.
+    pub gekuerzt: bool,
 }
 
 /// Name und Stand des Modells, das dieser Knoten fährt.

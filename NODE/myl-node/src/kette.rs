@@ -772,6 +772,23 @@ pub fn nachgefragte_vtfe(burn_epoche: u64, credit_preis: u64) -> u64 {
     (burn_epoche / credit_preis.max(1)).saturating_mul(myl_tokenomics::VTFE_UNITS_PER_TFE)
 }
 
+/// ⚑ **Was ein Pod je Epoche für die Nachfrage leistet** (2026-11-26,
+/// Festlegung des Projektinhabers: aus gemessener Rate und Epochenlänge):
+/// die Leistung des Netzes je Sekunde mal der Dauer einer Epoche in diesem
+/// Takt, **halbiert**, weil jedes Segment von r = 2 Pods gerechnet wird
+/// (Whitepaper 4.4 und 5.3, [`myl_tokenomics::redundancy_normalized_weight`]).
+/// Ein gekaufter Credit braucht zwei Pässe, einen je Zwilling; die
+/// Auslastung ist damit der Anteil der Podzeit, den die Nachfrage belegt.
+///
+/// ⚑ **Die Dauer kommt aus dem Takt, nie aus der Uhr.** Der Zeitstempel
+/// eines Blocks ist frei gesetzt und bleibt aus dem Rechenpfad; der Takt
+/// ist für alle Knoten eines Laufs derselbe.
+pub fn kapazitaet_je_pod(netz: &crate::netz::Netz, slot_ms: u64) -> u64 {
+    let epoche_ms = u128::from(slot_ms) * u128::from(myl_consensus::block::BLOECKE_JE_EPOCHE);
+    let roh = u128::from(netz.pod_leistung_vtfe_je_s) * epoche_ms / 1_000;
+    myl_tokenomics::redundancy_normalized_weight(roh.min(u128::from(u64::MAX)) as u64)
+}
+
 /// ⚑ **Die Auslastung, der der Preis folgt** (Whitepaper 5.4: nachgefragte
 /// vTFE durch Kapazität). Bestätigte Arbeit allein ist nie über 1 und sieht
 /// keine Nachfrage, die keinen Platz fand; die in dieser Epoche gekauften
@@ -1102,6 +1119,13 @@ pub struct Kette {
     /// Ob diese Kette ihren Stimmsatz aus Block 1 lernt (nur auf einer
     /// Probekette, [`crate::netz::Netz::lernt_erzeuger`]).
     lernt_erzeuger: bool,
+    /// ⚑ **Die Länge eines Slots in diesem Lauf** (2026-11-26): die des
+    /// Netzes oder `--blocktakt`; aus ihr folgt die Kapazität einer Epoche
+    /// ([`Kette::kapazitaet_je_pod`]). Alle Knoten eines Laufs fahren
+    /// denselben Takt, sonst hielten sie die Blöcke der anderen für künftig;
+    /// wer mit einem anderen neu startet, rechnet am nächsten Wechsel eine
+    /// andere Wurzel und hält an, statt still abzuweichen.
+    slot_ms: u64,
     /// Das Zertifikat eines Prüfpunkts, das der nächste erzeugte Block
     /// tragen soll (2026-10-27, CONSENSUS 7.2).
     ///
@@ -1446,6 +1470,7 @@ impl Kette {
             erzeugerschluessel: None,
             nur_nach_plan: false,
             lernt_erzeuger: netz.lernt_erzeuger,
+            slot_ms: netz.slot_ms.max(1),
             naechstes_pruefpunktzertifikat: None,
             offene_zuteilungen: Vec::new(),
             letzte_stichprobe: None,
@@ -2843,6 +2868,28 @@ impl Kette {
         self.stimmsatz = Some(satz);
     }
 
+    /// Setzt die Länge eines Slots, wenn der Lauf einen anderen Takt fährt
+    /// als das Netz (`--blocktakt`); siehe das Feld `slot_ms`.
+    pub fn takt_setzen(&mut self, slot_ms: u64) {
+        self.slot_ms = slot_ms.max(1);
+    }
+
+    /// Die Länge eines Slots, mit der diese Kette die Kapazität rechnet.
+    pub fn takt(&self) -> u64 {
+        self.slot_ms
+    }
+
+    /// Was ein Pod in diesem Lauf je Epoche für die Nachfrage leistet
+    /// ([`kapazitaet_je_pod`]).
+    pub fn kapazitaet_je_pod(&self) -> u64 {
+        kapazitaet_je_pod(crate::netz::Netz::des_zustands(&self.zustand), self.slot_ms)
+    }
+
+    /// Der Trainingsplan der laufenden Epoche mit der Kapazität dieses Laufs.
+    pub fn trainingsplan(&self) -> myl_scheduler::trainingszuteilung::Trainingsplan {
+        Self::trainingsplan_der_laufenden_epoche(&self.zustand, self.kapazitaet_je_pod())
+    }
+
     /// Setzt den Schlüssel, mit dem dieser Knoten seine Blöcke
     /// unterschreibt (2026-10-27).
     pub fn erzeugerschluessel_setzen(&mut self, schluessel: crate::schluessel::Konsensschluessel) {
@@ -3689,14 +3736,23 @@ impl Kette {
     /// zur selben Epoche. Innerhalb der Auswahl wird sie noch einmal
     /// abgeleitet, damit Trainingslast und Shard-Position nicht an
     /// derselben Permutation hängen.
+    ///
+    /// 📌 **Fund 732 (2026-11-26):** `vtfe_vorepoche` zählt abgebuchte
+    /// Credits, also Pässe; die Kapazität steht in vTFE-Einheiten. Bis hierher
+    /// ging der Zähler unverändert hinein, und die bestätigte Nachfrage
+    /// erschien eine Million Mal zu klein: Trainingsmenge, Abgabe und Boden
+    /// sahen immer eine Auslastung von null, der Preis nur die Käufe. Derselbe
+    /// Fehler wie Fund 714, auf dem zweiten Weg; umgerechnet wird wie dort an
+    /// der Stelle, an der verglichen wird.
     pub fn trainingsplan_der_laufenden_epoche(
         zustand: &LedgerState,
+        kapazitaet_je_pod: u64,
     ) -> myl_scheduler::trainingszuteilung::Trainingsplan {
         let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
         myl_scheduler::trainingszuteilung::plane(
             &zuteilung,
-            zustand.vtfe_vorepoche,
-            Self::POD_KAPAZITAET_VTFE,
+            zustand.vtfe_vorepoche.saturating_mul(myl_tokenomics::VTFE_UNITS_PER_TFE),
+            kapazitaet_je_pod,
             &myl_scheduler::trainingszuteilung::Trainingsraten {
                 grundrate_bps: Self::TRAININGS_GRUNDRATE_BPS,
                 freianteil_bps: Self::TRAININGS_FREIANTEIL_BPS,
@@ -3968,6 +4024,7 @@ impl Kette {
         neue_epoche: u64,
         letzter_hash: &Hash,
         stimmsatz: Option<&myl_consensus::validator::VotingSet>,
+        kapazitaet_je_pod: u64,
     ) {
         if neue_epoche <= zustand.epoch.0 {
             return;
@@ -4027,7 +4084,15 @@ impl Kette {
         // ⚑ **Die Trainingszuschreibung entsteht VOR der Ausschüttung**
         // und aus dem Zustand, den die abgelaufene Epoche hinterlassen
         // hat. Danach sind die Segmente weg.
-        let trainingsplan = Self::trainingsplan_der_laufenden_epoche(zustand);
+        //
+        // 📌 **Fund 733 (2026-11-26): dieser eine Plan gilt bis zum Ende des
+        // Abschlusses.** Die Ausschüttung rollt `vtfe_epoche` in
+        // `vtfe_vorepoche`; ein danach neu gerechneter Plan hätte die
+        // Nachfrage der abgelaufenen Epoche statt der davor und wäre der Plan
+        // einer Epoche, die es nie gab. Bis Fund 732 war die Auslastung immer
+        // null und der Plan davon unberührt; seither verlor so ein Paar, das
+        // trainiert hatte, seine Wirkung auf die Modellfassung.
+        let trainingsplan = Self::trainingsplan_der_laufenden_epoche(zustand, kapazitaet_je_pod);
         let trainingszuschreibung =
             Self::trainingszuschreibung(zustand, &trainingsplan.paare, alte_epoche);
         // ⚑ **Der Checker-Pool** (Anhang B.3, 2026-10-29): nach dem geprüften
@@ -4177,8 +4242,7 @@ impl Kette {
         // Commitments; wer die Gewichte hat, wendet es an und rechnet
         // die Wurzel nach.
         {
-            let plan = Self::trainingsplan_der_laufenden_epoche(zustand);
-            let bestaetigt = Self::bestaetigte_deltas(zustand, &plan.paare, alte_epoche);
+            let bestaetigt = Self::bestaetigte_deltas(zustand, &trainingsplan.paare, alte_epoche);
             zustand.modell_version =
                 myl_types::modellversion::naechste_version(&zustand.modell_version, &bestaetigt);
         }
@@ -4207,10 +4271,9 @@ impl Kette {
         // hängt an der Saat, die **während** ihr galt. Danach wäre es
         // der Plan einer Epoche, die es nie gab.
         {
-            let plan = Self::trainingsplan_der_laufenden_epoche(zustand);
             let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
             zustand.trainingsstand.veraendern(|stand| {
-                myl_scheduler::trainingszuteilung::stand_fortschreiben(stand, &zuteilung.pods, &plan.pods, alte_epoche)
+                myl_scheduler::trainingszuteilung::stand_fortschreiben(stand, &zuteilung.pods, &trainingsplan.pods, alte_epoche)
             });
         }
         // ⚑ **Und die Saat rückt weiter** (Fund 143), siehe oben.
@@ -4260,6 +4323,7 @@ impl Kette {
         stimmsatz: Option<&myl_consensus::validator::VotingSet>,
         ausgaben: &mut Pruefausgaben,
         schon_geprueft: &dyn Fn(&Transaktion) -> bool,
+        kapazitaet_je_pod: u64,
     ) -> Vec<bool> {
         // ⚑ **Die Historie zuerst** (Archivknoten, Stufe A2): der Hash des
         //   Vorgängers, also des Blocks, an den dieser anschliesst. Erzeuger
@@ -4293,7 +4357,7 @@ impl Kette {
                 ausgaben.urteile.push((urteil, gebucht.err()));
             }
         }
-        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, stimmsatz);
+        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, stimmsatz, kapazitaet_je_pod);
         // ⚑ Die vorgemerkten Auszahlungen, begrenzt je Block (nach dem
         //   Wechsel, damit der Wechselblock selbst schon bucht; bei wenigen
         //   Minern ist damit alles im selben Block bezahlt).
@@ -4696,7 +4760,7 @@ impl Kette {
                     // Zustands; ihn abzulegen führte eine zweite
                     // Wahrheit ein, die mit dem Zustand auseinanderlaufen
                     // könnte.
-                    let plan = Self::trainingsplan_der_laufenden_epoche(zustand);
+                    let plan = Self::trainingsplan_der_laufenden_epoche(zustand, kapazitaet_je_pod);
                     let bestellt = plan.pods.contains(&pod.pod_index);
                     let charge = match (zustand.korpus.as_ref(), plan.zuweisungen.get(&pod.pod_index))
                     {
@@ -5468,6 +5532,7 @@ impl Kette {
         let sicherung = self.zustand.sichern();
         let davor = self.letzter_hash;
         let unterschriften = &self.unterschriften;
+        let kapazitaet = self.kapazitaet_je_pod();
         let verbraucht = Self::anwenden(
             &mut self.zustand,
             &txs,
@@ -5478,6 +5543,7 @@ impl Kette {
             self.stimmsatz.as_ref(),
             &mut ausgaben,
             &|t: &Transaktion| unterschriften.kennt(&t.kennung()),
+            kapazitaet,
         );
         self.zustand.letzter_slot = slot;
         let zeuge = self.zustand.zeuge_nehmen().ok().and_then(|z| borsh::to_vec(&z).ok());
@@ -6039,6 +6105,7 @@ impl Kette {
         let mut ausgaben = Pruefausgaben::default();
         // ⚑ **Das Zertifikat kommt aus dem Block, nicht aus eigenem
         // Zustand.** Sonst zöge jeder Knoten eine andere Stichprobe.
+        let kapazitaet = self.kapazitaet_je_pod();
         Self::anwenden(
             &mut self.zustand,
             &block.txs,
@@ -6049,6 +6116,7 @@ impl Kette {
             self.stimmsatz.as_ref(),
             &mut ausgaben,
             &|t: &Transaktion| unterschriften.kennt(&t.kennung()),
+            kapazitaet,
         );
         self.zustand.letzter_slot = block.header.slot;
         let eigener_zeuge = if bereithalten { self.zustand.zeuge_nehmen().ok().and_then(|z| borsh::to_vec(&z).ok()) } else { None };

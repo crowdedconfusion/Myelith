@@ -535,6 +535,7 @@ impl Rechenweg for Spiegelwerk {
             prompt_token: 12,
             neue_token: 1,
             segment: "ab12cd".to_string(),
+            gekuerzt: false,
         })
     }
     async fn modell(&self) -> Option<Modellstand> {
@@ -644,6 +645,7 @@ impl Rechenweg for Aufrufwerk {
             prompt_token: 30,
             neue_token: 20,
             segment: "ab12cd".to_string(),
+            gekuerzt: false,
         })
     }
     async fn modell(&self) -> Option<Modellstand> {
@@ -868,7 +870,7 @@ impl Rechenweg for Wartewerk {
     async fn rechne(&self, _: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
         self.begonnen.notify_one();
         self.weiter.notified().await;
-        Ok(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+        Ok(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string(), gekuerzt: false })
     }
     async fn modell(&self) -> Option<Modellstand> {
         Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
@@ -933,10 +935,57 @@ impl Rechenweg for Zusagewerk {
         if auftrag.prompt.contains("lang") {
             return Err(Rechenfehler::Ungedeckt { prompt_token: auftrag.hoechstens + 5 });
         }
-        Ok(Rechenergebnis { text: "ok".to_string(), prompt_token: auftrag.hoechstens - 1, neue_token: 2, segment: "ab".to_string() })
+        Ok(Rechenergebnis { text: "ok".to_string(), prompt_token: auftrag.hoechstens - 1, neue_token: 2, segment: "ab".to_string(), gekuerzt: false })
     }
     async fn modell(&self) -> Option<Modellstand> {
         Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
+    }
+}
+
+/// Ein Rechenweg, der ein Ergebnis aus einem frueheren Anlauf liefert: drei
+/// Token, weit unter Deckel und Zusage, und sagt, ob es dort gekuerzt war.
+struct Uebernahmewerk {
+    gekuerzt: bool,
+}
+
+#[async_trait::async_trait]
+impl Rechenweg for Uebernahmewerk {
+    async fn rechne(&self, _auftrag: Rechenauftrag<'_>) -> Result<Rechenergebnis, Rechenfehler> {
+        Ok(Rechenergebnis { text: "<tool_call>{\"name\"".to_string(), prompt_token: 4, neue_token: 3, segment: "ab".to_string(), gekuerzt: self.gekuerzt })
+    }
+    async fn modell(&self) -> Option<Modellstand> {
+        Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })
+    }
+}
+
+/// ⚑ **Ein Ergebnis, das unter der Zusage seines Laufs gekuerzt wurde,
+/// endet mit `length`** (Fund 731, langer Auftragslauf vom 2026-11-25),
+/// auch wenn es unter Deckel und Zusage dieser Anfrage liegt. Ein neuer
+/// Anlauf nach einem Nachkauf bekam das Ergebnis des alten (Fund 727), auf
+/// dessen kleinere Zusage gekuerzt; die Tuer sagte `stop`, und der Agent
+/// riet, den Aufruf zu schliessen, statt ihn fortzusetzen oder aufzuteilen.
+/// Gegenprobe: ohne das Merkmal bleibt es `stop`.
+#[tokio::test]
+async fn ein_im_frueheren_lauf_gekuerztes_ergebnis_endet_mit_length() {
+    for (gekuerzt, erwartet) in [(true, "length"), (false, "stop")] {
+        let werk = Uebernahmewerk { gekuerzt };
+        let k = kontrakt(7);
+        let token = bearer_fuer(7, k.adresse());
+        let tuer = Tuer::binden(0).await.expect("binden");
+        let port = tuer.port().expect("port");
+        let annahme = std::sync::Mutex::new(Annahme::neu(1, EpochId(5)));
+        let stelle = std::sync::Mutex::new(Zugangsstelle::neu(EineQuelle(k)));
+        let koerper = r#"{"messages":[{"role":"user","content":"kurz"}],"max_tokens":16}"#;
+        let bytes = post_bearer(WEG_CHAT, &token, koerper.as_bytes());
+        let dienst = async {
+            tuer.bedienen_v1(&annahme, &stelle, &myl_gateway::tuer::Besetzung::default(), &werk, EpochId(5), 1_000)
+                .await
+                .expect("bedienen");
+        };
+        let (antwort, _) = tokio::join!(frage(port, &bytes), dienst);
+        let rumpf = String::from_utf8_lossy(rumpf_von(&antwort)).to_string();
+        assert_eq!(status_von(&antwort), 200, "{rumpf}");
+        assert!(rumpf.contains(&format!(r#""finish_reason":"{erwartet}""#)), "gekuerzt {gekuerzt}: {rumpf}");
     }
 }
 
@@ -1013,7 +1062,7 @@ impl Rechenweg for Gehwerk {
         self.begonnen.notify_one();
         self.weiter.notified().await;
         self.fertig.store(true, std::sync::atomic::Ordering::SeqCst);
-        Ok(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+        Ok(Rechenergebnis { text: "fertig".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string(), gekuerzt: false })
     }
     async fn modell(&self) -> Option<Modellstand> {
         Some(Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })

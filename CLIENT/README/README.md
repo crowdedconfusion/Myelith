@@ -1,7 +1,7 @@
 # CLIENT: Myelith auf dem eigenen Rechner
 
-> **Version:** 0.249.2 (`myl-client` 0.144.1, `myl-oberflaeche` 0.95.1, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
-> **Datum:** 2026-11-25
+> **Version:** 0.250.0 (`myl-client` 0.145.0, `myl-oberflaeche` 0.95.1, `myl-console` 0.72.1, `myl-senses` 0.47.0, `myl-module` 0.6.2, `myl-scan` 0.5.0)
+> **Datum:** 2026-11-26
 > **Status:** Alles, was auf dem eigenen Rechner läuft, ist da: Gespräch,
 > Agent, Loop, Module, Sehen, Hören und Sprechen, Modelle holen und bauen,
 > Updates nur mit der Signatur des Projekts. Mining und Testwallets laufen
@@ -209,6 +209,12 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.250.0 (2026-11-26): Der Vorrat eines Nachkaufs endet vor dem Verfall (`myl-client` 0.145.0)
+
+- **Anlass:** Im langen Auftragslauf vom 2026-11-25 kaufte der Treiber über den Nachkauf 215 725 Credits und ließ rund 115 500 abbuchen; der Rest verfiel. Verfallenes ist verbranntes Geld des Nutzers, und es zählt trotzdem als Nachfrage (Whitepaper 5.4), hebt also den Preis für alle.
+- **Jetzt:** Ein Nachkauf deckt diese Runde und höchstens so viele weitere, wie vor dem Verfall des Kaufs durchlaufen (`runden_bis_verfall`: der Rest dieser Epoche und die ganze nächste, geteilt durch die längste Runde, mindestens eine). `VORRAT_RUNDEN` bleibt die Obergrenze. ⚑ Festlegung des Projektinhabers vom 2026-11-26, zusammen mit der gemessenen Kapazität im Knoten (NODE 0.141.0).
+- Proben: `der_vorrat_endet_vor_dem_verfall` (Gegenprobe: mit vier Runden bis zum Verfall der volle Vorrat) und `die_runden_bis_zum_verfall_zaehlen_die_naechste_epoche_mit`.
 
 ### v0.249.2 (2026-11-25): `url` 2.5.9 und `cookie` 0.18.3 wegen RUSTSEC-2026-0592 und RUSTSEC-2026-0594 (`myl-oberflaeche` 0.95.1)
 

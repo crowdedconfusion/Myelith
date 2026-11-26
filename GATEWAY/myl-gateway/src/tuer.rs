@@ -587,7 +587,11 @@ impl Tuer {
         // ⚑ **Am Betrag gekürzt heisst auch `length`** (Fund 711): Der Pod
         //   hat die Ausgabe auf die Zusage gekürzt, und ein Klient soll sie
         //   fortsetzen können wie eine am Deckel.
-        let abschluss = if myl_types::inferenzauftrag::preis(ergebnis.prompt_token, ergebnis.neue_token) >= zusage {
+        //   📌 **Fund 731:** auch, wenn der Rechenweg sagt, er habe gekürzt;
+        //   ein Ergebnis aus einem früheren Anlauf trägt dessen Zusage.
+        let abschluss = if ergebnis.gekuerzt
+            || myl_types::inferenzauftrag::preis(ergebnis.prompt_token, ergebnis.neue_token) >= zusage
+        {
             "length"
         } else {
             crate::oai::abschluss(ergebnis.neue_token, deckel)

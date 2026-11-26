@@ -269,7 +269,14 @@ fn eine_laufende_kette_greift_ineinander() {
         sitzung: s_id,
         handelnder: agent,
         waehrung: myl_types::sitzung::Waehrung::Credits,
-        betrag: 18_000,
+        // ⚑ **Klein genug, dass in der nächsten Epoche noch ein Paar
+        //   trainiert** (2026-11-26, Fund 732): Zwei Probepods leisten bei
+        //   500 ms je Slot zusammen 900 Pässe je Epoche; 45 sind eine
+        //   Auslastung von 5 Prozent, der Trainingsanteil 7 800 bp, also
+        //   beide Pods. Hier standen 18 000, das Zwanzigfache der Kapazität;
+        //   bis Fund 732 sah die Kette davon nichts, seither trainierte
+        //   danach zu Recht niemand, und Station 8 fiel aus.
+        betrag: 45,
         empfaenger: betreiber,
         empfaenger_beweis: myl_types::sitzung::empfaengerbeweis(&[betreiber], &betreiber).expect("gelistet"),
         bestaetigt_ausgeliefert: true,
@@ -284,7 +291,7 @@ fn eine_laufende_kette_greift_ineinander() {
     );
 
     // ---- 4. Trainingsplan: Anteil, Paare, Buendel -------------------
-    let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+    let plan = k.trainingsplan();
     assert_eq!(plan.paare.len(), 1, "zwei Trainingspods ergeben ein Paar");
     let (a, c) = plan.paare[0];
     assert_eq!(
@@ -438,29 +445,32 @@ fn eine_laufende_kette_greift_ineinander() {
     // Verfügung, und daraus folgen Trainingsanteil und Abgabe.
     assert_eq!(
         k.zustand().vtfe_vorepoche,
-        18_000,
+        45,
         "die Nachfrage ist nicht in die Vorepoche gerollt"
     );
     assert_eq!(k.zustand().vtfe_epoche, 0, "der laufende Zaehler faengt bei null an");
 
-    // ⚑ **Und die Auslastung bleibt trotzdem null, mit gutem Grund.**
-    // `PodKapazitaet` ist eine Zahl für ein echtes Netz: 3,6 Mrd. vTFE
-    // je Pod und Epoche. Achtzehntausend gegen 7,2 Milliarden sind auf
-    // der Festkommaskala exakt null.
-    //
-    // **Das ist kein Fehler der Simulation, sondern ihre Grenze**, und
-    // sie gehört benannt: Eine Probekette mit zwölf Minern kann keine
-    // Auslastung erzeugen, die gegen einen Netzparameter zählt. Die
-    // Regel selbst ist an ihren eigenen Tests geprüft; hier wird die
-    // **Verdrahtung** geprüft, also dass die Zahl ankommt.
-    let plan_danach = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
-    assert_eq!(plan_danach.auslastung, 0, "bei Testgroesse ist sie null");
+    // ⚑ **Und sie zählt als Auslastung** (Fund 732, 2026-11-26). Bis dahin
+    // stand hier, sie bleibe bei Testgrösse null, weil achtzehntausend gegen
+    // Milliarden auf der Festkommaskala null seien. Das war derselbe
+    // Einheitenfehler wie Fund 714: Ein abgebuchter Credit ist ein Pass, also
+    // 10⁶ vTFE-Einheiten, und die Kapazität steht in Einheiten.
+    let plan_danach = k.trainingsplan();
+    assert!(plan_danach.auslastung > 0, "Fund 732: die Abbuchung zaehlt nicht als Auslastung");
+    assert_eq!(
+        plan_danach.auslastung,
+        myl_types::auslastung::auslastung(
+            k.zustand().vtfe_vorepoche * myl_tokenomics::VTFE_UNITS_PER_TFE,
+            plan_danach.kapazitaet
+        ),
+        "die Auslastung ist nicht Paesse durch Kapazitaet"
+    );
     b.sagt(
         "TOKENOMICS",
         format!(
-            "Nachfrage in die Vorepoche gerollt ({} vTFE); Auslastung bleibt 0, \
-             weil die Kapazitaet {} vTFE ist",
+            "Nachfrage in die Vorepoche gerollt ({} Paesse); Auslastung {} gegen die Kapazitaet {} vTFE",
             k.zustand().vtfe_vorepoche,
+            plan_danach.auslastung,
             plan_danach.kapazitaet
         ),
     );
@@ -500,7 +510,7 @@ fn eine_laufende_kette_greift_ineinander() {
 
     // ---- 8. Ein uneiniges Paar bewegt nichts ------------------------
     let zuteilung2 = Kette::zuteilung_der_laufenden_epoche(k.zustand());
-    let plan2 = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+    let plan2 = k.trainingsplan();
     let epoche2 = k.zustand().epoch.0;
     let fassung_vor = k.zustand().modell_version;
     if let Some(&(x, y)) = plan2.paare.first() {

@@ -260,6 +260,9 @@ pub struct Nachkauflage {
     pub je_runde: u64,
     /// So viele Runden soll ein Kauf decken.
     pub vorrat_runden: u64,
+    /// So viele Runden laufen durch, bevor ein Kauf von jetzt verfällt
+    /// ([`runden_bis_verfall`]); der Vorrat geht nie darüber.
+    pub runden_bis_verfall: u64,
     /// Budget des Kontrakts abzüglich dessen, was die Kette abgebucht hat.
     pub budget_rest: u64,
     /// Kleinstbeträge je Credit.
@@ -314,6 +317,8 @@ pub fn nach_ablehnung(l: Nachkauflage) -> Nachkauflage {
 ///   vier Schranken 60 177 Credits für einen Auftrag von 17 758; 53 782
 ///   blieben übrig und verfallen. Der Vorrat wartet deshalb auf eine
 ///   gemessene Runde.
+/// - ⚑ **Nie mehr Runden, als vor dem Verfall durchlaufen** (Entscheidung des
+///   Projektinhabers vom 2026-11-26, [`runden_bis_verfall`]).
 /// - Reicht das Geld nicht für den Vorrat, aber für die Runde, wird gekauft,
 ///   was geht.
 pub fn nachkauf_entscheiden(l: &Nachkauflage) -> Nachkauf {
@@ -326,7 +331,8 @@ pub fn nachkauf_entscheiden(l: &Nachkauflage) -> Nachkauf {
         return Nachkauf::BudgetErschoepft { rest };
     }
     let preis = l.preis.max(1);
-    let ziel = l.bedarf.saturating_add(l.je_runde.saturating_mul(l.vorrat_runden.max(1) - 1)).min(rest);
+    let runden = l.vorrat_runden.min(l.runden_bis_verfall).max(1);
+    let ziel = l.bedarf.saturating_add(l.je_runde.saturating_mul(runden - 1)).min(rest);
     let mut credits = ziel - verfuegbar;
     let bezahlbar = l.guthaben.saturating_sub(l.gebuehr) / preis;
     if bezahlbar < credits {
@@ -354,6 +360,22 @@ pub fn zaehlbare_credits(s: &Sitzungsstand, laengste_runde: Duration) -> u64 {
     } else {
         s.credits
     }
+}
+
+/// ⚑ **So viele Runden laufen durch, bevor ein Kauf von jetzt verfällt**
+/// (Entscheidung des Projektinhabers vom 2026-11-26): Ein Credit gilt bis zum
+/// Ende der nächsten Epoche, abgebucht wird eine Runde an ihrem Ende. Gemessen
+/// an der längsten Runde, mindestens eine.
+///
+/// 📌 **Warum:** Im Auftragslauf vom 2026-11-25 kaufte der Treiber 227 000
+/// Credits und verbrauchte 115 500; der Rest verfiel. Verfallenes ist
+/// verbranntes Geld des Nutzers, und es zählt trotzdem als Nachfrage
+/// (Whitepaper 5.4: gekaufte Credits), hebt also den Preis für alle.
+pub fn runden_bis_verfall(s: &Sitzungsstand, laengste_runde: Duration) -> u64 {
+    let bloecke = u128::from(s.bloecke_bis_wechsel) + u128::from(myl_consensus::block::BLOECKE_JE_EPOCHE);
+    let bis_verfall_ms = bloecke * u128::from(s.slot_ms);
+    let runde_ms = laengste_runde.as_millis().max(1);
+    u64::try_from(bis_verfall_ms / runde_ms).unwrap_or(u64::MAX).max(1)
 }
 
 /// So lange gilt eine Runde als lang, bevor eine gemessen ist. 📌 Über die
@@ -413,6 +435,7 @@ impl Nachkaeufer {
             bedarf,
             je_runde,
             vorrat_runden: self.vorrat_runden,
+            runden_bis_verfall: runden_bis_verfall(s, laengste_runde),
             budget_rest: s.budget.saturating_sub(s.verbraucht),
             preis: s.credit_preis,
             guthaben: konto.guthaben,
@@ -588,7 +611,7 @@ mod nachkauf_proben {
     use super::*;
 
     fn lage() -> Nachkauflage {
-        Nachkauflage { credits: 100, offen: 0, bedarf: 512, je_runde: 512, vorrat_runden: 4, budget_rest: 10_000, preis: 67, guthaben: 1_000_000, gebuehr: 300 }
+        Nachkauflage { credits: 100, offen: 0, bedarf: 512, je_runde: 512, vorrat_runden: 4, runden_bis_verfall: 4, budget_rest: 10_000, preis: 67, guthaben: 1_000_000, gebuehr: 300 }
     }
 
     /// Fund 716: Hält dieser Klient die Runde für gedeckt, die Tür aber nicht,
@@ -641,6 +664,34 @@ mod nachkauf_proben {
         );
         assert_eq!(nachkauf_entscheiden(&Nachkauflage { je_runde: 0, ..lage() }), Nachkauf::Kaufen { credits: 412, myl: 412 * 67 });
         assert_eq!(nachkauf_entscheiden(&Nachkauflage { je_runde: 200, vorrat_runden: 1, ..lage() }), Nachkauf::Kaufen { credits: 412, myl: 412 * 67 });
+    }
+
+    /// ⚑ **Der Vorrat endet vor dem Verfall** (2026-11-26): Laufen bis dahin
+    /// nur zwei Runden durch, deckt der Kauf diese und eine weitere, nicht
+    /// vier. Gegenprobe: mit vier Runden bis zum Verfall der volle Vorrat.
+    #[test]
+    fn der_vorrat_endet_vor_dem_verfall() {
+        let zwei = Nachkauflage { je_runde: 200, runden_bis_verfall: 2, ..lage() };
+        assert_eq!(nachkauf_entscheiden(&zwei), Nachkauf::Kaufen { credits: 512 + 200 - 100, myl: (512 + 200 - 100) * 67 });
+        let keine = Nachkauflage { je_runde: 200, runden_bis_verfall: 0, ..lage() };
+        assert_eq!(nachkauf_entscheiden(&keine), Nachkauf::Kaufen { credits: 412, myl: 412 * 67 }, "mindestens diese Runde");
+        let vier = Nachkauflage { je_runde: 200, ..lage() };
+        assert_eq!(nachkauf_entscheiden(&vier), Nachkauf::Kaufen { credits: 512 + 3 * 200 - 100, myl: (512 + 3 * 200 - 100) * 67 });
+    }
+
+    /// Bis zum Verfall: der Rest dieser Epoche und die ganze nächste, in
+    /// Runden der längsten Dauer. Bei 2 s je Slot sind 1 800 Blöcke eine
+    /// Stunde.
+    #[test]
+    fn die_runden_bis_zum_verfall_zaehlen_die_naechste_epoche_mit() {
+        let s = stand(900);
+        // 2 700 Blöcke zu 2 s sind 5 400 s.
+        assert_eq!(runden_bis_verfall(&s, Duration::from_secs(600)), 9);
+        assert_eq!(runden_bis_verfall(&s, Duration::from_secs(5_401)), 1, "mindestens eine");
+        assert_eq!(runden_bis_verfall(&s, Duration::ZERO), 5_400_000, "eine ungemessene Runde teilt nicht durch null");
+        // Ein Block vor dem Wechsel: 1 801 Blöcke, 3 602 s.
+        assert_eq!(runden_bis_verfall(&stand(1), Duration::from_secs(1_801)), 2);
+        assert_eq!(runden_bis_verfall(&stand(1), Duration::from_secs(1_802)), 1);
     }
 
     /// ⚑ Reicht das Geld nicht für den Vorrat, aber für die Runde, wird

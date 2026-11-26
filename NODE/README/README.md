@@ -1,7 +1,7 @@
 # NODE: der Myelith-Knoten (`myl-node`)
 
-> **Version:** 0.140.2
-> **Datum:** 2026-11-25
+> **Version:** 0.141.0
+> **Datum:** 2026-11-26
 > **Status:** Läuft als Probekette und in Proben über mehrere Rechner.
 > Das geschlossene Testnetz `test-int4` ist im Knoten angelegt; es beginnt,
 > sobald der Startsatz seiner Validatoren im Release steht.
@@ -360,6 +360,21 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.141.0 (2026-11-26): Kapazität aus gemessener Leistung und Takt, abgebuchte Credits als Pässe, ein Plan je Abschluss (Funde 732 und 733, `myl-node` 0.141.0)
+
+- **Anlass:** Im langen Auftragslauf vom 2026-11-25 (zwei Pods des 35B, Epoche 24 min) stieg der Credit-Preis mit einem einzigen Kunden in jeder Epoche am Deckel, von 88 auf 311. Nachgerechnet: Selbst die abgebuchten Credits allein (rund 16 600 je Epoche) lagen beim 2,3-Fachen der Kapazität, mit der die Kette rechnete (2 × 3 600 Pässe). ⚑ Festlegung des Projektinhabers vom 2026-11-26: Die Regel bleibt (Whitepaper 5.4, gekaufte Credits sind Nachfrage), die Kapazität wird gemessen.
+- **Fund 732:** `vtfe_vorepoche` zählt abgebuchte Credits, also Pässe, und ging unverändert gegen eine Kapazität in vTFE-Einheiten. Die bestätigte Nachfrage erschien eine Million Mal zu klein: Trainingsmenge (Kap. 7.1), Trainingsabgabe und Auslastungsboden sahen immer null, der Preis nur die Käufe. Derselbe Fehler wie Fund 714 auf dem zweiten Weg; umgerechnet wird wie dort, wo verglichen wird (`trainingsplan_der_laufenden_epoche`).
+- **Die Kapazität einer Epoche** ist jetzt `kapazitaet_je_pod`: die Leistung des Netzes je Pod und Sekunde (`Netz::pod_leistung_vtfe_je_s`) mal der Dauer einer Epoche im Takt dieses Laufs, halbiert, weil jedes Segment von zwei Pods gerechnet wird (Kap. 4.4 und 5.3). Der Takt kommt aus `--blocktakt` oder dem Netz (`Kette::takt_setzen`, auch für die Prüfung im Hintergrund), nie aus dem Zeitstempel eines Blocks. Die Probekette behält die Vorgabe der Governance (ein Pass je Sekunde, `POD_LEISTUNG_VORGABE`); `test-int4` rechnet mit 11,9 Pässen je Sekunde, gemessen im Lauf vom 2026-11-25, eine Untergrenze.
+- **Fund 733, sichtbar erst durch Fund 732:** Der Abschluss einer Epoche rechnete ihren Trainingsplan für die Modellfassung und den Trainingsstand neu, und zwar nach der Ausschüttung, die die Nachfrage schon in die Vorepoche gerollt hatte. Das war der Plan einer Epoche, die es nie gab; solange die Auslastung immer null war, kam derselbe heraus. Mit echter Auslastung verlor ein Paar, das trainiert hatte, seine Wirkung auf die Fassung (die verzahnte Simulation des Testclients fiel an Station 7). Jetzt gilt der eine Plan von vor der Ausschüttung bis zum Ende des Abschlusses. Probe `der_abschluss_haelt_den_plan_der_abgelaufenen_epoche`, Gegenprobe mit der alten Neuberechnung rot.
+- 📌 Noch offen und nicht geändert: Der Preis nimmt die bestätigte Arbeit aus demselben Plan, also die der Epoche vor der abgelaufenen; die Käufe kommen aus der abgelaufenen. Die Käufe tragen den Preis (sie umfassen das Abgebuchte), die Verzögerung trifft nur den kleineren Zweig.
+- ⚠️ **Konsensrelevant:** Preis, Trainingsplan und Abgabe ändern sich ab dem ersten Epochenwechsel. Alle Knoten eines Laufs brauchen denselben Takt (wie bisher); wer mit einem anderen neu startet, rechnet am nächsten Wechsel eine andere Wurzel und hält an.
+- Proben: `abgebuchte_credits_der_vorepoche_sind_auslastung` (Gegenprobe ohne die Umrechnung rot), `die_kapazitaet_folgt_leistung_takt_und_redundanz`, `die_vorgabe_der_leistung_folgt_der_governance`, `ein_einzelner_kunde_hebt_den_preis_nur_leicht` (der Lauf nachgerechnet: Auslastung knapp unter eins, Schritt unter 4 %; mit der alten Kapazität der Deckel, über 21 %).
+
+### v0.140.3 (2026-11-26): Die Zusage reist mit dem Lauf (Fund 731, `myl-node` 0.140.3, mit GATEWAY 0.17.0)
+
+- Der Schlüssel von Fund 727 (Kontrakt, Deckel, Prompt) trägt die Zusage absichtlich nicht: Ein neuer Anlauf nach einem Nachkauf sagt mehr zu und soll trotzdem auf die laufende Rechnung warten. Deshalb wusste die Tür nicht, dass ein übernommenes Ergebnis an der kleineren Zusage des alten Laufs gekürzt war (GATEWAY 0.17.0). Jetzt hält `Einmal` je Lauf auch dessen Zusage, und `an_der_zusage_gekuerzt` setzt `Rechenergebnis::gekuerzt` gegen sie. Gemessen im langen Auftragslauf: Sitzung 7 und 13 (483 und 489 neue Token mitten in einem `write_file`) gingen an die Anläufe 8 und 15.
+- Probe `gekuerzt_heisst_an_der_zusage_des_laufs` mit den Zahlen aus dem Lauf (an der Zusage des Laufs gekürzt, gegen die größere nicht, ein Token davor nicht).
 
 ### v0.140.2 (2026-11-25): Die CI gibt den Kisten unter Linux 60 statt 40 Minuten (`myl-node` 0.140.2)
 

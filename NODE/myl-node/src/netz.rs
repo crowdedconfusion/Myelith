@@ -122,7 +122,28 @@ pub struct Netz {
     /// dessen Slot beginnt, sonst gabelt die Kette. Alle Knoten eines Netzes
     /// rechnen mit derselben Länge, sonst hielten sie Blöcke für künftig.
     pub slot_ms: u64,
+    /// ⚑ **Was ein Pod je Sekunde rechnet, in vTFE-Einheiten** (2026-11-26,
+    /// Festlegung des Projektinhabers: Kapazität aus gemessener Rate und
+    /// Epochenlänge). Daraus und aus der Länge eines Slots folgt die
+    /// Kapazität einer Epoche ([`crate::kette::kapazitaet_je_pod`]), gegen
+    /// die Preis und Trainingsmenge die Nachfrage messen (Whitepaper 5.4,
+    /// 7.1).
+    ///
+    /// 📌 **Warum je Sekunde und nicht je Epoche:** Bis hierher stand fest
+    /// [`POD_LEISTUNG_VORGABE`] mal eine Stunde da, auch in Läufen mit
+    /// kürzerem Takt. Im Auftragslauf vom 2026-11-25 (Epoche 24 min) rechnete
+    /// ein Pod des 35B je Epoche fast das Fünffache dessen, was die Kette ihm
+    /// zutraute, und der Credit-Preis stieg mit einem einzigen Kunden in jeder
+    /// Epoche am Deckel.
+    pub pod_leistung_vtfe_je_s: u64,
 }
+
+/// ⚑ **Die Vorgabe der Governance, je Sekunde** (`PodKapazitaet` durch
+/// `Epochenlaenge`: 3,6 Mrd. vTFE-Einheiten je Stunde, ein Pass je
+/// Sekunde). Eine Grössenordnung und kein Messwert; sie gilt, wo nichts
+/// gemessen ist. Die Probe `die_vorgabe_der_leistung_folgt_der_governance`
+/// hält sie gegen den Spiegelwert der Kette.
+pub const POD_LEISTUNG_VORGABE: u64 = myl_tokenomics::VTFE_UNITS_PER_TFE;
 
 /// ⚑ **Die Zahlen der Gebühren** (Festlegung des Projektinhabers vom
 /// 2026-10-27: Boden plus wandernder Bytepreis, Hinterlegung für neuen
@@ -275,6 +296,8 @@ pub const PROBEKETTE: Netz = Netz {
     // Eine halbe Sekunde: kurz genug für viele Epochen in einem Lauf, lang
     // genug für die Laufzeiten im Netzlauf.
     slot_ms: 500,
+    // Nicht gemessen: Die Probekette rechnet mit Probepods.
+    pod_leistung_vtfe_je_s: POD_LEISTUNG_VORGABE,
 };
 
 /// Der Startwert des Testnetzes. Wie bei der Probekette sagt der Text,
@@ -330,6 +353,12 @@ pub const TESTNETZ_INT4: Netz = Netz {
     //   📌 Hier stand bis 0.117.0 eine Sekunde: Sieben Tage Sperrfrist waren
     //   dann 3,5 Tage und die Vertrauensfrist 2,3 Tage.
     slot_ms: 2_000,
+    // ⚑ Gemessen im Auftragslauf vom 2026-11-25 auf einem Apple M5 Pro
+    //   (Docker, vier Shards je Pod): 108 044 Pässe in 9 065 s über zwei
+    //   Aufträge, also 11,9 je Sekunde. ⚠️ Eine Untergrenze: ein Klient,
+    //   Runde für Runde, ohne Stapel aus mehreren Sitzungen. Auf anderer
+    //   Hardware neu messen; der Auftragslauf meldet die Rate im Bericht.
+    pod_leistung_vtfe_je_s: 11_900_000,
 };
 
 /// Alle Netze, die dieser Knoten kennt.

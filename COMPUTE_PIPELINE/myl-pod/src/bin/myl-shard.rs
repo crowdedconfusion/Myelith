@@ -162,6 +162,14 @@ fn main() {
         i += 1;
     }
 
+    // ⚑ **Derselbe Schalter aus der Umgebung** (2026-11-26): Der Knoten
+    //   startet seine Shards selbst und reicht nur `--rechenwerke` durch; die
+    //   Umgebung erben sie. Mit `MYL_EINMESSUNG=aus` laesst sich so in einem
+    //   Netzlauf die Einmessung gegen die Vorgabe `MYL_GPU_AB` messen, ohne
+    //   eine weitere Option durch Knoten und Klient zu fuehren.
+    if std::env::var("MYL_EINMESSUNG").is_ok_and(|w| w == "aus") {
+        einmessung = false;
+    }
     if let Some(n) = kerne {
         integer_llm_runtime::kapazitaet::kerne_setzen(n);
     }

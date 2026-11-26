@@ -1448,7 +1448,7 @@ fn der_trainingsplan_entsteht_und_wird_vermerkt() {
     let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
     assert_eq!(zuteilung.pods.len(), 2, "zwoelf Miner muessen zwei Pods ergeben");
 
-    let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+    let plan = k.trainingsplan();
     assert_eq!(plan.auslastung, 0, "ohne Nachfrage ist die Auslastung null");
     assert_eq!(plan.anteil_bps, 8_200, "der Anteil bei leerem Netz");
     assert_eq!(plan.pods.len(), 2, "82 Prozent von zwei, gerundet");
@@ -1615,7 +1615,7 @@ fn ein_bestellter_pod_reicht_sein_trainingssegment_ein() {
     }
 
     let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
-    let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+    let plan = k.trainingsplan();
     let nr = *plan.pods.iter().next().expect("ein Trainingspod");
     let pod = zuteilung.pods.iter().find(|p| p.pod_index == nr).expect("Pod");
     let kennung = myl_types::miner::pod_kennung(k.zustand().epoch.0, nr);
@@ -1769,7 +1769,7 @@ fn ein_einiges_paar_bewegt_das_modell_und_wird_bezahlt() {
     }
 
     let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
-    let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+    let plan = k.trainingsplan();
     assert_eq!(plan.paare.len(), 1, "zwoelf Miner ergeben ein Trainingspaar");
     let (a, b) = plan.paare[0];
     let zuweisung = plan.zuweisungen[&a];
@@ -1984,7 +1984,7 @@ fn die_gekauften_credits_heben_den_preis() {
         while k.zustand().epoch.0 < 3 {
             k.baue_block();
         }
-        let kapazitaet = Kette::trainingsplan_der_laufenden_epoche(k.zustand()).kapazitaet;
+        let kapazitaet = k.trainingsplan().kapazitaet;
         assert!(kapazitaet > 0, "kein Pod, die Probe waere leer");
         if teil > 0 {
             let paesse = (kapazitaet / myl_tokenomics::VTFE_UNITS_PER_TFE) * teil / 2;
@@ -2005,6 +2005,124 @@ fn die_gekauften_credits_heben_den_preis() {
     assert!(halb < vor, "Gegenprobe: die halbe Kapazität liegt unter dem Ziel: {vor} zu {halb}");
     let (vor, ohne) = lauf(0);
     assert!(ohne < vor, "Gegenprobe: ohne Käufe faellt er: {vor} zu {ohne}");
+}
+
+/// Eine Probekette mit zwölf angemeldeten Minern in Epoche 3, also mit Pods.
+fn probekette_mit_pods() -> Kette {
+    use myl_types::miner::HardwareClass;
+    use myl_types::node_metadata::GeoRegion;
+    let mut k = Kette::probestand();
+    for w in 0..12u8 {
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(w),
+                0,
+                Anweisung::MinerAnmelden {
+                    hardware: HardwareClass::MediumGpu,
+                    zone: GeoRegion::Europe,
+                    netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                },
+            )
+            .expect("signieren"),
+        );
+        k.aufnehmen(probezusage(w, EpochId(1), 1));
+    }
+    k.baue_block();
+    while k.zustand().epoch.0 < 3 {
+        k.baue_block();
+    }
+    k
+}
+
+/// 📌 **Fund 732:** Auch abgebuchte Credits sind Pässe. Wer in der Vorepoche
+/// so viele abbuchte, wie die Pods für die Nachfrage rechnen, lastet sie voll
+/// aus; vor der Umrechnung sah der Plan ein Millionstel davon, also null.
+#[test]
+fn abgebuchte_credits_der_vorepoche_sind_auslastung() {
+    let skala = myl_types::auslastung::AUSLASTUNG_SKALA;
+    let mut k = probekette_mit_pods();
+    let kapazitaet = k.trainingsplan().kapazitaet;
+    assert!(kapazitaet > 0, "kein Pod, die Probe waere leer");
+    let paesse = kapazitaet / myl_tokenomics::VTFE_UNITS_PER_TFE;
+    k.zustand_mut().vtfe_vorepoche = paesse;
+    assert_eq!(k.trainingsplan().auslastung, skala, "die volle Kapazität in Pässen ist volle Auslastung");
+    k.zustand_mut().vtfe_vorepoche = paesse / 2;
+    assert_eq!(k.trainingsplan().auslastung, skala / 2);
+    k.zustand_mut().vtfe_vorepoche = 0;
+    assert_eq!(k.trainingsplan().auslastung, 0, "Gegenprobe: ohne Abbuchung keine Auslastung");
+}
+
+/// 📌 **Fund 733:** Der Abschluss einer Epoche hält ihren Plan. Wird in ihr
+/// so viel abgebucht, dass in der nächsten niemand trainiert, müssen ihre
+/// Trainingspods trotzdem im Stand landen (und ihre Paare die Fassung
+/// bewegen); vorher rechnete der Abschluss den Plan nach dem Rollen der
+/// Nachfrage neu und fand keinen.
+#[test]
+fn der_abschluss_haelt_den_plan_der_abgelaufenen_epoche() {
+    let mut k = probekette_mit_pods();
+    let plan = k.trainingsplan();
+    assert!(!plan.pods.is_empty(), "ohne Nachfrage trainiert niemand, die Probe waere leer");
+    let e = k.zustand().epoch.0;
+    // Das Hundertfache der Kapazität in Pässen: Danach trainiert niemand.
+    let kapazitaet = plan.kapazitaet / myl_tokenomics::VTFE_UNITS_PER_TFE;
+    k.zustand_mut().vtfe_epoche = kapazitaet * 100;
+    while k.zustand().epoch.0 == e {
+        k.baue_block();
+    }
+    assert!(k.trainingsplan().pods.is_empty(), "nach der Überlast trainiert noch jemand");
+    let stand = k.zustand().trainingsstand.als_map();
+    assert!(
+        stand.values().any(|&ep| ep == e),
+        "die Trainingspods der abgelaufenen Epoche fehlen im Stand: {stand:?}"
+    );
+}
+
+/// ⚑ **Die Kapazität folgt Leistung, Takt und Redundanz** (2026-11-26): die
+/// Leistung des Netzes je Sekunde mal der Dauer einer Epoche in diesem Takt,
+/// halbiert für die beiden Zwillinge.
+#[test]
+fn die_kapazitaet_folgt_leistung_takt_und_redundanz() {
+    let netz = &crate::netz::TESTNETZ_INT4;
+    let leistung = netz.pod_leistung_vtfe_je_s;
+    // 1 800 Blöcke zu zwei Sekunden sind eine Stunde, zu 0,8 s 24 Minuten.
+    assert_eq!(kapazitaet_je_pod(netz, 2_000), leistung * 3_600 / 2);
+    assert_eq!(kapazitaet_je_pod(netz, 800), leistung * 1_440 / 2);
+    let mut k = Kette::im_netz(netz);
+    assert_eq!(k.kapazitaet_je_pod(), kapazitaet_je_pod(netz, netz.slot_ms), "ohne Angabe der Takt des Netzes");
+    k.takt_setzen(800);
+    assert_eq!(k.kapazitaet_je_pod(), kapazitaet_je_pod(netz, 800), "der Takt des Laufs zählt");
+    assert_eq!(kapazitaet_je_pod(netz, u64::MAX), u64::MAX / 2, "kein Ueberlauf");
+}
+
+/// Die Vorgabe je Sekunde ist die der Governance je Stunde.
+#[test]
+fn die_vorgabe_der_leistung_folgt_der_governance() {
+    assert_eq!(crate::netz::POD_LEISTUNG_VORGABE * 3_600, Kette::pod_kapazitaet_vtfe());
+    assert_eq!(crate::netz::PROBEKETTE.pod_leistung_vtfe_je_s, crate::netz::POD_LEISTUNG_VORGABE);
+}
+
+/// ⚑ **Der Auftragslauf vom 2026-11-25, nachgerechnet** (Entscheidung des
+/// Projektinhabers vom 2026-11-26): Ein Kunde, Runde für Runde, liess über
+/// zwei Pods des 35B rund 16 600 Pässe je Epoche abbuchen (Takt 800 ms). Mit
+/// der gemessenen Leistung ist das eine Auslastung knapp unter eins, und der
+/// Preis steigt leicht (Whitepaper 5.4: über dem Ziel 0,8). Gegenprobe: Mit
+/// der Vorgabe der Governance und ohne Redundanz stand er am Deckel, +22 %
+/// je Epoche.
+#[test]
+fn ein_einzelner_kunde_hebt_den_preis_nur_leicht() {
+    let skala = myl_types::auslastung::AUSLASTUNG_SKALA;
+    let netz = &crate::netz::TESTNETZ_INT4;
+    let verbraucht = 16_600 * myl_tokenomics::VTFE_UNITS_PER_TFE;
+    let fein = 88i64 << 32;
+    let u = preis_auslastung(0, verbraucht, 2 * kapazitaet_je_pod(netz, 800));
+    assert!(u > skala * 9 / 10 && u < skala, "Auslastung {u}");
+    let (neu, _) = credit_preis_naechster(fein, u);
+    assert!(neu > fein && neu < fein / 100 * 104, "Schritt {} Prozent", (neu - fein) * 100 / fein);
+    let alt = preis_auslastung(0, verbraucht, 2 * Kette::pod_kapazitaet_vtfe());
+    assert_eq!(alt, CREDIT_PREIS_AUSLASTUNG_HOECHSTENS, "Gegenprobe: der Deckel");
+    let (am_deckel, _) = credit_preis_naechster(fein, alt);
+    assert!(am_deckel > fein / 100 * 121, "Gegenprobe: {} Prozent", (am_deckel - fein) * 100 / fein);
 }
 
 /// Fund 714: Ein Credit ist ein Pass, also 10⁶ vTFE-Einheiten.
@@ -2351,15 +2469,16 @@ fn eine_abgelaufene_sitzung_gibt_ihre_hinterlegung_zurueck() {
     assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g - h);
 
     let nachfrist = myl_ledger::state::SITZUNG_NACHFRIST;
+    let kap = k.kapazitaet_je_pod();
     let z = k.zustand_mut();
     z.epoch = EpochId(nachfrist);
-    Kette::epochenwechsel_abschliessen(z, nachfrist + 1, &Hash([0; 32]), None);
+    Kette::epochenwechsel_abschliessen(z, nachfrist + 1, &Hash([0; 32]), None, kap);
     assert!(k.zustand().sitzung(&id).is_some(), "vor dem Ende der Nachfrist aufgeräumt");
     assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g - h);
 
     let z = k.zustand_mut();
     z.epoch = EpochId(nachfrist + 1);
-    Kette::epochenwechsel_abschliessen(z, nachfrist + 2, &Hash([0; 32]), None);
+    Kette::epochenwechsel_abschliessen(z, nachfrist + 2, &Hash([0; 32]), None, kap);
     assert!(k.zustand().sitzung(&id).is_none(), "die abgelaufene Sitzung blieb");
     assert_eq!(k.zustand().account(&probekonto(6)).balance, v0 - g, "die Hinterlegung kam nicht zurück");
 }

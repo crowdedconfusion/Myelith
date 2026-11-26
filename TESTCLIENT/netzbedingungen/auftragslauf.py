@@ -363,8 +363,11 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
             "--podrelais", RELAIS, "--podrelaisausweis", str(erzeuger.ordner / "relais.ausweis")])
         einstieg = f"/ip4/127.0.0.1/tcp/{erzeuger.port}/p2p/{erzeuger.warte_auf_peer_id(60)}"
         melde(f"Torknoten k0 mit Tuer {TUER} und Ortsdienst; Zahler {zahler[:16]} ist Konto von m00")
-        for k in miner:
+        for nummer_miner, k in enumerate(miner):
             name, ebenen, us = k.rolle
+            rechenwerke = rechenwerke_fuer(args, nummer_miner)
+            if args.karten:
+                notiere("karte", miner=name, rechenwerke=rechenwerke)
             k.starten(args.programm, einstieg, slot, [
                 "--konsensschluessel", str(k.ordner / "konsens.key"), "--stimmsatz", str(stimmsatz),
                 "--modellzusage", f"{ebenen}:{us}", "--zone", "Europe",
@@ -375,7 +378,7 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
                 # Stufen sich an der einen GPU anstellen (80,6 s gegen 61,5 s fuer
                 # 3 563 Prompt-Token). Der Lauf gibt deshalb nur die CPU frei,
                 # wie es ein Besitzer mit dieser Maschine taete.
-                "--rechenwerke", args.rechenwerke,
+                "--rechenwerke", rechenwerke,
                 "--einsatz", str(EINSATZ), "--konto", zahler if name == "m00" else testkonto(name),
                 "--ohne-tuer"])
         for k in miner:
@@ -486,14 +489,24 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
                 melde(f"Probegeld nachgefuellt: {betrag / UNITS_PER_MYL:.2f} MYL")
             notiere("nachgefuellt", vorher=ist, soll=soll, rueckgabe=r.returncode)
 
-        n0 = nonce()
-        r = myl("wallet", "credits", "zahler", str(args.credits_myl), *relais_angaben)
-        if r.returncode != 0:
-            raise Befund(f"Credits kaufen: {r.stderr.strip()}")
-        warte(lambda: nonce() > n0, 180, "der Burn kommt in die Kette", alle)
-        konto = erzeuger.konto(zahler) or {}
-        melde(f"Credits gekauft fuer {args.credits_myl} MYL; Konto des Zahlers: {json.dumps(konto, ensure_ascii=False)[:300]}")
-        notiere("credits", myl=args.credits_myl, konto=konto)
+        # ⚑ **Kein Startkauf, wenn der Klient nachkauft** (2026-11-26): Er
+        #   kauft vor der ersten Runde selbst, wie bei einem Nutzer ohne
+        #   Treiber; ein fester Kauf daneben war ein zweiter Weg, den kein
+        #   Nutzer geht. 📌 Am Volumen aendert das nichts: Der Klient fuellt
+        #   vor der ersten Runde auf die Schranke aus Bytes und Deckel auf
+        #   (Fund 711), im Kurzlauf mit und ohne Startkauf je 17 886 Credits
+        #   fuer drei Runden von zusammen 12 295; 5 594 blieben beide Male.
+        if args.credits_myl > 0:
+            n0 = nonce()
+            r = myl("wallet", "credits", "zahler", str(args.credits_myl), *relais_angaben)
+            if r.returncode != 0:
+                raise Befund(f"Credits kaufen: {r.stderr.strip()}")
+            warte(lambda: nonce() > n0, 180, "der Burn kommt in die Kette", alle)
+            konto = erzeuger.konto(zahler) or {}
+            melde(f"Credits gekauft fuer {args.credits_myl} MYL; Konto des Zahlers: {json.dumps(konto, ensure_ascii=False)[:300]}")
+            notiere("credits", myl=args.credits_myl, konto=konto)
+        else:
+            melde("Kein Startkauf: der Klient kauft vor jeder Runde selbst nach")
 
         # ---- 3. Die Auftraege -------------------------------------------------------
         mappe = auftragsmappe.mappe()
@@ -720,6 +733,57 @@ def lauf(args: argparse.Namespace, ordner: pathlib.Path) -> int:
         verlauf.close()
 
 
+def rechenwerke_fuer(args, nummer: int) -> str:
+    """Der Freigabeplan des Miners `nummer`.
+
+    Ohne `--karten` derselbe fuer alle (`--rechenwerke`). Mit `--karten`
+    (2026-11-26, Festlegung des Projektinhabers: Beschleuniger zuerst) bekommt
+    jeder Miner reihum genau eine Karte: `cuda=an`, die eigene `an`, jede
+    andere `aus`; ein Plan laesst ungenannte Karten an, deshalb stehen alle
+    darin. Ohne diese Aufteilung griffe jeder Shard nach allen Karten, und die
+    Stufen eines Pods stuenden an denselben an (auf dem Mac verlor Metal so
+    80,6 s gegen 61,5 s). Wer eine Karte zweimal nennt, gibt ihr doppelt so
+    viele Miner; weniger Karten heisst mehr Shards je Karte.
+    """
+    if not args.karten:
+        return args.rechenwerke
+    liste = [k.strip() for k in args.karten.split(",") if k.strip()]
+    eigene = liste[nummer % len(liste)]
+    karten = ",".join(f"karte:{k}={'an' if k == eigene else 'aus'}" for k in dict.fromkeys(liste))
+    return f"metal=aus,rocm=aus,cuda=an,{karten}"
+
+
+def leistung_und_credits(ergebnisse: list[dict]) -> list[str]:
+    """Die gemessene Leistung je Pod und das Verhaeltnis von Kauf zu Verbrauch.
+
+    Seit dem 2026-11-26 misst die Kette die Nachfrage gegen eine Leistung je
+    Pod und Sekunde, die das Netz festlegt (`pod_leistung_vtfe_je_s` in
+    NODE/myl-node/src/netz.rs). Beide Zwillinge rechnen jede Runde, also ist
+    die Rate eines Klienten die eines Pods. Eine Untergrenze: Die Dauer
+    enthaelt auch die Zeit des Agenten zwischen den Runden. Auftraege mit
+    Fehlern der Tuer zaehlen nicht mit: Ihre Dauer ist zum Teil Warten.
+    """
+    mit_runden = [e for e in ergebnisse if e.get("runden", 0) > 0 and e.get("dauer_s", 0) > 0
+                  and e.get("fehler_der_tuer", 0) == 0]
+    paesse = sum(e["token_hinein"] + e["token_heraus"] for e in mit_runden)
+    dauer = sum(e["dauer_s"] for e in mit_runden)
+    z = []
+    if dauer > 0:
+        z.append(f"- Leistung je Pod: {paesse} Pässe in {dauer:.0f} s, also {paesse / dauer:.1f} je Sekunde "
+                 f"(Untergrenze; mit `pod_leistung_vtfe_je_s` des Netzes vergleichen).")
+    else:
+        z.append("- Leistung je Pod: keine Runde gemessen.")
+    # Der Startkauf steht als Bestand vor dem ersten Auftrag, nicht unter den
+    # Nachkaeufen; ohne ihn stand im Kurzlauf vom 2026-11-26 "188 Prozent".
+    start = ergebnisse[0].get("credits_vorher", 0) if ergebnisse else 0
+    gekauft = start + sum(e.get("nachgekauft", 0) for e in ergebnisse)
+    verbraucht = sum(e["token_hinein"] + e["token_heraus"] for e in ergebnisse)
+    if gekauft > 0:
+        z.append(f"- Credits gekauft {gekauft} (Startbestand {start}, dazu Nachkaeufe), abgebucht rund "
+                 f"{verbraucht} ({100 * verbraucht / gekauft:.0f} Prozent); der Rest verfiel oder blieb im Konto.")
+    return z
+
+
 def bericht_schreiben(ordner: pathlib.Path, args, ergebnisse: list[dict], befunde: list[str], schluss: dict) -> None:
     z = [f"# Auftragslauf {ordner.name}", "",
          f"Slot {args.slot} ms, Epoche {EPOCHE * args.slot / 60000:.1f} min, Artefakt {args.artefakte.name}, "
@@ -729,6 +793,7 @@ def bericht_schreiben(ordner: pathlib.Path, args, ergebnisse: list[dict], befund
     for e in ergebnisse:
         z.append(f"| {e['titel']} | {e['erfuellt']}/{e['von']} | {e['ende']} | {e['runden']} | {e['token_hinein']} | "
                  f"{e['token_heraus']} | {e['dauer_s'] / 60:.1f} min | {e['epoche_von']} bis {e['epoche_bis']} |")
+    z += ["", "## Leistung und Credits", ""] + leistung_und_credits(ergebnisse)
     z += ["", "## Merkmale je Auftrag", ""]
     for e in ergebnisse:
         z.append(f"**{e['titel']}**: " + "; ".join(f"{'✓' if v else '✗'} {k}" for k, v in e["merkmale"].items()))
@@ -782,6 +847,11 @@ def main() -> int:
     p.add_argument("--artefakte", type=pathlib.Path, default=ARTEFAKT)
     p.add_argument("--rechenwerke", default="metal=aus,cuda=aus,rocm=aus",
                    help="Freigabeplan fuer die Shards (Vorgabe: nur die CPU, weil alle Shards eine Maschine teilen)")
+    p.add_argument("--karten", help="PCI-Adressen der Karten mit Komma (nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader); "
+                   "jeder Miner bekommt reihum eine, statt --rechenwerke")
+    p.add_argument("--gpu-ab", type=int, help="MYL_GPU_AB fuer alle Shards: ab so vielen Eingaben rechnet die Karte")
+    p.add_argument("--ohne-einmessung", action="store_true",
+                   help="die Shards messen sich nicht ein (MYL_EINMESSUNG=aus), sie rechnen ab MYL_GPU_AB")
     p.add_argument("--slot", type=int, default=600, help="Laenge eines Slots in ms (Epoche = 1800 Slots)")
     p.add_argument("--kurz", action="store_true", help="ein kurzer Auftrag, ein Wechsel danach")
     p.add_argument("--auftraege", help="nur diese Auftraege der Mappe, mit Komma")
@@ -799,13 +869,16 @@ def main() -> int:
     # kaufen, das Wallet traegt den Nachkauf und wird vor jedem Auftrag
     # aufgefuellt (nach der Anmeldung geben die Probekonten rund 39 MYL her).
     p.add_argument("--probegeld-myl", type=int, default=30, help="Probegeld des Zahlers, vor jedem Auftrag aufgefuellt")
-    p.add_argument("--credits-myl", type=int, default=1, help="Credits beim Start; sie verfallen nach einer Epoche")
+    p.add_argument("--credits-myl", type=int, default=0,
+                   help="Credits beim Start in MYL; ohne Nachkauf (--vorrat 0) noetig, sonst 0: sie verfallen nach einer Epoche")
     p.add_argument("--vorrat", type=int, default=4,
                    help="der Klient kauft vor jeder Runde auf so viele Runden Vorrat nach; 0 schaltet den Nachkauf ab")
     p.add_argument("--ordner", type=pathlib.Path)
     p.add_argument("--luegner", action="store_true", help="der letzte Miner sagt 1 µs je Ebene zu (sechs Ebenen)")
     p.add_argument("--stoerer", action="store_true", help="ein Stoerer gegen Netzports und Tuer")
     args = p.parse_args()
+    if args.vorrat <= 0 and args.credits_myl <= 0:
+        p.error("ohne Nachkauf (--vorrat 0) braucht der Lauf einen Startkauf (--credits-myl)")
     for pfad in (args.programm, args.shard, args.pod_node, args.myl, args.probegeld):
         if not pfad.exists():
             print(f"[auftragslauf] fehlt: {pfad}", file=sys.stderr)
@@ -813,6 +886,12 @@ def main() -> int:
     ordner = args.ordner or TEMPORAER / "auftragslauf" / f"lauf-{dt.datetime.now():%Y%m%d-%H%M}"
     ordner.mkdir(parents=True, exist_ok=True)
     os.environ["TMPDIR"] = str(TEMPORAER)
+    # Die Shards erben die Umgebung ihres Knotens (2026-11-26, Abstimmung der
+    # Karten): eine feste Schwelle statt der Einmessung.
+    if args.gpu_ab is not None:
+        os.environ["MYL_GPU_AB"] = str(args.gpu_ab)
+    if args.ohne_einmessung:
+        os.environ["MYL_EINMESSUNG"] = "aus"
     try:
         return lauf(args, ordner)
     except Befund as b:

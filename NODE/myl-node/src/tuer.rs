@@ -601,7 +601,7 @@ mod tests {
                 self.begonnen.notify_one();
                 self.weiter.notified().await;
             }
-            Ok(myl_gateway::oai::Rechenergebnis { text: "ok".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string() })
+            Ok(myl_gateway::oai::Rechenergebnis { text: "ok".to_string(), prompt_token: 1, neue_token: 1, segment: "ab".to_string(), gekuerzt: false })
         }
         async fn modell(&self) -> Option<myl_gateway::oai::Modellstand> {
             Some(myl_gateway::oai::Modellstand { name: "m".to_string(), pipeline: "beef".to_string() })

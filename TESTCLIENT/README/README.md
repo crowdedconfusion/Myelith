@@ -1,7 +1,7 @@
 # TESTCLIENT: das Messgerät (`myl-testclient`, Programm `myl-test`)
 
-> **Version:** 0.78.5
-> **Datum:** 2026-11-25
+> **Version:** 0.79.0
+> **Datum:** 2026-11-26
 > **Status:** `myl-test` fährt Hardware-, Determinismus- und
 > Konformitätsläufe mit einem Protokoll, das zwischen Maschinen und
 > Modellständen vergleichbar bleibt; `vergleich` urteilt über zwei
@@ -537,6 +537,18 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.79.0 (2026-11-26): Der Auftragslauf meldet die Leistung je Pod; die Simulation zählt abgebuchte Credits als Auslastung (`myl-testclient` 0.79.0, mit NODE 0.141.0)
+
+- **Bericht des Auftragslaufs** (`netzbedingungen/auftragslauf.py`): neuer Abschnitt „Leistung und Credits“ mit der gemessenen Rate je Pod (Pässe durch Dauer über die Aufträge ohne Fehler der Tür; beide Zwillinge rechnen jede Runde, also ist sie die eines Pods) und dem Anteil der nachgekauften Credits, der abgebucht wurde. Die Rate ist eine Untergrenze und der Wert, mit dem `pod_leistung_vtfe_je_s` eines Netzes auf neuer Hardware gesetzt wird. Gekauft zählt den Startbestand vor dem ersten Auftrag mit. Nachgerechnet am Lauf vom 2026-11-25: 11,9 Pässe je Sekunde, 51 Prozent abgebucht; im kurzen Lauf vom 2026-11-26 20,8 Pässe je Sekunde (ein Auftrag fast nur aus Prompt), 69 Prozent.
+- **`verzahnte_simulation`:** Station 7b hielt fest, die Auslastung bleibe bei Testgröße null (18 000 gegen Milliarden). Das war Fund 732 (NODE 0.141.0): Ein abgebuchter Credit ist ein Pass, also 10⁶ vTFE-Einheiten. Die Station prüft jetzt, dass die Auslastung Pässe durch Kapazität ist und nicht null. Die Abbuchung der Szene sinkt von 18 000 auf 45 Pässe: Zwei Probepods leisten 900 je Epoche, 18 000 waren das Zwanzigfache, und danach trainierte zu Recht niemand mehr (Station 8 fiel aus); mit 45 (5 Prozent) trainieren beide. Mit 18 000 fiel zuerst Station 7 an Fund 733 (NODE 0.141.0).
+- **Kein Startkauf mehr, wenn der Klient nachkauft:** `--credits-myl` hat die Vorgabe 0, und der Lauf kauft dann nicht selbst; der Klient kauft vor der ersten Runde, wie ohne Treiber. Ohne Nachkauf (`--vorrat 0`) verlangt der Treiber einen Startkauf. Am Volumen ändert das nichts: Im Kurzlauf mit und ohne Startkauf kaufte der Weg je 17 886 Credits für drei Runden von zusammen 12 295, weil der Klient vor der ersten Runde auf die Schranke aus Bytes und Deckel auffüllt (Fund 711).
+- **Karten je Miner** (`--karten <pci,…>`, Festlegung des Projektinhabers vom 2026-11-26: Beschleuniger zuerst): Jeder Miner bekommt reihum genau eine Karte (`cuda=an`, die eigene an, jede andere aus; ein Plan lässt ungenannte Karten an). Ohne das griffe jeder Shard nach allen Karten, und die Stufen eines Pods stünden an denselben an. Dazu `--gpu-ab` und `--ohne-einmessung` für die Abstimmung (die Shards erben die Umgebung, `myl-pod` 0.68.0); die Zuordnung steht als Ereignis `karte` im Verlauf.
+- Aufrufe des Trainingsplans über `Kette::trainingsplan`, mit dem Takt der Kette; Sperrdatei mit `myl-node` 0.141.0 und `myl-client` 0.145.0.
+
+### v0.78.6 (2026-11-26): Sperrdatei mit GATEWAY 0.17.0 und `myl-node` 0.140.3 (`myl-testclient` 0.78.6)
+
+- Nur die Sperrdatei: `myl-gateway` 0.17.0 und `myl-node` 0.140.3 (Fund 731, ein übernommenes, gekürztes Ergebnis endet an der Tür mit `length`). Am Testclient hat sich nichts geändert.
 
 ### v0.78.5 (2026-11-25): `url` 2.5.9 wegen RUSTSEC-2026-0592 (`myl-testclient` 0.78.5)
 

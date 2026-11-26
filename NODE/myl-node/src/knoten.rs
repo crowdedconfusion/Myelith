@@ -1052,6 +1052,8 @@ impl Knoten {
         protokoll: &mut Betriebsprotokoll,
     ) -> Result<(Kette, Option<myl_consensus::block::Block>), KnotenFehler> {
         let mut kette = Kette::im_netz(konfig.netz);
+        // ⚑ Die Kapazität einer Epoche folgt dem Takt dieses Laufs (2026-11-26).
+        kette.takt_setzen(konfig.slot_ms());
         if let Some(a) = konfig.anker_von_aussen {
             kette.anker_von_aussen_setzen(a.hoehe, a.block, a.bindung);
         }
@@ -1406,7 +1408,7 @@ impl Knoten {
                     && !a.bestaetigt()
                     && !konfig.netz.ist_anker(b.header.height, &b.hash()) =>
             {
-                Some(Hintergrund::neu(konfig.netz, kette.stimmsatz().cloned(), b))
+                Some(Hintergrund::neu(konfig.netz, kette.stimmsatz().cloned(), b, kette.takt()))
             }
             _ => None,
         };
@@ -8623,8 +8625,12 @@ impl Hintergrund {
         netz: &'static crate::netz::Netz,
         satz: Option<myl_consensus::validator::VotingSet>,
         basis: &myl_consensus::block::Block,
+        takt_ms: u64,
     ) -> Self {
         let mut kette = Kette::im_netz(netz);
+        // ⚑ Mit dem Takt der eigenen Kette, sonst rechnete die Prüfung am
+        //   ersten Wechsel eine andere Kapazität und eine andere Wurzel.
+        kette.takt_setzen(takt_ms);
         // Die Prüfung im Hintergrund rechnet ab Genesis mit demselben Satz.
         if let Some(satz) = satz {
             kette.stimmsatz_setzen(satz);
@@ -9172,7 +9178,7 @@ impl Knoten {
                 .text("zustandswurzel", kurz(&self.kette.wurzel())),
         );
         if self.konfig.hintergrundpruefung {
-            self.hintergrund = Some(Hintergrund::neu(self.konfig.netz, self.kette.stimmsatz().cloned(), &abzug.block));
+            self.hintergrund = Some(Hintergrund::neu(self.konfig.netz, self.kette.stimmsatz().cloned(), &abzug.block, self.kette.takt()));
             self.hintergrund_anfragen();
         }
         self.voraus_einspielen();

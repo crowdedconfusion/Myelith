@@ -1,7 +1,7 @@
 # GATEWAY: die Tür zum Netzmodell (`myl-gateway`)
 
-> **Version:** 0.16.2
-> **Datum:** 2026-11-18
+> **Version:** 0.17.0
+> **Datum:** 2026-11-26
 > **Status:** Die eigene Tür eines Knotens auf der Rückschleife
 > (Vorgabe `127.0.0.1:4160`): `/v1/models`, `/v1/completions` und
 > `/v1/chat/completions`. Zugang über eine Vollmacht aus einem
@@ -99,6 +99,12 @@ Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
 übertragbar ist.
 
 ## Changelog
+
+### v0.17.0 (2026-11-26): Ein übernommenes, gekürztes Ergebnis endet mit `length` (Fund 731, `myl-gateway` 0.17.0)
+
+- **Gemessen im langen Auftragslauf vom 25. November:** Der Agent schrieb `pruefung.md` in einem Aufruf über mehr als 3 × 512 Token und blieb stecken. Beim ersten Versuch meldete die Tür am Ende `length`, der Agent schrieb zweimal weiter und riet dann, die Datei aufzuteilen. Beim zweiten und dritten Versuch kam das letzte Stück aus einem früheren Anlauf (Fund 727: nach einem 502 kaufte der Klient nach und fragte mit größerer Zusage neu an): 483 und 489 Token, gekürzt an der Zusage des alten Laufs. Die Tür maß gegen die Zusage der neuen Anfrage, sah weniger Token als Deckel und Zusage und meldete `stop`; der Agent riet „schliess den Aufruf“, statt fortzusetzen oder aufzuteilen.
+- `Rechenergebnis` trägt jetzt `gekuerzt`: am Betrag der Zusage gekürzt, unter der gerechnet wurde. Die Tür meldet `length`, wenn das Merkmal gesetzt ist oder der Preis ihre eigene Zusage erreicht (wie seit Fund 711).
+- Probe `ein_im_frueheren_lauf_gekuerztes_ergebnis_endet_mit_length` (drei Token, Deckel 16, Zusage weit darüber: mit dem Merkmal `length`, ohne `stop`). Gegenprobe: ohne die neue Bedingung in `tuer.rs` rot (`stop`).
 
 ### v0.16.2 (2026-11-20): Ein gegangener Klient wird zu Ende gerechnet, festgehalten (Fund 717, `myl-gateway` 0.16.2)
 

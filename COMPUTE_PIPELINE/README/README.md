@@ -1,7 +1,7 @@
 # COMPUTE_PIPELINE: das Rechnen im Netz (`myl-pod`, `myl-dispatcher`)
 
-> **Version:** 0.76.0 (`myl-pod` 0.67.0, `myl-dispatcher` 0.11.2)
-> **Datum:** 2026-11-24
+> **Version:** 0.77.0 (`myl-pod` 0.68.0, `myl-dispatcher` 0.11.2)
+> **Datum:** 2026-11-26
 > **Status:** In Gebrauch: der Shard (`myl-shard`) rechnet seinen
 > Ebenenbereich, ein Koordinator schickt mehrere Sitzungen zugleich durch
 > die Pipeline, der KV-Cache bleibt bei seiner Sitzung, Ausfälle werden aus
@@ -104,6 +104,10 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.77.0 (2026-11-26): Die Einmessung lässt sich über die Umgebung abschalten (`myl-pod` 0.68.0)
+
+- `myl-shard` liest neben `--ohne-einmessung` auch `MYL_EINMESSUNG=aus`. Der Knoten startet seine Shards selbst und reicht nur `--rechenwerke` durch, die Umgebung erben sie; so lässt sich in einem Netzlauf mit Karten die Einmessung gegen eine feste Schwelle `MYL_GPU_AB` messen (Abstimmung der Karten, Festlegung des Projektinhabers vom 2026-11-26: Beschleuniger zuerst, die CPU als Rückfall). Der Auftragslauf des Testclients setzt beides mit `--ohne-einmessung` und `--gpu-ab` (TESTCLIENT 0.79.0). Am Rechenweg ändert sich nichts.
 
 ### v0.76.0 (2026-11-25): Eine aufgegebene Anfrage hält an (Fund 730, `myl-pod` 0.67.0)
 

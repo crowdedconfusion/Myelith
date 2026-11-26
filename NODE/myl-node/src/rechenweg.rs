@@ -123,7 +123,23 @@ pub struct Ortsweg {
     empfaenger: myl_types::ids::Address,
     /// ⚑ **Dieselbe Anfrage, eine Rechnung** (Fund 727, [`crate::einmal`]):
     /// je Kontrakt, Deckel und Prompt.
-    einmal: crate::einmal::Einmal<[u8; 32], Option<Ortsantwort>>,
+    ///
+    /// Je Lauf die Zusage, unter der er rechnet (Fund 731), und seine Antwort.
+    einmal: crate::einmal::Einmal<[u8; 32], Option<(u64, Ortsantwort)>>,
+}
+
+/// ⚑ **Endete das Ergebnis am Betrag der Zusage, unter der es gerechnet
+/// wurde?** (Fund 731, langer Auftragslauf vom 2026-11-25.) Der Pod kürzt
+/// genau dort (`Inferenzauftrag::neue_token_im_rahmen`). Die Tür kennt nur
+/// die Zusage der Anfrage, die das Ergebnis abholt; kommt es aus einem
+/// früheren Anlauf mit kleinerer Zusage (Fund 727), sah sie weniger Token
+/// als Deckel und Zusage und meldete `stop`. 📌 Gemessen: Sitzung 7 und 13
+/// (483 und 489 neue statt 512, mitten in einem `write_file`) gingen nach
+/// einem 502 und einem Nachkauf an die neuen Anläufe 8 und 15; der Agent
+/// riet beide Male „schliess den Aufruf“ statt aufzuteilen, und der Auftrag
+/// blieb stecken.
+pub fn an_der_zusage_gekuerzt(prompt_token: u64, neue_token: u64, zusage_des_laufs: u64) -> bool {
+    myl_types::inferenzauftrag::preis(prompt_token, neue_token) >= zusage_des_laufs
 }
 
 /// Der Schlüssel einer Anfrage für [`crate::einmal`]: Kontrakt, Deckel und
@@ -404,13 +420,20 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
         //   Klienten nach der Frist der Tür), wird auf sie gewartet.
         let schluessel = anfrageschluessel(&auftrag.sitzung_id, inferenz.max_token, auftrag.prompt);
         let anschluss = self.anschluss.clone();
+        // 📌 Fund 731: Die Zusage gehört nicht zum Schlüssel (ein neuer
+        //   Anlauf nach einem Nachkauf sagt mehr zu und soll trotzdem auf
+        //   die laufende Rechnung warten); sie reist mit dem Lauf.
+        let zusage_des_laufs = inferenz.hoechstens;
         let geholt = self
             .einmal
             .holen(schluessel, crate::ortsklient::TUERFRIST, move || async move {
-                anschluss.frage_fuer_einen_lauf(&Ortsfrage::Inferenz(inferenz)).await
+                anschluss
+                    .frage_fuer_einen_lauf(&Ortsfrage::Inferenz(inferenz))
+                    .await
+                    .map(|a| (zusage_des_laufs, a))
             })
             .await;
-        let antwort = match geholt {
+        let (zusage_des_laufs, antwort) = match geholt {
             crate::einmal::Geholt::Fertig { wert: Some(a), begonnen } => {
                 if !begonnen {
                     eprintln!("myl-node: dieselbe Anfrage lief schon; ihr Ergebnis geht an den neuen Anlauf (Sitzung {})", auftrag.sitzung);
@@ -441,6 +464,7 @@ impl myl_gateway::oai::Rechenweg for Ortsweg {
                 prompt_token,
                 neue_token: token.len() as u64,
                 segment: hex::encode(segment.as_bytes()),
+                gekuerzt: an_der_zusage_gekuerzt(prompt_token, token.len() as u64, zusage_des_laufs),
             },
             // ⚑ Schon der Prompt kostet mehr als die Zusage (Fund 711):
             //   nichts gerechnet, nichts abgebucht.
@@ -601,4 +625,19 @@ pub fn fuer_betreiber(
         .mit_ankuendigung(ankuendigung)
         .mit_abrechnung(abrechnung),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    /// ⚑ **Fund 731: gemessen an der Zusage des Laufs, nicht der Anfrage.**
+    /// Die Zahlen aus dem langen Auftragslauf: 6 903 Prompt-Token, 483 neue,
+    /// gekürzt an der Zusage des ersten Anlaufs; der neue sagte mehr zu.
+    /// Gegen ihn gemessen wäre es nicht gekürzt, gegen den Lauf ist es das.
+    #[test]
+    fn gekuerzt_heisst_an_der_zusage_des_laufs() {
+        let lauf = myl_types::inferenzauftrag::preis(6_903, 483);
+        assert!(super::an_der_zusage_gekuerzt(6_903, 483, lauf));
+        assert!(!super::an_der_zusage_gekuerzt(6_903, 483, lauf + 29), "gegen die groessere Zusage gemessen");
+        assert!(!super::an_der_zusage_gekuerzt(6_903, 482, lauf), "ein Token vor der Grenze ist nicht gekuerzt");
+    }
 }
