@@ -273,13 +273,36 @@ def secure_auswaehlen(ordner: pathlib.Path) -> Auswahl:
     return a
 
 
+def losetup_lesen(text: str) -> list[tuple[pathlib.Path, list[str]]]:
+    """Die Dateien hinter den Loop-Geraeten aus `losetup --list --noheadings
+    --output BACK-FILE`, je Zeile eine; ein Einhaengepunkt ist dort nicht
+    bekannt (zwischen Loop und Dateisystem liegt dm-crypt)."""
+    abbilder = []
+    for zeile in text.splitlines():
+        zeile = zeile.strip()
+        if zeile:
+            # `losetup` haengt an eine geloeschte Datei " (deleted)" an.
+            abbilder.append((pathlib.Path(zeile.removesuffix(" (deleted)")), ["LUKS ueber ein Loop-Geraet"]))
+    return abbilder
+
+
 def eingehaengte_abbilder() -> list[tuple[pathlib.Path, list[str]]]:
     """Die eingehaengten Abbilder dieses Rechners samt Einhaengepunkten.
 
-    Nur unter macOS (`hdiutil info`); anderswo, und wenn die Abfrage
-    scheitert, eine leere Liste. ⚠️ Leer heisst dann "nicht bekannt", nicht
-    "nichts eingehaengt"; deshalb sagt `main`, ob gefragt werden konnte.
+    Unter macOS `hdiutil info`; unter Linux (seit 2026-11-26, Festlegung des
+    Projektinhabers: ein identisches Laufwerk `Secure.luks` fuer NixOS) die
+    Loop-Geraete, hinter denen ein geoeffneter LUKS-Container liegt.
+    Anderswo, und wenn die Abfrage scheitert, eine leere Liste. ⚠️ Leer
+    heisst dann "nicht bekannt", nicht "nichts eingehaengt"; deshalb sagt
+    `main`, ob gefragt werden konnte.
     """
+    if sys.platform.startswith("linux"):
+        try:
+            lauf = subprocess.run(["losetup", "--list", "--noheadings", "--output", "BACK-FILE"],
+                                  capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return losetup_lesen(lauf.stdout) if lauf.returncode == 0 else []
     try:
         lauf = subprocess.run(["hdiutil", "info", "-plist"], capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
@@ -877,6 +900,10 @@ def selbsttest() -> int:
             fehler.append("eingehaengtes Abbild der Schluesselablage nicht erkannt")
         if secure_eingehaengt(sec, [(pathlib.Path(t) / "anderes.dmg", ["/Volumes/X"])]) or secure_eingehaengt(sec, []):
             fehler.append("fremdes Abbild als Schluesselablage erkannt")
+        # Unter Linux: ein geoeffneter LUKS-Container aus der Ablage zaehlt.
+        geoeffnet = losetup_lesen(f"{sec / 'Secure.luks'}\n/var/lib/anderes.img (deleted)\n\n")
+        if len(geoeffnet) != 2 or not secure_eingehaengt(sec, geoeffnet[:1]) or secure_eingehaengt(sec, geoeffnet[1:]):
+            fehler.append(f"LUKS-Container der Schluesselablage falsch erkannt: {geoeffnet}")
         for r in hinein:
             if r not in drin:
                 fehler.append(f"fehlt in der Kopie: {r}")

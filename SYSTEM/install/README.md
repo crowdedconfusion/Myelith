@@ -304,7 +304,9 @@ und `SICHERUNG.md` liegt auch neben dem Archiv.
 Repositorium, als eigener Ordner `Secure/` in der Kopie mit eigenen
 Prüfsummen (`--ohne-secure` lässt ihn weg). Ist ein Abbild daraus
 eingehängt, bricht die Kopie ab und nennt den Befehl zum Aushängen; eine
-Kopie mittendrin könnte sich danach nicht mehr öffnen lassen.
+Kopie mittendrin könnte sich danach nicht mehr öffnen lassen. Erkannt wird
+das unter macOS über `hdiutil`, unter Linux (seit 2026-11-26) über die
+Loop-Geräte, hinter denen ein geöffneter LUKS-Container der Ablage liegt.
 
 Hinein kommt **alles, was im Arbeitsbaum liegt**, auch was git nicht kennt,
 samt Verlauf und Werkzeugvorrat, dazu die Artefakte `sparrow-0.6b-int8` und
